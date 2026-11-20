@@ -8,6 +8,7 @@ hands and voice), designed to be embedded as a library, with an open filter form
 - TypeBox schemas and validator: [`packages/spec`](packages/spec)
 - Engine: [`packages/core`](packages/core)
 - Dev app: [`apps/playground`](apps/playground)
+- Performance recordings (playground export format): [`docs/perf/session-format.md`](docs/perf/session-format.md)
 
 ```sh
 npm install
