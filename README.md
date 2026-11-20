@@ -34,8 +34,8 @@ serves the wasm files of `@mediapipe/tasks-vision` under `/mediapipe/wasm/` and 
 downloads it, checks its SHA-256 and stores it in `apps/playground/models/` (gitignored). Without it, the
 playground still runs and the **Faces** row says why tracking is unavailable.
 
-MediaPipe Tasks sends usage metrics (not images) to Google (`odml.pa.googleapis.com`). The playground blocks
-them with a `connect-src 'self'` Content-Security-Policy; hosts embedding `@ouaf/core` should do the same.
+MediaPipe Tasks always sends usage metrics (no images, no face data) to Google. The playground blocks them with a
+Content-Security-Policy; see [`docs/privacy.md`](docs/privacy.md) for what is sent and how to block it.
 
 ## License
 
