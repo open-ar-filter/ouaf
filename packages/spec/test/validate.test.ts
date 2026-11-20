@@ -129,6 +129,15 @@ describe('actionable errors', () => {
     expect(r.errors[0]!.message).toContain('"bulge"')
   })
 
+  it('follow: accepts auto/rigid/expression, rejects other values', () => {
+    const layer = (follow: string) => ({ type: 'sticker', src: 'beard', anchor: 'chin', follow })
+    const assets = { beard: { emoji: '🧔' } }
+    for (const f of ['auto', 'rigid', 'expression']) expect(validateManifest({ ...base, assets, layers: [layer(f)] }).errors).toEqual([])
+    const r = validateManifest({ ...base, assets, layers: [layer('rigd')] })
+    expect(r.errors[0]).toMatchObject({ path: '/layers/0/follow' })
+    expect(r.errors[0]!.message).toContain('"rigid"')
+  })
+
   it('undeclared asset, and remote URL rejected', () => {
     const r1 = validateManifest({ ...base, layers: [{ type: 'sticker', src: 'hat' }] })
     expect(r1.errors[0]).toMatchObject({ code: 'unknown-asset', path: '/layers/0/src' })

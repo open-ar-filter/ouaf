@@ -40,6 +40,13 @@ const Anchored = {
       description: '"face": follows the head rotation; "screen": stays facing the screen (readable text).',
     }),
   ),
+  follow: Type.Optional(
+    Type.Union([Type.Literal('auto'), Type.Literal('rigid'), Type.Literal('expression')], {
+      default: 'auto',
+      description:
+        'What the anchor position follows: "rigid": the head pose only (stable, ignores expressions); "expression": the live landmarks (moves with the mouth, brows…); "auto": the anchor default (expression for mouth, upperLip, lowerLip, chin; rigid otherwise). Rotation always follows the head. No effect on "screen".',
+    }),
+  ),
   faces: Type.Optional(FacesSelector),
   overlay: Type.Optional(
     Type.Boolean({ default: false, description: 'Drawn after color grading, on top of everything (UI, score).' }),
