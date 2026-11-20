@@ -6,6 +6,7 @@
     "packages/*/scripts",
     "packages/*/test",
     "apps/*/src",
+    "apps/*/scripts",
     "apps/*/vite.config.ts"
   ]
 }

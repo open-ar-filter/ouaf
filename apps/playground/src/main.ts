@@ -101,7 +101,7 @@ async function start() {
   // The tracker survives camera switches; it is created once.
   tracker ??= await createTracker({ maxFaces: MAX_FACES })
 
-  renderer = createRenderer(camera)
+  renderer = createRenderer(camera, { maxFaces: MAX_FACES })
   if (renderer) stage.append(renderer.element)
   else {
     video.hidden = false
