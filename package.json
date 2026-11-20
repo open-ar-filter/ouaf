@@ -1,0 +1,28 @@
+{
+  "name": "ouaf-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build:schema": "npm run build:schema -w @ouaf/spec",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "ajv": "^8.20.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-ar-filter/ouaf.git"
+  }
+}

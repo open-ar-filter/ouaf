@@ -1,0 +1,22 @@
+{
+  "name": "@ouaf/spec",
+  "version": "0.1.0",
+  "description": "TypeBox schemas and validator for the Ouaf v1 filter format (Open Universal AR Filter): single source of the TS types and the published JSON Schema",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema.json": "./schema/ouaf-v1.schema.json"
+  },
+  "scripts": {
+    "build:schema": "node scripts/build-schema.ts"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.52"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-ar-filter/ouaf.git",
+    "directory": "packages/spec"
+  }
+}
