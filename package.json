@@ -10,6 +10,7 @@
     "dev": "npm run dev -w @ouaf/playground",
     "build": "npm run build -w @ouaf/playground",
     "build:schema": "npm run build:schema -w @ouaf/spec",
+    "fetch-models": "npm run fetch-models -w @ouaf/playground",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
