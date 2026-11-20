@@ -24,6 +24,7 @@ function row(label: string, value: string) {
 row('@ouaf/core', VERSION)
 row('Secure context', window.isSecureContext ? 'yes' : 'no — camera unavailable, open the https:// URL')
 const cameraRow = row('Camera', 'not started')
+const trackRow = row('Track settings', '—')
 const schedulerRow = row('Scheduler', '—')
 const fpsRow = row('Processed frames', '—')
 
@@ -58,6 +59,7 @@ async function start() {
   video.classList.toggle('mirrored', camera.mirrored)
   flipButton.disabled = stopButton.disabled = false
   cameraRow.textContent = `${camera.width}×${camera.height}, facing ${camera.facingMode ?? 'unknown'}, ${camera.mirrored ? 'mirrored' : 'not mirrored'}`
+  trackRow.textContent = describeTrack(camera.stream)
 
   // Count the frames the engine would process: only new camera frames, independent of the display refresh rate.
   let count = 0
@@ -72,6 +74,19 @@ async function start() {
   })
   schedulerRow.textContent = scheduler.mode === 'video-frame' ? 'requestVideoFrameCallback' : 'requestAnimationFrame (fallback)'
   scheduler.start()
+}
+
+/** What the browser negotiated with the camera, to tell a camera limit from a scheduler problem. */
+function describeTrack(stream: MediaStream): string {
+  const track = stream.getVideoTracks()[0]
+  if (!track) return 'no video track'
+  const s = track.getSettings()
+  const parts = [`${s.width}×${s.height} @ ${s.frameRate?.toFixed(1) ?? '?'} fps`]
+  // getCapabilities is missing in Firefox.
+  const caps = typeof track.getCapabilities === 'function' ? track.getCapabilities() : undefined
+  if (caps?.frameRate) parts.push(`frameRate ${caps.frameRate.min ?? '?'}–${caps.frameRate.max ?? '?'}`)
+  if (caps?.width && caps.height) parts.push(`max ${caps.width.max}×${caps.height.max}`)
+  return parts.join(', ')
 }
 
 startButton.addEventListener('click', () => void start())
