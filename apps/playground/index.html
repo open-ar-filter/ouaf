@@ -15,6 +15,9 @@
       #stage { margin-top: 12px; }
       #stage > * { display: block; width: 100%; max-width: 640px; background: #000; }
       #stage > [hidden] { display: none; }
+      .view { position: relative; }
+      .view > canvas { display: block; width: 100%; }
+      .view > .anchors-overlay { position: absolute; inset: 0; height: 100%; pointer-events: none; }
       video.mirrored { transform: scaleX(-1); }
       .actions { display: flex; flex-wrap: wrap; gap: 8px; }
       button { font: inherit; padding: 8px 16px; }

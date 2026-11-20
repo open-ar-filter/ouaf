@@ -1,4 +1,5 @@
 import { Renderer, type CameraSource, type FaceFrame, type FitMode } from '@ouaf/core'
+import { createAnchorsOverlay } from './anchors-overlay.ts'
 import { createSyntheticFace } from './debug-face.ts'
 
 export interface PlaygroundRenderer {
@@ -20,7 +21,8 @@ export interface PlaygroundRenderer {
  * - `fit=contain` — letterbox instead of the default `cover` crop;
  * - `res=WIDTHxHEIGHT` — fixed internal resolution (e.g. `res=720x1280`), otherwise it follows the video;
  * - `scale=0.5` — internal resolution relative to the video, when `res` is not set;
- * - `debug-face` — draw a synthetic face while no face is tracked (see `debug-face.ts`).
+ * - `debug-face` — draw a synthetic face while no face is tracked (see `debug-face.ts`);
+ * - `anchors=0` — hide the labelled anchors overlay (#10), shown by default.
  */
 export function createRenderer(camera: CameraSource, options: { maxFaces: number }): PlaygroundRenderer | undefined {
   const params = new URLSearchParams(location.search)
@@ -45,8 +47,14 @@ export function createRenderer(camera: CameraSource, options: { maxFaces: number
     return undefined
   }
 
+  const anchors = params.get('anchors') === '0' ? undefined : createAnchorsOverlay()
+  const element = document.createElement('div')
+  element.className = 'view'
+  element.append(renderer.canvas)
+  if (anchors) element.append(anchors.element)
+
   return {
-    element: renderer.canvas,
+    element,
     get width() {
       return renderer.width
     },
@@ -54,11 +62,14 @@ export function createRenderer(camera: CameraSource, options: { maxFaces: number
       return renderer.height
     },
     render(faces) {
-      renderer.render(synthetic && faces.count === 0 ? synthetic : faces)
+      const shown = synthetic && faces.count === 0 ? synthetic : faces
+      renderer.render(shown)
+      anchors?.draw(shown, renderer)
     },
     dispose() {
       renderer.dispose()
-      renderer.canvas.remove()
+      anchors?.dispose()
+      element.remove()
     },
   }
 }
