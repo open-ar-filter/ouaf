@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Type } from '@sinclair/typebox'
+import { Type } from 'typebox'
 import { closest, createRegistry, extendRegistry, formatIssues, validateManifest, type Issue } from '../src/index.ts'
 
 const base = {

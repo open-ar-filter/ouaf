@@ -2,7 +2,7 @@
  * Built-in v1 layer types. Every layer type is provided by a plugin (here, the built-in plugins);
  * third-party plugins register their own types in the registry (see registry.ts).
  */
-import { Type, type Static, type TObject, type TProperties } from '@sinclair/typebox'
+import { Type, type Static, type TObject, type TProperties } from 'typebox'
 import { AssetPick, AssetRef, Color, Id, Name, Vec2, Vec3 } from './common.ts'
 import { Bindable } from './bindings.ts'
 
@@ -49,7 +49,7 @@ const Anchored = {
   ),
 }
 
-const Blend = Type.Union(['normal', 'add', 'multiply', 'screen'].map((b) => Type.Literal(b)), { default: 'normal' })
+const Blend = Type.Enum(['normal', 'add', 'multiply', 'screen'], { default: 'normal' })
 
 function layerType<L extends string, T extends TProperties>(type: L, props: T, description: string) {
   return Type.Object({ type: Type.Literal(type), ...LayerBase, ...props }, { additionalProperties: false, description })
@@ -98,7 +98,7 @@ export const StickerLayer = layerType(
 
 export const Shape = Type.Object(
   {
-    shape: Type.Union(['box', 'sphere', 'torus', 'ring', 'cone', 'cylinder', 'plane'].map((s) => Type.Literal(s)), {
+    shape: Type.Enum(['box', 'sphere', 'torus', 'ring', 'cone', 'cylinder', 'plane'], {
       description: 'Procedural 3D primitive (size 1 unit, adjusted with scale).',
     }),
     color: Type.Optional({ ...Color, default: '#ffffff' }),
@@ -137,7 +137,7 @@ export const ModelLayer = layerType(
 export const WarpLayer = layerType(
   'warp',
   {
-    kind: Type.Union(['bulge', 'pinch', 'swirl', 'stretch'].map((k) => Type.Literal(k)), { description: 'Kind of deformation.' }),
+    kind: Type.Enum(['bulge', 'pinch', 'swirl', 'stretch'], { description: 'Kind of deformation.' }),
     anchor: Type.Union([AnchorName, Type.Array(AnchorName, { minItems: 1, maxItems: 8 })], { description: 'Center(s) of the deformation.' }),
     radius: Type.Optional(Bindable(Type.Number({ exclusiveMinimum: 0, maximum: 5, default: 0.5, description: 'Radius in face units.' }))),
     strength: Type.Optional(Bindable(Type.Number({ minimum: -1, maximum: 1, default: 0.3, description: 'Strength from -1 to 1.' }))),

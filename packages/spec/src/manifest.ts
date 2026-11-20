@@ -2,7 +2,7 @@
  * Filter manifest (`manifest.json` at the root of a .ouaf package).
  * It is extracted from `filter.js` by `ouaf pack`; the engine reads it without running any code.
  */
-import { Type, type Static, type TSchema } from '@sinclair/typebox'
+import { Type, type Static, type TSchema } from 'typebox'
 import { AssetPath, Assets } from './assets.ts'
 import { Id, LocalizedText, SemVer, SemVerRange, Spdx } from './common.ts'
 import { Params, Presets } from './params.ts'

@@ -1,7 +1,7 @@
 /**
  * Assets embedded in the package. Always local: no remote URL (that would be an exfiltration channel).
  */
-import { Type, type Static } from '@sinclair/typebox'
+import { Type, type Static } from 'typebox'
 import { Name } from './common.ts'
 
 export const AssetPath = Type.String({
@@ -11,9 +11,7 @@ export const AssetPath = Type.String({
   'x-hint': 'Put the file in the filter\'s assets/ folder, e.g. "assets/hat.glb".',
 })
 
-export const AssetKind = Type.Union(
-  ['image', 'spritesheet', 'video', 'model', 'audio', 'lut', 'shader', 'font', 'lottie', 'data'].map((k) => Type.Literal(k)),
-  { description: 'Kind of asset (inferred from the file extension when omitted).' },
+export const AssetKind = Type.Enum(['image', 'spritesheet', 'video', 'model', 'audio', 'lut', 'shader', 'font', 'lottie', 'data'], { description: 'Kind of asset (inferred from the file extension when omitted).' },
 )
 
 export const AssetFile = Type.Object(

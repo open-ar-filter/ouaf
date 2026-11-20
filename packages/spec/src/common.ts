@@ -2,7 +2,7 @@
  * Shared building blocks of the Ouaf v1 format.
  * These schemas are the single source of truth: TypeScript types (Static<>) and the published JSON Schema.
  */
-import { Type, type Static } from '@sinclair/typebox'
+import { Type, type Static } from 'typebox'
 
 /** Short identifier: filter, layer. */
 export const Id = Type.String({

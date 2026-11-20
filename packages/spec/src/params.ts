@@ -2,7 +2,7 @@
  * Filter parameters: settings exposed to the host / the user.
  * They belong to the outside world: the script reads them, never writes them.
  */
-import { Type, type Static, type TProperties } from '@sinclair/typebox'
+import { Type, type Static, type TProperties } from 'typebox'
 import { Color, LocalizedText, Name, Vec2, Vec3 } from './common.ts'
 
 const ParamCommon = {
@@ -99,7 +99,7 @@ export const ParamTypes = {
 
 export type ParamTypeName = keyof typeof ParamTypes
 
-export const ParamDef = Type.Union(Object.values(ParamTypes), {
+export const ParamDef = Type.Union([NumberParam, BooleanParam, StringParam, TextParam, ColorParam, SelectParam, Vec2Param, Vec3Param, AssetParam], {
   'x-discriminator': 'type',
   description: 'Parameter definition; the "type" field determines the other fields.',
 })
