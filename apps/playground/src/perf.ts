@@ -67,11 +67,13 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? `${err.name}: ${err.message}` : String(err)
 }
 
-/** `ouaf-perf-20261121-142530-pixel-8.json` */
+/** `ouaf-perf-20261121-142530-pixel-8-worker-maxfaces-4.json`: device, then page and URL options. */
 function fileName(doc: PerfSession): string {
   const stamp = doc.startedAt.replace(/\.\d+Z$/, '').replace(/[-:]/g, '').replace('T', '-')
   const device = doc.device?.userAgentData?.model || doc.device?.userAgentData?.platform || doc.device?.platform || ''
-  const slug = device.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  const page = location.pathname.replace(/^.*\//, '').replace(/\.html$/, '').replace(/^index$/, '')
+  const params = [...new URLSearchParams(location.search)].map(([k, v]) => (v ? `${k}-${v}` : k)).join('-')
+  const slug = [device, page, params].join('-').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
   return `ouaf-perf-${stamp}${slug ? `-${slug}` : ''}.json`
 }
 
@@ -238,6 +240,9 @@ export function createPerf(): PlaygroundPerf | undefined {
         core: VERSION,
         // Mirrors the FrameScheduler 'auto' choice.
         scheduler: 'requestVideoFrameCallback' in HTMLVideoElement.prototype ? 'video-frame' : 'animation-frame',
+        // Which page and URL options produced the recording (spike variants, maxFaces, delegate…).
+        page: location.pathname,
+        params: location.search,
       },
     })
     const text = stringifySession(doc)

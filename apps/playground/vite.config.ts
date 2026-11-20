@@ -79,11 +79,19 @@ function selfHostedAssets(): Plugin {
   }
 }
 
+/** Extra pages: every `spikes/*.html` is a separate entry (one page per phase 0 spike). */
+function pages(): Record<string, string> {
+  const input: Record<string, string> = { main: resolve(here, 'index.html') }
+  const dir = resolve(here, 'spikes')
+  for (const name of listFiles(dir, /\.html$/)) input[`spikes/${name.replace(/\.html$/, '')}`] = join(dir, name)
+  return input
+}
+
 // getUserMedia requires a secure context: serve over HTTPS (self-signed certificate) and listen on
 // every interface so a phone on the same network can open the playground.
 export default defineConfig({
   plugins: [basicSsl({ name: 'ouaf-playground' }), selfHostedAssets()],
   server: { host: true, port: 5173 },
   preview: { host: true, port: 4173 },
-  build: { target: 'es2023' },
+  build: { target: 'es2023', rolldownOptions: { input: pages() } },
 })
