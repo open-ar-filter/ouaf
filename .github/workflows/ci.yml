@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   check:
-    name: Typecheck, tests, schema (Node ${{ matrix.node }})
+    name: Typecheck, tests, build, schema (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -36,6 +36,9 @@ jobs:
 
       - name: Tests
         run: npm test
+
+      - name: Build playground
+        run: npm run build
 
       - name: Published JSON Schema is up to date
         run: |
