@@ -20,6 +20,7 @@ import {
  * Privacy: MediaPipe Tasks (1.2.x) unconditionally posts usage metrics (task type, delegate, latencies; no image
  * data) to `https://odml.pa.googleapis.com/v1/log` every minute, with no API to turn it off. Hosts block it with a
  * `connect-src` Content-Security-Policy that excludes that origin; MediaPipe then stops trying after one failure.
+ * See docs/privacy.md.
  *
  * Delegate selection: the GPU delegate is tried first. Creating it **and** running one warm-up inference on a blank
  * frame must both succeed; otherwise the GPU landmarker is closed and a CPU one is created instead. The decision is
