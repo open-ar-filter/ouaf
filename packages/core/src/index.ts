@@ -5,6 +5,7 @@ export * from './camera.ts'
 export * from './scheduler.ts'
 export * from './face.ts'
 export * from './stats.ts'
+export { createFaceTracker, type FaceTrackerOptions } from './face-tracker.ts'
 export * from './viewport.ts'
 export * from './renderer.ts'
 
