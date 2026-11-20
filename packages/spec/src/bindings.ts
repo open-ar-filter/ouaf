@@ -3,7 +3,7 @@
  * (evaluated by the engine every frame, outside the sandbox).
  * Deliberately tiny language: param, bind + map, bind + range/to. Anything richer belongs in the script.
  */
-import { Type, type Static, type TSchema } from '@sinclair/typebox'
+import { Type, type Static, type TSchema } from 'typebox'
 import { Name } from './common.ts'
 
 export const ParamBinding = Type.Object(
@@ -33,7 +33,7 @@ export const DataBinding = Type.Object(
 /** A "bindable" property accepts a fixed value, a { param } or a { bind }. */
 export function Bindable<T extends TSchema>(schema: T) {
   return Type.Union([schema, ParamBinding, DataBinding], {
-    description: schema.description,
+    description: (schema as { description?: string }).description,
     'x-bindable': true,
     'x-hint': 'Fixed value, { "param": "name" } or { "bind": "face.…" }.',
   })

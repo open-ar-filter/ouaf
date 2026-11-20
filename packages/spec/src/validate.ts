@@ -2,8 +2,8 @@
  * Validation of an Ouaf v1 manifest, with explicit, actionable errors
  * (designed for humans and AI agents alike): JSON pointer, message, fix hint.
  */
-import { Kind, type TSchema } from '@sinclair/typebox'
-import { Value, ValueErrorType, type ValueError } from '@sinclair/typebox/value'
+import type { TSchema } from 'typebox'
+import { Value } from 'typebox/value'
 import { ManifestEnvelope, type TManifest } from './manifest.ts'
 import { ParamTypes, type ParamTypeName } from './params.ts'
 import { createRegistry, findEvent, type SpecRegistry } from './registry.ts'
@@ -86,97 +86,133 @@ function didYouMean(input: string, candidates: Iterable<string>, wrap = (s: stri
 // ---------------------------------------------------------------------------------------------
 // Structural errors (TypeBox) → issues
 
-function literalOptions(schema: TSchema): string[] | undefined {
-  const anyOf = (schema as { anyOf?: TSchema[] }).anyOf
+type SchemaNode = Record<string, unknown>
+type ValueError = ReturnType<typeof Value.Errors>[number]
+type SchemaKind = 'Object' | 'Record' | 'Tuple' | 'Array' | 'Union' | 'String' | 'Number' | 'Integer' | 'Boolean' | 'Unknown'
+
+/** Structural kind of a schema node, read from its JSON Schema keywords (independent of TypeBox internals). */
+function kindOf(schema: unknown): SchemaKind {
+  const s = (schema ?? {}) as SchemaNode
+  if (Array.isArray(s.anyOf)) return 'Union'
+  switch (s.type) {
+    case 'object': return s.patternProperties && !s.properties ? 'Record' : 'Object'
+    case 'array': return Array.isArray(s.items) || Array.isArray(s.prefixItems) ? 'Tuple' : 'Array'
+    case 'string': return 'String'
+    case 'number': return 'Number'
+    case 'integer': return 'Integer'
+    case 'boolean': return 'Boolean'
+    default: return 'Unknown'
+  }
+}
+
+/** Resolves a JSON pointer ("#/properties/x") inside a schema. */
+function resolve(root: unknown, pointer: string): SchemaNode {
+  let cur: unknown = root
+  for (const raw of pointer.replace(/^#/, '').split('/').slice(1)) {
+    if (cur === null || typeof cur !== 'object') break
+    cur = (cur as SchemaNode)[raw.replace(/~1/g, '/').replace(/~0/g, '~')]
+  }
+  return (cur && typeof cur === 'object' ? cur : {}) as SchemaNode
+}
+
+function literalOptions(schema: SchemaNode): string[] | undefined {
+  const anyOf = schema.anyOf as SchemaNode[] | undefined
   if (!anyOf) return undefined
-  const consts = anyOf.map((s) => (s as { const?: unknown }).const)
+  const consts = anyOf.map((s) => s.const)
   return consts.every((c) => typeof c === 'string') ? (consts as string[]) : undefined
 }
 
-function typeName(schema: TSchema): string {
-  switch (schema[Kind]) {
+function typeName(schema: SchemaNode): string {
+  switch (kindOf(schema)) {
     case 'Number': return 'a number'
     case 'Integer': return 'an integer'
     case 'String': return 'a string'
     case 'Boolean': return 'true or false'
     case 'Object': return 'an object { … }'
-    case 'Array': return 'a list [ … ]'
-    case 'Tuple': return `a list of ${(schema as { maxItems?: number }).maxItems ?? ''} numbers`
     case 'Record': return 'an object { … }'
+    case 'Array': return 'a list [ … ]'
+    case 'Tuple': return `a list of ${(schema.items as unknown[]).length} numbers`
     default: return 'a different value'
   }
 }
 
-function fromValueError(e: ValueError, base: string): Issue {
-  const path = base + e.path
-  const s = e.schema as TSchema & Record<string, unknown>
-  const hint = typeof s['x-hint'] === 'string' ? (s['x-hint'] as string) : undefined
-  const desc = typeof s.description === 'string' ? s.description : undefined
-  const issue = (code: string, message: string, h = hint ?? desc): Issue => ({ severity: 'error', code, path, message, ...(h ? { hint: h } : {}) })
-  const num = (key: string) => (s as Record<string, unknown>)[key]
+function fromValueError(root: TSchema, value: unknown, e: ValueError, base: string): Issue[] {
+  const path = base + e.instancePath
+  const node = resolve(root, e.schemaPath)
+  const actual = Value.Pointer.Get(value, e.instancePath)
+  const hint = typeof node['x-hint'] === 'string' ? node['x-hint'] : typeof node.description === 'string' ? node.description : undefined
+  const one = (code: string, message: string, h = hint, at = path): Issue[] => [
+    { severity: 'error', code, path: at, message, ...(h ? { hint: h } : {}) },
+  ]
+  const params = (e.params ?? {}) as Record<string, unknown>
 
-  switch (e.type) {
-    case ValueErrorType.ObjectRequiredProperty:
-      return issue('required', `Missing required property "${e.path.split('/').pop() ?? ''}".`)
-    case ValueErrorType.ObjectAdditionalProperties: {
-      // TypeBox points at the unknown key; suggest the closest known property.
-      const name = e.path.split('/').pop() ?? '?'
-      const known = Object.keys((s as { properties?: Json }).properties ?? {})
-      return {
-        severity: 'error',
-        code: 'unknown-property',
-        path,
-        message: `Unknown property "${name}". ${didYouMean(name, known)}`.trim(),
-        hint: `Accepted properties here: ${listOf(known, 20)}.`,
-      }
+  switch (e.keyword) {
+    case 'required':
+      return ((params.requiredProperties as string[]) ?? []).flatMap((name) =>
+        one('required', `Missing required property "${name}".`, undefined, `${path}/${name}`))
+    case 'additionalProperties': {
+      const known = Object.keys((node.properties as SchemaNode) ?? {})
+      return ((params.additionalProperties as string[]) ?? []).flatMap((name) =>
+        one('unknown-property', `Unknown property "${name}". ${didYouMean(name, known)}`.trim(),
+          `Accepted properties here: ${listOf(known, 20)}.`, `${path}/${name}`))
     }
-    case ValueErrorType.Union: {
-      const options = literalOptions(s)
-      if (options && typeof e.value === 'string') {
-        return issue('enum', `Unrecognized value "${e.value}". ${didYouMean(e.value, options)}`.trim(), `Possible values: ${listOf(options)}.`)
+    case 'anyOf': {
+      const options = literalOptions(node)
+      if (options && typeof actual === 'string') {
+        return one('enum', `Unrecognized value "${actual}". ${didYouMean(actual, options)}`.trim(), `Possible values: ${listOf(options)}.`)
       }
-      if (options) return issue('enum', 'Unrecognized value.', `Possible values: ${listOf(options)}.`)
-      return issue('type', 'This form of value is not accepted.')
+      if (options) return one('enum', 'Unrecognized value.', `Possible values: ${listOf(options)}.`)
+      return one('type', 'This form of value is not accepted.')
     }
-    case ValueErrorType.Literal:
-      return issue('literal', `Expected value: ${JSON.stringify(num('const'))}.`)
-    case ValueErrorType.StringPattern:
-      return issue('format', `Invalid format: ${JSON.stringify(e.value)}.`)
-    case ValueErrorType.StringMaxLength:
-      return issue('too-long', `Text too long (maximum ${num('maxLength')} characters).`)
-    case ValueErrorType.StringMinLength:
-      return issue('too-short', 'Text too short or empty.')
-    case ValueErrorType.NumberMinimum:
-    case ValueErrorType.IntegerMinimum:
-      return issue('range', `Value ${e.value} is too small: minimum is ${num('minimum')}.`)
-    case ValueErrorType.NumberMaximum:
-    case ValueErrorType.IntegerMaximum:
-      return issue('range', `Value ${e.value} is too large: maximum is ${num('maximum')}.`)
-    case ValueErrorType.NumberExclusiveMinimum:
-    case ValueErrorType.IntegerExclusiveMinimum:
-      return issue('range', `Value ${e.value} is too small: must be greater than ${num('exclusiveMinimum')}.`)
-    case ValueErrorType.ArrayMaxItems:
-      return issue('too-many', `Too many items (maximum ${num('maxItems')}).`)
-    case ValueErrorType.ArrayMinItems:
-      return issue('too-few', `Not enough items (minimum ${num('minItems')}).`)
-    case ValueErrorType.ArrayUniqueItems:
-      return issue('duplicate', 'The list contains duplicates.')
-    case ValueErrorType.ObjectMaxProperties:
-      return issue('too-many', `Too many entries (maximum ${num('maxProperties')}).`)
+    case 'enum': {
+      const options = ((params.allowedValues ?? node.enum) as unknown[]).map(String)
+      return typeof actual === 'string'
+        ? one('enum', `Unrecognized value "${actual}". ${didYouMean(actual, options)}`.trim(), `Possible values: ${listOf(options)}.`)
+        : one('enum', 'Unrecognized value.', `Possible values: ${listOf(options)}.`)
+    }
+    case 'const':
+      return one('literal', `Expected value: ${JSON.stringify(node.const)}.`)
+    case 'pattern':
+      return one('format', `Invalid format: ${JSON.stringify(actual)}.`)
+    case 'maxLength':
+      return one('too-long', `Text too long (maximum ${node.maxLength} characters).`)
+    case 'minLength':
+      return one('too-short', 'Text too short or empty.')
+    case 'minimum':
+      return one('range', `Value ${actual} is too small: minimum is ${node.minimum}.`)
+    case 'maximum':
+      return one('range', `Value ${actual} is too large: maximum is ${node.maximum}.`)
+    case 'exclusiveMinimum':
+      return one('range', `Value ${actual} is too small: must be greater than ${node.exclusiveMinimum}.`)
+    case 'maxItems':
+      return one('too-many', `Too many items (maximum ${node.maxItems}).`)
+    case 'minItems':
+      return one('too-few', `Not enough items (minimum ${node.minItems}).`)
+    case 'uniqueItems':
+      return one('duplicate', 'The list contains duplicates.')
+    case 'maxProperties':
+      return one('too-many', `Too many entries (maximum ${node.maxProperties}).`)
+    case 'boolean':
+      return [] // "false" sub-schema (e.g. additionalProperties: false): reported by its parent keyword
     default:
-      return issue('type', `Invalid value: expected ${typeName(s)}.`)
+      return one('type', `Invalid value: expected ${typeName(node)}.`)
   }
 }
 
 /** Structural errors of a value against a schema, at most one per path. */
 function structural(schema: TSchema, value: unknown, base: string, out: Issue[]): void {
+  const errors = Value.Errors(schema, value)
+  // Errors inside the branches of a failed union are noise: the union error itself is reported.
+  const unions = errors.filter((e) => e.keyword === 'anyOf').map((e) => `${e.schemaPath}/anyOf/`)
   const seen = new Set<string>()
-  for (const e of Value.Errors(schema, value)) {
-    const issue = fromValueError(e, base)
-    // One error per path, and none below an element that was already reported.
-    if ([...seen].some((p) => issue.path === p || issue.path.startsWith(`${p}/`))) continue
-    seen.add(issue.path)
-    out.push(issue)
+  for (const e of errors) {
+    if (unions.some((u) => e.schemaPath.startsWith(u))) continue
+    for (const issue of fromValueError(schema, value, e, base)) {
+      // One error per path, and none below an element that was already reported.
+      if ([...seen].some((p) => issue.path === p || issue.path.startsWith(`${p}/`))) continue
+      seen.add(issue.path)
+      out.push(issue)
+    }
   }
 }
 
@@ -194,11 +230,12 @@ const PARAM_COMPAT: Record<string, ParamTypeName[]> = {
 }
 
 function valueKind(schema: TSchema): string {
-  const s = schema as TSchema & { pattern?: string; maxItems?: number; anyOf?: TSchema[] }
-  if (s[Kind] === 'String' && s.pattern?.startsWith('^#(')) return 'Color'
-  if (s[Kind] === 'Tuple') return s.maxItems === 2 ? 'Vec2' : 'Vec3'
-  if (s[Kind] === 'Union' && s.anyOf) return valueKind(s.anyOf[0]!)
-  return String(s[Kind])
+  const s = schema as SchemaNode
+  const kind = kindOf(s)
+  if (kind === 'String' && typeof s.pattern === 'string' && s.pattern.startsWith('^#(')) return 'Color'
+  if (kind === 'Tuple') return (s.items as unknown[]).length === 2 ? 'Vec2' : 'Vec3'
+  if (kind === 'Union') return valueKind((s.anyOf as TSchema[])[0]!)
+  return kind
 }
 
 function isBinding(v: unknown): v is { param?: string; bind?: string } {
@@ -309,18 +346,18 @@ function walk(ctx: Ctx, value: unknown, schema: TSchema, path: string): void {
     if (branch) walk(ctx, value, branch, path)
     return
   }
-  if (s[Kind] === 'Object' && value && typeof value === 'object') {
+  if (kindOf(s) === 'Object' && value && typeof value === 'object') {
     for (const [k, sub] of Object.entries((s.properties ?? {}) as Record<string, TSchema>)) {
       walk(ctx, (value as Json)[k], sub, `${path}/${k}`)
     }
     return
   }
-  if (s[Kind] === 'Record' && value && typeof value === 'object') {
+  if (kindOf(s) === 'Record' && value && typeof value === 'object') {
     const sub = Object.values((s.patternProperties ?? {}) as Record<string, TSchema>)[0]
     if (sub) for (const [k, v] of Object.entries(value as Json)) walk(ctx, v, sub, `${path}/${k}`)
     return
   }
-  if (s[Kind] === 'Array' && Array.isArray(value)) {
+  if (kindOf(s) === 'Array' && Array.isArray(value)) {
     value.forEach((v, i) => walk(ctx, v, s.items as TSchema, `${path}/${i}`))
   }
 }
