@@ -3,3 +3,5 @@ dist/
 *.tsbuildinfo
 .DS_Store
 /shots/
+# Tracking models downloaded by `npm run fetch-models`
+/apps/playground/models/
