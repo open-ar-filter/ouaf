@@ -1948,6 +1948,24 @@
                 "default": "face",
                 "description": "\"face\": follows the head rotation; \"screen\": stays facing the screen (readable text)."
               },
+              "follow": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "auto"
+                  },
+                  {
+                    "type": "string",
+                    "const": "rigid"
+                  },
+                  {
+                    "type": "string",
+                    "const": "expression"
+                  }
+                ],
+                "default": "auto",
+                "description": "What the anchor position follows: \"rigid\": the head pose only (stable, ignores expressions); \"expression\": the live landmarks (moves with the mouth, brows…); \"auto\": the anchor default (expression for mouth, upperLip, lowerLip, chin; rigid otherwise). Rotation always follows the head. No effect on \"screen\"."
+              },
               "faces": {
                 "anyOf": [
                   {
@@ -2716,6 +2734,24 @@
                 "default": "face",
                 "description": "\"face\": follows the head rotation; \"screen\": stays facing the screen (readable text)."
               },
+              "follow": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "auto"
+                  },
+                  {
+                    "type": "string",
+                    "const": "rigid"
+                  },
+                  {
+                    "type": "string",
+                    "const": "expression"
+                  }
+                ],
+                "default": "auto",
+                "description": "What the anchor position follows: \"rigid\": the head pose only (stable, ignores expressions); \"expression\": the live landmarks (moves with the mouth, brows…); \"auto\": the anchor default (expression for mouth, upperLip, lowerLip, chin; rigid otherwise). Rotation always follows the head. No effect on \"screen\"."
+              },
               "faces": {
                 "anyOf": [
                   {
@@ -3379,6 +3415,24 @@
                 ],
                 "default": "face",
                 "description": "\"face\": follows the head rotation; \"screen\": stays facing the screen (readable text)."
+              },
+              "follow": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "auto"
+                  },
+                  {
+                    "type": "string",
+                    "const": "rigid"
+                  },
+                  {
+                    "type": "string",
+                    "const": "expression"
+                  }
+                ],
+                "default": "auto",
+                "description": "What the anchor position follows: \"rigid\": the head pose only (stable, ignores expressions); \"expression\": the live landmarks (moves with the mouth, brows…); \"auto\": the anchor default (expression for mouth, upperLip, lowerLip, chin; rigid otherwise). Rotation always follows the head. No effect on \"screen\"."
               },
               "faces": {
                 "anyOf": [
@@ -5775,6 +5829,24 @@
                 ],
                 "default": "face",
                 "description": "\"face\": follows the head rotation; \"screen\": stays facing the screen (readable text)."
+              },
+              "follow": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "auto"
+                  },
+                  {
+                    "type": "string",
+                    "const": "rigid"
+                  },
+                  {
+                    "type": "string",
+                    "const": "expression"
+                  }
+                ],
+                "default": "auto",
+                "description": "What the anchor position follows: \"rigid\": the head pose only (stable, ignores expressions); \"expression\": the live landmarks (moves with the mouth, brows…); \"auto\": the anchor default (expression for mouth, upperLip, lowerLip, chin; rigid otherwise). Rotation always follows the head. No effect on \"screen\"."
               },
               "faces": {
                 "anyOf": [

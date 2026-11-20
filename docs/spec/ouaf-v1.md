@@ -115,21 +115,25 @@ Origin at the **center**, +x right, +y up, **1 unit = screen height** (y goes fr
 
 ### 5.3 v1 anchors
 
-| Anchor | Description |
-|---|---|
-| `head` | Center of the head; follows the full pose. Default anchor. |
-| `forehead` | Top of the forehead. |
-| `eyes` | Midpoint between the eyes. |
-| `leftEye`, `rightEye` | Center of each eye. |
-| `noseBridge`, `noseTip` | Middle of the bridge, tip of the nose. |
-| `mouth`, `upperLip`, `lowerLip` | Center of the mouth, middle of each lip. |
-| `chin` | Bottom of the chin. |
-| `leftCheek`, `rightCheek` | Cheekbones. |
-| `leftTemple`, `rightTemple` | Temples (edges of the face at eye level). |
-| `screen` | Screen frame (5.2). |
+| Anchor | Description | `follow: auto` |
+|---|---|---|
+| `head` | Center of the head; follows the full pose. Default anchor. | rigid |
+| `forehead` | Top of the forehead. | rigid |
+| `eyes` | Midpoint between the eyes. | rigid |
+| `leftEye`, `rightEye` | Center of each eye (not the iris: it does not move with the gaze). | rigid |
+| `noseBridge`, `noseTip` | Middle of the bridge, tip of the nose. | rigid |
+| `mouth`, `upperLip`, `lowerLip` | Center of the mouth, middle of each lip. | expression |
+| `chin` | Bottom of the chin. | expression |
+| `leftCheek`, `rightCheek` | Cheekbones. | rigid |
+| `leftTemple`, `rightTemple` | Temples (edges of the face at eye level). | rigid |
+| `screen` | Screen frame (5.2). | — |
 
-Plugins MAY add anchors (e.g. `leftShoulder` for body pose). The exact MediaPipe landmark (out of 478) behind each
-anchor is defined by the reference implementation (*provisional*).
+Every face anchor shares the orientation of the `head` frame; only the origin differs. A **rigid** anchor position
+comes from the head pose alone, so it stays steady while the person talks or smiles; an **expression** anchor follows
+the live landmarks, so a beard on `chin` follows the jaw. Layers override the default with `follow` (6.2).
+
+Plugins MAY add anchors (e.g. `leftShoulder` for body pose). The landmarks behind each anchor in the reference
+implementation are listed in Appendix D (informative).
 
 ### 5.4 Multiple faces
 
@@ -157,6 +161,7 @@ anchor is defined by the reference implementation (*provisional*).
 | `offset` | `[0,0,0]` | Offset in the anchor frame, *bindable*. |
 | `rotation` | `[0,0,0]` | Rotation in degrees, *bindable*. |
 | `orient` | `face` | `face`: follows the head; `screen`: keeps facing the screen (readable text). |
+| `follow` | `auto` | What the anchor **position** follows: `rigid`: the head pose only (stable, ignores expressions); `expression`: the live landmarks (moves with the mouth, brows, cheeks); `auto`: the anchor's default (5.3). Rotation always follows the head. No effect with `anchor: "screen"`. |
 | `faces` | `all` | Faces affected (5.4). |
 | `overlay` | `false` | Drawn last, after color grading (UI, score). |
 | `excludeFromCapture` | `false` | With `overlay`: left out of photos, videos and the output stream. |
@@ -482,7 +487,8 @@ repeated overruns stop the script (the declarative rest of the filter keeps work
 
 ## Appendix B — Blendshapes
 
-The 52 values (0 to 1) provided by MediaPipe FaceLandmarker, ARKit convention:
+The 51 values (0 to 1) provided by MediaPipe FaceLandmarker, ARKit convention (MediaPipe outputs 52 categories,
+the extra one being `_neutral`):
 `browDownLeft`, `browDownRight`, `browInnerUp`, `browOuterUpLeft`, `browOuterUpRight`, `cheekPuff`, `cheekSquintLeft`,
 `cheekSquintRight`, `eyeBlinkLeft`, `eyeBlinkRight`, `eyeLookDownLeft`, `eyeLookDownRight`, `eyeLookInLeft`, `eyeLookInRight`,
 `eyeLookOutLeft`, `eyeLookOutRight`, `eyeLookUpLeft`, `eyeLookUpRight`, `eyeSquintLeft`, `eyeSquintRight`, `eyeWideLeft`,
@@ -494,8 +500,46 @@ The 52 values (0 to 1) provided by MediaPipe FaceLandmarker, ARKit convention:
 
 ## Appendix C — To be confirmed (phase 0 / phase 1)
 
-- Exact MediaPipe landmarks behind each anchor, and the precise definition of `head`.
+- Landmark indices of Appendix D: to be checked visually with the debug overlay; offset of the `head` origin.
 - Detailed script API (section 12): signatures, available easings, per-frame time budget.
 - Provisional shader inputs (`ouaf_personMask`, `ouaf_audioLevel`, anchors).
 - Default event thresholds, after measurements on a variety of faces.
 - Numeric limits (package size, dimensions, number of layers) after measurements on mobile.
+
+## Appendix D — Reference anchor mapping (informative)
+
+How the reference implementation derives the v1 anchors from MediaPipe FaceLandmarker (478 landmarks, facial
+transformation matrix). Another engine MAY use a different tracker as long as the anchors keep the meaning of 5.3.
+Indices are *provisional* until checked visually with the debug overlay.
+
+**`head` frame.** Derived from the facial transformation matrix, i.e. the rigid pose of MediaPipe's canonical face
+model, which does not change with expressions.
+
+- Axes: those of the canonical model, as seen on screen after mirroring (5.1): +x right, +y up, +z towards the camera.
+- Unit: the distance between the two eye centers (below) **measured on the canonical model**, so the unit does not
+  fluctuate with expressions or landmark noise.
+- Origin: the `eyes` point of the canonical model, moved back along -z by 1.5 units (≈ 9.5 cm), which approximates
+  the center of the head (*provisional*).
+
+**Anchor origins.** "Left" / "right" are the person's sides. Where two indices are given, the origin is their midpoint.
+
+| Anchor | Landmarks |
+|---|---|
+| `forehead` | 10 |
+| `eyes` | 168 |
+| `leftEye` | 263, 362 (eye corners) |
+| `rightEye` | 33, 133 (eye corners) |
+| `noseBridge` | 6 |
+| `noseTip` | 1 |
+| `mouth` | 13, 14 (inner lips) |
+| `upperLip` | 0 |
+| `lowerLip` | 17 |
+| `chin` | 152 |
+| `leftCheek` | 280 |
+| `rightCheek` | 50 |
+| `leftTemple` | 356 |
+| `rightTemple` | 127 |
+
+- `follow: rigid`: the landmarks are taken on the canonical model and transformed by the head pose.
+- `follow: expression`: the live landmarks of the current frame are used (then smoothed).
+- In both cases the anchor orientation is the `head` orientation.
