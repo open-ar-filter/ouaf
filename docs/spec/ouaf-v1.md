@@ -500,7 +500,7 @@ the extra one being `_neutral`):
 
 ## Appendix C — To be confirmed (phase 0 / phase 1)
 
-- Landmark indices of Appendix D: to be checked visually with the debug overlay; offset of the `head` origin.
+- Offset of the `head` origin (Appendix D), to be checked once rigid anchors are rendered.
 - Detailed script API (section 12): signatures, available easings, per-frame time budget.
 - Provisional shader inputs (`ouaf_personMask`, `ouaf_audioLevel`, anchors).
 - Default event thresholds, after measurements on a variety of faces.
@@ -510,7 +510,7 @@ the extra one being `_neutral`):
 
 How the reference implementation derives the v1 anchors from MediaPipe FaceLandmarker (478 landmarks, facial
 transformation matrix). Another engine MAY use a different tracker as long as the anchors keep the meaning of 5.3.
-Indices are *provisional* until checked visually with the debug overlay.
+Indices were checked visually with the playground's anchors overlay.
 
 **`head` frame.** Derived from the facial transformation matrix, i.e. the rigid pose of MediaPipe's canonical face
 model, which does not change with expressions.

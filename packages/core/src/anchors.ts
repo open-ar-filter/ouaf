@@ -1,7 +1,7 @@
 /**
  * Reference mapping of the v1 face anchors to MediaPipe FaceLandmarker landmarks (spec §5.3 and Appendix D).
  * "Left" / "right" are the person's sides. When several landmarks are listed, the anchor origin is their mean.
- * Indices are provisional until checked visually with the debug overlay.
+ * Indices checked visually with the playground's anchors overlay.
  */
 import { LANDMARKS_STRIDE, type FaceFrame } from './face.ts'
 
