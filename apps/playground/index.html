@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Ouaf playground</title>
+    <style>
+      :root { font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 16px; }
+      dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; }
+      dt { font-weight: 600; }
+      video { display: block; width: 100%; max-width: 640px; margin-top: 12px; background: #000; transform: scaleX(-1); }
+      button { font: inherit; padding: 8px 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>Ouaf playground</h1>
+    <dl id="status"></dl>
+    <button id="camera" type="button">Start camera</button>
+    <video id="video" playsinline muted hidden></video>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
