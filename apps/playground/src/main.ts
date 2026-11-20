@@ -49,7 +49,9 @@ let camera: CameraSource | undefined
 let scheduler: FrameScheduler | undefined
 let tracker: FaceTracker | undefined
 let renderer: PlaygroundRenderer | undefined
-let perf: PlaygroundPerf | undefined
+// Created once: the overlay and an ongoing recording survive camera switches and stops.
+const perf: PlaygroundPerf | undefined = createPerf()
+if (perf) perfContainer.append(perf.element)
 let facingMode: FacingMode = 'user'
 const faces: FaceFrame = createFaceFrame(MAX_FACES)
 const sample = createFrameSample()
@@ -70,11 +72,9 @@ function describeTrack(stream: MediaStream): string {
 function stop() {
   scheduler?.dispose()
   renderer?.dispose()
-  perf?.dispose()
   camera?.dispose()
   scheduler = undefined
   renderer = undefined
-  perf = undefined
   camera = undefined
   video.hidden = true
   flipButton.disabled = stopButton.disabled = true
@@ -108,18 +108,14 @@ async function start() {
     video.classList.toggle('mirrored', camera.mirrored)
   }
 
-  perf = createPerf()
-  if (perf) {
-    perfContainer.append(perf.element)
-    perf.setInfo({
-      delegate: tracker?.delegate,
-      videoWidth: camera.width,
-      videoHeight: camera.height,
-      renderWidth: renderer?.width ?? camera.width,
-      renderHeight: renderer?.height ?? camera.height,
-      maxFaces: MAX_FACES,
-    })
-  }
+  perf?.setInfo({
+    delegate: tracker?.delegate,
+    videoWidth: camera.width,
+    videoHeight: camera.height,
+    renderWidth: renderer?.width ?? camera.width,
+    renderHeight: renderer?.height ?? camera.height,
+    maxFaces: MAX_FACES,
+  })
 
   // Per new camera frame: track → render → record. Only new frames are processed (FrameScheduler).
   let count = 0
