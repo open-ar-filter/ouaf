@@ -1,0 +1,16 @@
+{
+  "ouaf": "1",
+  "id": "color-face",
+  "name": "Green face (color layer fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Color layer fixture: region \"face\" with a LUT from the package (every color to pure green), so the face oval turns green with a soft edge and the rest of the image is unchanged.",
+  "requires": { "face": true },
+  "params": {
+    "amount": { "type": "number", "default": 1, "min": 0, "max": 1, "step": 0.05, "label": "Amount" }
+  },
+  "assets": { "green": "assets/green.cube" },
+  "layers": [
+    { "type": "color", "lut": "green", "region": "face", "intensity": { "param": "amount" } }
+  ]
+}

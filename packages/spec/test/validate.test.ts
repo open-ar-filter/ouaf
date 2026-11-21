@@ -179,6 +179,14 @@ describe('actionable errors', () => {
     expect(codes(r.errors)).toContain('requires-face@/requires')
   })
 
+  it('color region "face" uses the face', () => {
+    const face = { type: 'color', saturation: -1, region: 'face' }
+    expect(codes(validateManifest({ ...base, requires: {}, layers: [face] }).errors)).toContain('requires-face@/requires')
+    expect(validateManifest({ ...base, requires: { face: true }, layers: [face] }).warnings).toEqual([])
+    const all = validateManifest({ ...base, requires: { face: true }, layers: [{ type: 'color', saturation: -1 }] })
+    expect(codes(all.warnings)).toContain('unused-requirement@/requires/face')
+  })
+
   it('canvas without id, draw for a missing layer, unknown event', () => {
     const r = validateManifest({
       ...base,
