@@ -20,6 +20,9 @@
       #stage { margin-top: 12px; position: relative; }
       #stage > * { display: block; width: 100%; max-width: 640px; background: #000; }
       #stage > [hidden] { display: none; }
+      /* A hidden <video> stays rendered (tiny, transparent) rather than display: none: WebKit never starts a camera
+         stream in a video that is not rendered (play() stays pending), and phones throttle hidden muted videos. */
+      #stage > video[hidden] { display: block; position: fixed; top: 0; left: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
       #stage > video.backing { position: absolute; top: 0; left: 0; z-index: 0; }
       .view { position: relative; z-index: 1; }
       .view > canvas { display: block; width: 100%; }
