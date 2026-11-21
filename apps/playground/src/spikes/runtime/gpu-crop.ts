@@ -1,17 +1,30 @@
 /**
- * Rotated face crop on WebGL2 (#83 spike, `crop=gpu`). The 2D-canvas crop (`willReadFrequently`, CPU-backed) pulls
- * the whole video frame back to the CPU and resamples it in software; here the frame stays a texture, the crop is
- * drawn by a fragment shader and only the `size`×`size` result is read back (`readPixels`).
+ * Rotated face crop and detector letterbox on WebGL2 (#83 spike, `crop=gpu`, `detcrop=gpu`). The 2D-canvas crop
+ * (`willReadFrequently`, CPU-backed) pulls the whole video frame back to the CPU and resamples it in software; here
+ * the frame stays a texture, the crop is drawn by a fragment shader and only the `size`×`size` result is read back
+ * (`readPixels`): 256×256 for the landmark crop, 128×128 for the detector input.
+ *
+ * The frame is uploaded once per pipeline run (`upload`) and cropped as many times as needed (`crop`): the detector
+ * and the landmark crop of a run then see the same frame, which the canvas path does not guarantee for a playing
+ * video.
  *
  * Same mapping as the canvas path: crop pixel `d` (centre at `+0.5`) samples the frame at
  * `roi.c + R(roi.rotation) · (roi.size / size) · (d − size / 2)`, bilinear, black outside the frame. Framebuffer row 0
  * (bottom in GL) is read back first, so using `gl_FragCoord.y` directly as the crop row keeps the rows top-down.
+ * The detector letterbox is the unrotated ROI centred on the frame, of side the frame's long side. One bilinear tap
+ * per pixel, even for the ≈ 10× reduction of the letterbox: this is what the 2D canvas does too (same detector ROI
+ * within a pixel on the test clips), and what MediaPipe's own crop does; averaging more taps moved the ROI.
+ *
+ * Works on the main thread and in a worker (OffscreenCanvas). Accepts any `TexImageSource`: a video element on the
+ * main thread, a transferred `VideoFrame` or `ImageBitmap` in the worker.
  */
 import type { Roi } from './geometry.ts'
 
 export interface GpuCropper {
-  /** Crops `source` (`width`×`height`) to the ROI into `out` (RGBA, `size`×`size`×4 bytes, top row first). */
-  crop(source: TexImageSource, width: number, height: number, roi: Roi, out: Uint8Array): void
+  /** Uploads the frame to crop from (`width`×`height`). */
+  upload(source: TexImageSource, width: number, height: number): void
+  /** Crops the uploaded frame to `roi` into `out` (RGBA, `size`×`size`×4 bytes, top row first); `size` ≤ `maxSize`. */
+  crop(roi: Roi, size: number, out: Uint8Array): void
   dispose(): void
 }
 
@@ -38,10 +51,10 @@ void main() {
   color = inside ? vec4(texture(frame, uv).rgb, 1.0) : vec4(0.0, 0.0, 0.0, 1.0);
 }`
 
-export function createGpuCropper(size: number): GpuCropper {
-  const canvas = new OffscreenCanvas(size, size)
+export function createGpuCropper(maxSize: number): GpuCropper {
+  const canvas = new OffscreenCanvas(maxSize, maxSize)
   const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false, premultipliedAlpha: false })
-  if (!gl) throw new Error('crop=gpu needs WebGL2, unavailable in this browser')
+  if (!gl) throw new Error('crop=gpu needs WebGL2 on an OffscreenCanvas, unavailable here')
 
   const shader = (type: number, source: string) => {
     const s = gl.createShader(type)!
@@ -61,8 +74,8 @@ export function createGpuCropper(size: number): GpuCropper {
   const center = u('center')
   const axisX = u('axisX')
   const axisY = u('axisY')
+  const halfSize = u('halfSize')
   gl.uniform1i(u('frame'), 0)
-  gl.uniform1f(u('halfSize'), size / 2)
 
   const texture = gl.createTexture()
   gl.activeTexture(gl.TEXTURE0)
@@ -71,16 +84,20 @@ export function createGpuCropper(size: number): GpuCropper {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-  gl.viewport(0, 0, size, size)
   gl.bindVertexArray(gl.createVertexArray())
 
   return {
-    crop(source, width, height, roi, out) {
+    upload(source, width, height) {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
+      gl.uniform2f(frameSize, width, height)
+    },
+    crop(roi, size, out) {
+      if (size > maxSize) throw new Error(`crop size ${size} > ${maxSize}`)
       const k = roi.size / size
       const cos = Math.cos(roi.rotation) * k
       const sin = Math.sin(roi.rotation) * k
-      gl.uniform2f(frameSize, width, height)
+      gl.viewport(0, 0, size, size)
+      gl.uniform1f(halfSize, size / 2)
       gl.uniform2f(center, roi.cx, roi.cy)
       gl.uniform2f(axisX, cos, sin)
       gl.uniform2f(axisY, -sin, cos)

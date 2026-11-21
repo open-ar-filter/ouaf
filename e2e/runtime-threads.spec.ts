@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import './spike83.ts'
 
 /**
  * Spike #83 (`/spikes/runtime.html`): the LiteRT.js face pipeline really runs on several threads when the page is
@@ -12,16 +13,8 @@ import { expect, test, type Page } from '@playwright/test'
  *   be clearly faster.
  */
 
-interface Spike83 {
-  runtime: string | null
-  threads: number
-  frames: number
-  bench(runs: number, atSeconds?: number): Promise<{ landmarksMs: number; found: number; runs: number }>
-}
-
 declare global {
   interface Window {
-    __spike83?: Spike83
     /** Distinct workers that were asked to start a pthread (installed by the init script below). */
     __pthreadWorkers?: Set<Worker>
   }

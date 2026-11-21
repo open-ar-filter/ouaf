@@ -133,8 +133,11 @@ const HEADERS = { 'Content-Security-Policy': "connect-src 'self' ws: wss:" }
  * it, not the whole playground: the #83 runtime spike, the LiteRT.js files it loads (its pthread workers run
  * `litert_wasm_threaded_internal.js`, whose response must carry the same embedder policy) and the MediaPipe wasm
  * it uses as the reference. `?coi=0` on the page turns it off, to measure what isolation itself changes.
+ * The page's LiteRT.js worker (`mode=worker`) too: a dedicated worker of an isolated page only loads, and only gets
+ * `crossOriginIsolated` (hence threads), when its own script response carries the embedder policy
+ * (`/src/spikes/runtime/litert.worker.ts` in dev, `/assets/litert.worker-<hash>.js` in the build).
  */
-const ISOLATED = [/\/spikes\/runtime(\.html)?$/, /\/litert\/wasm\//, /\/mediapipe\/wasm\//, /\/models\//, /\/test-media\//]
+const ISOLATED = [/\/spikes\/runtime(\.html)?$/, /\/litert\/wasm\//, /\/mediapipe\/wasm\//, /\/models\//, /\/test-media\//, /\/litert\.worker[\w-]*\.(ts|js)$/]
 
 function crossOriginIsolation(): Plugin {
   const middleware = (req: { url?: string }, res: { setHeader(name: string, value: string): void }, next: () => void) => {
