@@ -1,0 +1,47 @@
+name: Feature request
+description: A new capability for the engine, the format, the tooling or the playground
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to do, and why it is hard or impossible today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: |
+        What you would like. For a change to the filter format, say which section of
+        `docs/spec/ouaf-v1.md` it affects and sketch the manifest.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Spec / format
+        - Engine
+        - Tracking
+        - Rendering
+        - Script sandbox
+        - Audio / voice
+        - CLI
+        - Playground
+        - Integrations (web components, npm, H5P, MCP)
+        - Performance
+        - Security / privacy
+        - Docs
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links, references, performance or privacy impact.

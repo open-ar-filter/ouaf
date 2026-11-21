@@ -1,0 +1,60 @@
+name: Bug report
+description: Something does not work as expected (engine, playground, validator, spec, docs)
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please do not attach photos or videos of real people (yourself included):
+        reproduce with a [test clip](https://github.com/open-ar-filter/ouaf/blob/main/test-media/README.md)
+        (`/?source=<clip>`) whenever possible.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Commands, URL (with query parameters and test clip), filter manifest if relevant.
+      placeholder: |
+        1. npm run dev
+        2. Open https://localhost:5173/?source=pesquet-talk
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Engine (packages/core)
+        - Tracking
+        - Rendering
+        - Spec, schema or validator (packages/spec)
+        - Playground
+        - Browser tests / CI
+        - Docs
+        - Other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Commit or version, device, OS, browser and version, Node version for tooling issues.
+      placeholder: |
+        Commit: abc1234
+        Device: Pixel 7 / Android 16
+        Browser: Chrome 157
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, errors, perf export
+      description: Console errors, validator output, or the playground performance export (Copy button) for performance issues.
+      render: text

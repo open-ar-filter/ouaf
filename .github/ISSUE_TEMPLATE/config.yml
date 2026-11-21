@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Format specification
+    url: https://github.com/open-ar-filter/ouaf/blob/main/docs/spec/ouaf-v1.md
+    about: Read the Ouaf v1 format specification before proposing a format change.
+  - name: Contributing guide
+    url: https://github.com/open-ar-filter/ouaf/blob/main/CONTRIBUTING.md
+    about: Setup, commands and conventions.

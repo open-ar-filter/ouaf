@@ -1,0 +1,53 @@
+name: Filter proposal
+description: Propose an example or demo filter, or a filter the format should be able to express
+labels: ["type:feature", "area:filters"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the effect in words or with drawings, mock-ups or public-domain / CC0 images.
+        Please do not attach photos or videos of real people (yourself included).
+  - type: input
+    id: name
+    attributes:
+      label: Name
+      placeholder: e.g. Bubble, Cat ears, Mustache
+    validations:
+      required: true
+  - type: textarea
+    id: effect
+    attributes:
+      label: Effect
+      description: What the user sees and hears, and how it reacts (expressions, gestures, taps, voice).
+    validations:
+      required: true
+  - type: checkboxes
+    id: tracking
+    attributes:
+      label: What it tracks
+      options:
+        - label: Face
+        - label: Several faces
+        - label: Hands
+        - label: Body / pose
+        - label: Voice / audio
+        - label: Nothing (screen-space effect)
+  - type: textarea
+    id: building-blocks
+    attributes:
+      label: Building blocks
+      description: |
+        Anchors, layer types (text, image, 3D model, deformation, color, shader...), events and script logic it
+        would need, with references to `docs/spec/ouaf-v1.md`. Say if the current format cannot express it.
+  - type: textarea
+    id: assets
+    attributes:
+      label: Assets and licence
+      description: |
+        Images, models, sounds it needs, where they come from and their licence. Example filters and their assets
+        are CC0-1.0.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Performance concerns, target devices, references to similar filters.
