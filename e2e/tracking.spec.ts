@@ -51,6 +51,23 @@ test('two faces with maxFaces=4', async ({ page }) => {
   expect((s.faceCounts[2] ?? 0) / s.frames).toBeGreaterThan(0.5)
 })
 
+test('four faces with maxFaces=4', async ({ page }) => {
+  const s = await playOnce(page, 'four-faces-grid', '&maxFaces=4')
+  expect(maxFaces(s)).toBe(4)
+  expect((s.faceCounts[4] ?? 0) / s.frames).toBeGreaterThan(0.5)
+})
+
+test('three faces with maxFaces=4', async ({ page }) => {
+  const s = await playOnce(page, 'three-faces-grid', '&maxFaces=4')
+  expect(maxFaces(s)).toBe(3)
+  expect((s.faceCounts[3] ?? 0) / s.frames).toBeGreaterThan(0.5)
+})
+
+test('maxFaces=2 caps the four faces at 2', async ({ page }) => {
+  const s = await playOnce(page, 'four-faces-grid', '&maxFaces=2')
+  expect(maxFaces(s)).toBe(2)
+})
+
 test('maxFaces=1 keeps a single face', async ({ page }) => {
   const s = await playOnce(page, 'two-faces-stacked', '&maxFaces=1')
   expect(maxFaces(s)).toBe(1)
