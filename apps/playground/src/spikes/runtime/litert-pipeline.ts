@@ -5,6 +5,7 @@
  * Per frame: detector only when no face is tracked (letterboxed 128×128 input), otherwise the ROI predicted from the
  * previous landmarks; rotated crop to 256×256 on a 2D canvas (CPU readback of the crop); landmark model (478 points
  * and a face presence score); optionally the blendshapes model on 146 of the points. One face.
+ * `crop: 'gpu'` does the rotated crop on WebGL2 instead (gpu-crop.ts), reading back only the 256×256 crop.
  */
 import { loadAndCompile, loadLiteRt, supportsFeature, Tensor, type CompiledModel } from '@litertjs/core'
 import {
@@ -18,6 +19,7 @@ import {
   projectLandmarks,
   type Roi,
 } from './geometry.ts'
+import { createGpuCropper, type GpuCropper } from './gpu-crop.ts'
 
 export const LANDMARKS = 478
 const BLENDSHAPES = 52
@@ -33,6 +35,8 @@ export interface LiteRtOptions {
   blendshapes: boolean
   /** `always`: run the detector on every frame (its cost), instead of only when no face is tracked. */
   detect: 'track' | 'always'
+  /** Landmark crop: `canvas` (2D canvas, whole frame read back to the CPU) or `gpu` (WebGL2, only the crop read back). */
+  crop: 'canvas' | 'gpu'
 }
 
 /** Per-stage timings of the last `run` (ms, NaN when the stage did not run). */
@@ -151,6 +155,8 @@ export async function createLiteRtPipeline(options: LiteRtOptions): Promise<Lite
   const detectorCtx = detectorCanvas.getContext('2d', { willReadFrequently: true })!
   const cropCanvas = new OffscreenCanvas(LANDMARKS_SIZE, LANDMARKS_SIZE)
   const cropCtx = cropCanvas.getContext('2d', { willReadFrequently: true })!
+  const gpuCropper: GpuCropper | undefined = options.crop === 'gpu' ? createGpuCropper(LANDMARKS_SIZE) : undefined
+  const gpuCrop = new Uint8Array(LANDMARKS_SIZE * LANDMARKS_SIZE * 4)
   const detectorInput = new Float32Array(DETECTOR_SIZE * DETECTOR_SIZE * 3)
   const landmarksInput = new Float32Array(LANDMARKS_SIZE * LANDMARKS_SIZE * 3)
   const blendshapesInput = new Float32Array(BLENDSHAPE_LANDMARKS.length * 2)
@@ -158,7 +164,7 @@ export async function createLiteRtPipeline(options: LiteRtOptions): Promise<Lite
   let tracked: Roi | undefined
 
   /** RGBA bytes → RGB floats in [lo, hi]. */
-  const toFloats = (rgba: Uint8ClampedArray, out: Float32Array, lo: number, hi: number) => {
+  const toFloats = (rgba: Uint8Array | Uint8ClampedArray, out: Float32Array, lo: number, hi: number) => {
     const k = (hi - lo) / 255
     for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
       out[j] = rgba[i]! * k + lo
@@ -182,7 +188,7 @@ export async function createLiteRtPipeline(options: LiteRtOptions): Promise<Lite
   }
 
   return {
-    description: `LiteRT.js ${options.accelerator}${options.accelerator === 'wasm' ? `, ${options.threads} thread${options.threads > 1 ? 's' : ''}` : ''}`,
+    description: `LiteRT.js ${options.accelerator}${options.accelerator === 'wasm' ? `, ${options.threads} thread${options.threads > 1 ? 's' : ''}` : ''}, crop ${options.crop}`,
     timings,
     reset() {
       tracked = undefined
@@ -200,16 +206,21 @@ export async function createLiteRtPipeline(options: LiteRtOptions): Promise<Lite
       }
 
       let t = performance.now()
-      cropCtx.setTransform(1, 0, 0, 1, 0, 0)
-      cropCtx.fillStyle = '#000'
-      cropCtx.fillRect(0, 0, LANDMARKS_SIZE, LANDMARKS_SIZE)
-      // Frame → crop: inverse of the ROI placement (projectLandmarks does the forward mapping).
-      cropCtx.translate(LANDMARKS_SIZE / 2, LANDMARKS_SIZE / 2)
-      cropCtx.scale(LANDMARKS_SIZE / roi.size, LANDMARKS_SIZE / roi.size)
-      cropCtx.rotate(-roi.rotation)
-      cropCtx.translate(-roi.cx, -roi.cy)
-      cropCtx.drawImage(source, 0, 0, width, height)
-      toFloats(cropCtx.getImageData(0, 0, LANDMARKS_SIZE, LANDMARKS_SIZE).data, landmarksInput, 0, 1)
+      if (gpuCropper) {
+        gpuCropper.crop(source as TexImageSource, width, height, roi, gpuCrop)
+        toFloats(gpuCrop, landmarksInput, 0, 1)
+      } else {
+        cropCtx.setTransform(1, 0, 0, 1, 0, 0)
+        cropCtx.fillStyle = '#000'
+        cropCtx.fillRect(0, 0, LANDMARKS_SIZE, LANDMARKS_SIZE)
+        // Frame → crop: inverse of the ROI placement (projectLandmarks does the forward mapping).
+        cropCtx.translate(LANDMARKS_SIZE / 2, LANDMARKS_SIZE / 2)
+        cropCtx.scale(LANDMARKS_SIZE / roi.size, LANDMARKS_SIZE / roi.size)
+        cropCtx.rotate(-roi.rotation)
+        cropCtx.translate(-roi.cx, -roi.cy)
+        cropCtx.drawImage(source, 0, 0, width, height)
+        toFloats(cropCtx.getImageData(0, 0, LANDMARKS_SIZE, LANDMARKS_SIZE).data, landmarksInput, 0, 1)
+      }
       timings.cropMs = performance.now() - t
 
       t = performance.now()
@@ -239,6 +250,7 @@ export async function createLiteRtPipeline(options: LiteRtOptions): Promise<Lite
       detector.delete()
       landmarker.delete()
       blendshaper?.delete()
+      gpuCropper?.dispose()
     },
   }
 }

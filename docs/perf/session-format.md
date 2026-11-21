@@ -132,13 +132,14 @@ check result is logged as a `note` event.
 `trackingMs` is the main-thread time spent in tracking during the frame callback (MediaPipe: the whole `detect`;
 LiteRT.js: the synchronous part of a run, the rest completes after the callback) and `renderMs` the 2D canvas draw
 (frame and landmarks). `app` adds `runtime`, `variant`, `description`, `crossOriginIsolated`, `cores`, `threads` and
-`blendshapes`; the "Check vs MediaPipe" result is logged as a `note` event.
+`blendshapes`, `crop` and `schedule`; the "Check vs MediaPipe" result is logged as a `note` event.
 
 | Column          | Unit  | Meaning |
 |-----------------|-------|---------|
-| `pipelineMs`    | ms    | Frame → result of the run that completed since the previous sample (`null` when none). MediaPipe: same as `trackingMs`. |
+| `runs`          | count | Pipeline runs completed since the previous sample (MediaPipe: 1). Summed per second, this is the tracking rate (`track Hz` in the overlay); with `schedule=eager` it can exceed 1. |
+| `pipelineMs`    | ms    | Start → result of the last run completed since the previous sample (`null` when none). MediaPipe: same as `trackingMs`. |
 | `detectMs`      | ms    | LiteRT.js: letterbox, face detector and decoding, when it ran (no face tracked, or `detect=always`). |
-| `cropMs`        | ms    | LiteRT.js: rotated crop of the ROI to 256×256 on a 2D canvas, readback and conversion to floats. |
+| `cropMs`        | ms    | LiteRT.js: rotated crop of the ROI to 256×256 (2D canvas, or WebGL2 with `crop=gpu`), readback and conversion to floats. |
 | `landmarksMs`   | ms    | LiteRT.js: landmark model, input upload and output readback included. |
 | `blendshapesMs` | ms    | LiteRT.js: blendshapes model (146 points → 52 scores), when enabled. |
 | `readMs`        | ms    | LiteRT.js: copying outputs back to JavaScript (GPU → CPU with WebGPU), also counted in the stages above. |

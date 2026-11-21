@@ -10,12 +10,15 @@
  * - `delegate=CPU|GPU` (mediapipe, default GPU);
  * - `blendshapes=0` (both runtimes: skip the blendshapes model);
  * - `detect=always` (litert: run the detector on every frame, to measure it);
+ * - `crop=gpu` (litert: rotated landmark crop on WebGL2, only the crop read back, instead of the 2D canvas);
+ * - `schedule=eager` (litert: start the next run as soon as one ends, on the latest frame, instead of waiting for the
+ *   next frame callback; runs then no longer snap to the display's 16.7 ms ticks);
  * - `coi=0` (serve the page without cross-origin isolation: what isolation itself changes);
  * - `source=<clip>&autostart`, `window=N` as on the other pages.
  */
 import { CameraError, CameraSource, FrameScheduler, VideoFileSource, createFaceFrame, createFrameSample, type Delegate, type FaceTracker } from '@ouaf/core'
 import { createPerf } from '../../perf.ts'
-import { createFaceResult, createLiteRtPipeline, LANDMARKS, type Accelerator, type LiteRtPipeline } from './litert-pipeline.ts'
+import { createFaceResult, createLiteRtPipeline, LANDMARKS, type Accelerator, type LiteRtPipeline, type StageTimings } from './litert-pipeline.ts'
 
 function $<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id)
@@ -33,6 +36,13 @@ const THREADS = Math.min(16, Math.max(1, Math.trunc(Number(params.get('threads')
 const DELEGATE: Delegate = params.get('delegate')?.toUpperCase() === 'CPU' ? 'CPU' : 'GPU'
 const BLENDSHAPES = params.get('blendshapes') !== '0'
 const DETECT = params.get('detect') === 'always' ? 'always' : 'track'
+const CROP = params.get('crop') === 'gpu' ? 'gpu' : 'canvas'
+const SCHEDULE = params.get('schedule') === 'eager' ? 'eager' : 'frame'
+/**
+ * `schedule=eager` only chains a run right away when the previous one lasted at least this long: a new camera frame
+ * (30 fps) has arrived by then; a shorter run waits for the next frame callback so that no frame is analysed twice.
+ */
+const EAGER_MIN_MS = 30
 
 // --- Status ------------------------------------------------------------------------------------------------------
 const status = $<HTMLDListElement>('status')
@@ -84,7 +94,7 @@ row('Isolation', `crossOriginIsolated ${crossOriginIsolated ? 'yes' : 'no'} · S
 const variant =
   RUNTIME === 'mediapipe'
     ? `MediaPipe tasks-vision, delegate ${DELEGATE}`
-    : `LiteRT.js ${ACCEL}${ACCEL === 'wasm' ? `, ${THREADS} thread${THREADS > 1 ? 's' : ''}` : ''}, detector ${DETECT === 'always' ? 'every frame' : 'when no face is tracked'}`
+    : `LiteRT.js ${ACCEL}${ACCEL === 'wasm' ? `, ${THREADS} thread${THREADS > 1 ? 's' : ''}` : ''}, detector ${DETECT === 'always' ? 'every frame' : 'when no face is tracked'}, crop ${CROP}, schedule ${SCHEDULE}`
 row('Variant', `${variant} · blendshapes ${BLENDSHAPES ? 'on' : 'off'}`)
 const runtimeRow = row('Runtime', 'not started')
 const sourceRow = row('Source', 'not started')
@@ -97,13 +107,15 @@ const checkRow = row('Check vs MediaPipe', 'not run (press “Check” with a fa
  * completed since the previous frame (NaN otherwise), `dropped`: 1 when the frame was not analysed because the
  * previous run was still going.
  */
-const COLUMNS = ['pipelineMs', 'detectMs', 'cropMs', 'landmarksMs', 'blendshapesMs', 'readMs', 'dropped', 'presence'] as const
+const COLUMNS = ['runs', 'pipelineMs', 'detectMs', 'cropMs', 'landmarksMs', 'blendshapesMs', 'readMs', 'dropped', 'presence'] as const
 type Column = (typeof COLUMNS)[number]
 
 let runtimeDescription = ''
 const perf = createPerf({
   columns: COLUMNS,
   live: [
+    // Completed pipeline runs per second: the tracking rate, apart from the rendering frame rate.
+    { column: 'runs', label: 'track Hz', kind: 'rate' },
     { column: 'pipelineMs', label: 'pipeline', kind: 'ms' },
     { column: 'detectMs', label: 'detect', kind: 'ms' },
     { column: 'cropMs', label: 'crop', kind: 'ms' },
@@ -121,6 +133,8 @@ const perf = createPerf({
     cores: CORES,
     threads: RUNTIME === 'litert' && ACCEL === 'wasm' ? THREADS : 0,
     blendshapes: BLENDSHAPES,
+    crop: RUNTIME === 'litert' ? CROP : '',
+    schedule: RUNTIME === 'litert' ? SCHEDULE : '',
   }),
 })
 if (perf) $<HTMLDivElement>('perf').append(perf.element)
@@ -159,7 +173,7 @@ async function ensureRuntime(): Promise<boolean> {
   const t = performance.now()
   try {
     if (RUNTIME === 'litert') {
-      litert = await createLiteRtPipeline({ accelerator: ACCEL, threads: THREADS, blendshapes: BLENDSHAPES, detect: DETECT })
+      litert = await createLiteRtPipeline({ accelerator: ACCEL, threads: THREADS, blendshapes: BLENDSHAPES, detect: DETECT, crop: CROP })
       runtimeDescription = litert.description
     } else {
       const { createFaceTracker } = await import('@ouaf/core')
@@ -220,8 +234,41 @@ let source: CameraSource | VideoFileSource | undefined
 let scheduler: FrameScheduler | undefined
 let busy = false
 /** Result of a LiteRT run completed since the last frame callback, consumed by the next one. */
-let completed: { pipelineMs: number } | undefined
+let completed: { pipelineMs: number; runs: number; timings: StageTimings } | undefined
 let shownAt = -Infinity
+
+/**
+ * Starts a LiteRT run on the video's current frame. With `schedule=eager`, the next run starts as soon as this one
+ * ends (after one rendering step, so that frame callbacks and the paint run in between), instead of on the next frame
+ * callback. Several runs can then complete between two callbacks: `completed.runs` counts them.
+ */
+function startRun(p: LiteRtPipeline) {
+  busy = true
+  const started = performance.now()
+  void p
+    .run(video, video.videoWidth, video.videoHeight, result)
+    .then(() => {
+      completed = { pipelineMs: performance.now() - started, runs: (completed?.runs ?? 0) + 1, timings: { ...p.timings } }
+    })
+    .catch((err: unknown) => {
+      console.error('[spike #83] pipeline run failed:', err)
+      runtimeRow.textContent = `run failed: ${err instanceof Error ? err.message : String(err)}`
+    })
+    .finally(() => {
+      busy = false
+      // check() and bench() pause the video: the chain stops there, as it does on stop().
+      const chain = () => SCHEDULE === 'eager' && litert === p && scheduler !== undefined && !video.paused
+      // Yield to one rendering step first (frame callbacks then requestAnimationFrame, then the paint), then start
+      // the next run in a task of its own: a plain setTimeout chain starves rendering (≈ 1 fps on the Redmi).
+      if (chain() && performance.now() - started >= EAGER_MIN_MS) {
+        requestAnimationFrame(() =>
+          setTimeout(() => {
+            if (!busy && chain()) startRun(p)
+          }, 0),
+        )
+      }
+    })
+}
 
 function stop() {
   scheduler?.dispose()
@@ -275,12 +322,14 @@ async function start() {
     if (mediapipe) {
       mediapipe.detect(video, frame.now, frame.mediaTime, mpFrame)
       extra.pipelineMs = performance.now() - t
+      extra.runs = 1
       remember('pipelineMs', extra.pipelineMs)
       sample.faces = mpFrame.count
     } else if (litert) {
+      extra.runs = completed?.runs ?? 0
       if (completed) {
         extra.pipelineMs = completed.pipelineMs
-        const s = litert.timings
+        const s = completed.timings
         extra.detectMs = s.detectMs
         extra.cropMs = s.cropMs
         extra.landmarksMs = s.landmarksMs
@@ -295,17 +344,7 @@ async function start() {
         droppedFrames++
       } else {
         extra.dropped = 0
-        busy = true
-        const p = litert
-        const started = performance.now()
-        void p
-          .run(video, width, height, result)
-          .then(() => (completed = { pipelineMs: performance.now() - started }))
-          .catch((err: unknown) => {
-            console.error('[spike #83] pipeline run failed:', err)
-            runtimeRow.textContent = `run failed: ${err instanceof Error ? err.message : String(err)}`
-          })
-          .finally(() => (busy = false))
+        startRun(litert)
       }
       sample.faces = result.found ? 1 : 0
     }
