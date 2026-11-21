@@ -61,7 +61,7 @@ jobs:
         run: npm ci
 
       - name: Cache the face model
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: apps/playground/models
           key: models-${{ hashFiles('apps/playground/scripts/fetch-models.ts') }}
