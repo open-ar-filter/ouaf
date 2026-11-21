@@ -101,7 +101,7 @@ const FACE_EVENTS: Array<Omit<EventDef, 'plugin'>> = [
   { name: 'smile', description: 'A smile starts (average of mouthSmileLeft/Right).', status: 'stable', threshold: 0.5, tunable: true, face: true },
   { name: 'smileEnd', description: 'The smile ends.', status: 'stable', face: true },
   { name: 'eyebrowRaise', description: 'Eyebrows raised (browInnerUp).', status: 'stable', threshold: 0.5, tunable: true, face: true },
-  { name: 'kiss', description: 'Kissing lips (mouthPucker).', status: 'stable', threshold: 0.6, tunable: true, face: true },
+  { name: 'kiss', description: 'Kissing lips (mouthPucker).', status: 'stable', threshold: 0.7, tunable: true, face: true },
   { name: 'nod', description: 'Head nod "yes" (pitch oscillation).', status: 'stable', threshold: 0.5, tunable: true, face: true },
   { name: 'shake', description: 'Head shake "no" (yaw oscillation).', status: 'stable', threshold: 0.5, tunable: true, face: true },
 ]

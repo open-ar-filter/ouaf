@@ -30,9 +30,12 @@ export const DataBinding = Type.Object(
   },
 )
 
+/** A { param } or a { bind }: the non-fixed values of a bindable property. */
+export const Binding = Type.Union([ParamBinding, DataBinding])
+
 /** A "bindable" property accepts a fixed value, a { param } or a { bind }. */
 export function Bindable<T extends TSchema>(schema: T) {
-  return Type.Union([schema, ParamBinding, DataBinding], {
+  return Type.Union([schema, ...Binding.anyOf], {
     description: (schema as { description?: string }).description,
     'x-bindable': true,
     'x-hint': 'Fixed value, { "param": "name" } or { "bind": "face.…" }.',
@@ -41,3 +44,4 @@ export function Bindable<T extends TSchema>(schema: T) {
 
 export type TParamBinding = Static<typeof ParamBinding>
 export type TDataBinding = Static<typeof DataBinding>
+export type TBinding = Static<typeof Binding>

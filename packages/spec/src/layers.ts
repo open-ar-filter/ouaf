@@ -22,13 +22,15 @@ export const FacesSelector = Type.Union(
   { default: 'all', description: 'Faces affected: "all" (one instance per face), "first", "largest", or a maximum count.' },
 )
 
-const LayerBase = {
+/** Properties shared by every layer type (a plugin layer type can spread them too). */
+export const LayerBase = {
   id: Type.Optional(Id),
   visible: Type.Optional(Bindable(Type.Boolean({ description: 'Visibility.' }))),
   opacity: Type.Optional(Bindable(Type.Number({ minimum: 0, maximum: 1, description: 'Opacity from 0 to 1.' }))),
 }
 
-const Anchored = {
+/** Properties of the layer types attached to an anchor. */
+export const Anchored = {
   anchor: Type.Optional({ ...AnchorName, default: 'head' }),
   offset: Type.Optional(
     Bindable({ ...Vec3, description: 'Offset [x, y, z] in the anchor frame (1 unit = distance between the eye centers).' }),

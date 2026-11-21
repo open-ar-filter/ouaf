@@ -36,7 +36,7 @@ import {
   type Material,
   type Texture,
 } from 'three'
-import { computeVideoToClip, createVideoToClip, resolveRenderSize, type FitMode, type Size } from '../viewport.ts'
+import { computeVideoToClip, createVideoToClip, resolveRenderSize, type FitMode, type Size, type VideoToClip } from '../viewport.ts'
 import { TRACKER_FOV_Y } from './anchor-provider.ts'
 import type { ObjectsView, PassContext, PassLayer } from './layer-type.ts'
 
@@ -223,6 +223,11 @@ export class Compositor implements ObjectsView {
 
   get mirrored(): boolean {
     return this.#mirrored
+  }
+
+  /** Current video → clip mapping (cover fit, mirroring), as the `video` stage draws it. */
+  get videoToClip(): Readonly<VideoToClip> {
+    return this.#mapping
   }
 
   get disposed(): boolean {

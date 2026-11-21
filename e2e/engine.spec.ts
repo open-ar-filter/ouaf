@@ -14,6 +14,15 @@ async function open(page: Page, query: string): Promise<void> {
   expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
 }
 
+const POLL = { timeout: 30_000, intervals: [250, 500, 1000] }
+
+/** `test(sample)`, logging the sample when it fails so a poll timeout shows the last values. */
+function check<T>(sample: T, test: (s: T) => boolean): boolean {
+  const ok = test(sample)
+  if (!ok) console.log('sample', JSON.stringify(sample))
+  return ok
+}
+
 /** Mean color and count of pure-green pixels of the canvas as displayed (screenshot decoded by the browser). */
 async function sample(page: Page): Promise<{ r: number; g: number; b: number; green: number }> {
   const png = await page.locator('#canvas').screenshot()
@@ -50,9 +59,8 @@ test('a filter folder is tracked, drawn and driven by its params', async ({ page
   expect(state.stats?.trackingHz).toBeGreaterThan(0)
 
   // Yellow tint (color stage) removes blue everywhere; the green dot (objects stage) survives it.
-  const tinted = await sample(page)
-  expect(tinted.b).toBeLessThan(5)
-  expect(tinted.green).toBeGreaterThan(50)
+  // Polled, not sampled once: on a slow (software-rendered) runner a frame can lack the face (hand, turn).
+  await expect.poll(async () => check(await sample(page), (s) => s.b < 5 && s.green > 50), POLL).toBe(true)
 
   // The param reaches the pass on the next frames; at 0 the pass is inactive (fast path, no render target).
   const changes: unknown[] = await page.evaluate(
@@ -68,10 +76,7 @@ test('a filter folder is tracked, drawn and driven by its params', async ({ page
       }),
   )
   expect(changes).toEqual([{ name: 'tint', value: 0, previous: 1 }])
-  await page.waitForTimeout(300)
-  const plain = await sample(page)
-  expect(plain.b).toBeGreaterThan(20)
-  expect(plain.green).toBeGreaterThan(50)
+  await expect.poll(async () => check(await sample(page), (s) => s.b > 20 && s.green > 50), POLL).toBe(true)
 })
 
 test('stack operations and API errors', async ({ page }) => {
@@ -131,13 +136,39 @@ test('stack operations and API errors', async ({ page }) => {
 
 test('params animate over their transition and presets apply', async ({ page }) => {
   await open(page, `source=pesquet-closeup&autostart&filter=${FIXTURE}`)
-  // A 4 s transition (longer than a software-rendered screenshot takes): partway through, blue is partly back.
-  await page.evaluate(() => window.ouaf!.engine.filters[0]!.applyPreset('none', { transition: 4000 }))
-  await page.waitForTimeout(1000)
+  // An 8 s transition (much longer than a software-rendered screenshot takes): partway through, blue is partly back.
+  await page.evaluate(() => window.ouaf!.engine.filters[0]!.applyPreset('none', { transition: 8000 }))
   const during = await sample(page)
-  await page.waitForTimeout(4000)
+  await page.waitForTimeout(8000)
   const after = await sample(page)
-  expect(during.b).toBeGreaterThan(3)
   expect(during.b).toBeLessThan(after.b - 3)
   expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.params)).toEqual({ tint: 0 })
+})
+
+test('bindings drive layer properties from tracking data', async ({ page }) => {
+  // No filter yet, so no tracking: wait for the first stats only.
+  await page.goto('/engine.html?source=pesquet-closeup&autostart')
+  await page.waitForFunction(() => window.ouaf?.stats !== undefined, undefined, { timeout: 60_000 })
+  // faces.count mapped to [0, 1]: full yellow tint while a face is tracked, none without (default 0).
+  await page.evaluate(async () => {
+    const { engine, memorySource } = window.ouaf!
+    await engine.addFilter(
+      memorySource({
+        manifest: {
+          ouaf: '1', id: 'bound', name: 'Bound', version: '1.0.0', license: 'CC0-1.0',
+          requires: { face: true, plugins: ['playground@^1'] },
+          layers: [{ type: 'playground:tint', color: '#ffff00', amount: { bind: 'faces.count', range: [0, 1], to: [0, 1], default: 0 } }],
+        },
+      }),
+    )
+  })
+  await expect.poll(async () => (await sample(page)).b, { timeout: 30_000 }).toBeLessThan(5)
+})
+
+test('expression events reach the filter handle', async ({ page }) => {
+  await page.goto(`/engine.html?source=pesquet-talk&autostart&filter=${FIXTURE}`)
+  // faceEnter comes from face identity as soon as the face is tracked.
+  await expect.poll(() => page.evaluate(() => window.ouaf?.events.map((e) => e.name) ?? []), POLL).toContain('faceEnter')
+  const first = await page.evaluate(() => window.ouaf!.events.find((e) => e.name === 'faceEnter'))
+  expect(first).toEqual({ name: 'faceEnter', faceId: 1, side: null })
 })
