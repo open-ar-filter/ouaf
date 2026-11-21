@@ -32,6 +32,12 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
     dir: resolve(here, '../../test-media'),
     files: /^[\w-]+\.mp4$/,
   },
+  // Built-in resources (#65), lazy-loaded by URL: `assetsBaseUrl` is `<base>builtins/` (see @ouaf/builtins).
+  ...['fonts', 'luts', 'emoji'].map((dir) => ({
+    prefix: `builtins/${dir}/`,
+    dir: resolve(here, '../../packages/builtins/assets', dir),
+    files: /^[\w-]+\.(woff2|cube|png|json)$/,
+  })),
   {
     // Filter folders (demos #37, test fixtures), committed at the repository root: `/filters/<id>/manifest.json`.
     prefix: 'filters/',
@@ -65,6 +71,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.glb': 'model/gltf-binary',
   '.gltf': 'model/gltf+json',
   '.woff2': 'font/woff2',
+  '.cube': 'text/plain; charset=utf-8',
 }
 
 function listFiles(dir: string, files: RegExp, nested = false): string[] {
