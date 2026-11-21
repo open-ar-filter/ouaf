@@ -12,9 +12,11 @@
     "build:schema": "npm run build:schema -w @ouaf/spec",
     "fetch-models": "npm run fetch-models -w @ouaf/playground",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:browser": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@types/node": "^26.6.6",
     "ajv": "^8.20.0",
     "typescript": "^7.0.2",

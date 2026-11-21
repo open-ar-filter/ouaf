@@ -1,3 +1,5 @@
+import type { VideoSource } from './video-source.ts'
+
 export type FacingMode = 'user' | 'environment'
 
 export interface CameraOptions {
@@ -86,7 +88,7 @@ export function resolveMirror(mirror: CameraOptions['mirror'], reported: string 
 }
 
 /** A live camera stream played into a `<video>` element, ready to be scheduled and rendered. */
-export class CameraSource {
+export class CameraSource implements VideoSource {
   readonly video: HTMLVideoElement
   readonly stream: MediaStream
   /** True when the engine must display and capture the image mirrored (front camera). */

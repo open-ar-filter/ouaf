@@ -20,6 +20,12 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
     files: /^vision_wasm(_module)?_internal\.(js|wasm)$/,
   },
   {
+    // Test clips (#77), committed at the repository root; played with `?source=<clip>`.
+    prefix: 'test-media/',
+    dir: resolve(here, '../../test-media'),
+    files: /^[\w-]+\.mp4$/,
+  },
+  {
     // Downloaded by `npm run fetch-models` (gitignored).
     prefix: 'models/',
     dir: resolve(here, 'models'),
@@ -32,6 +38,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.js': 'text/javascript',
   '.wasm': 'application/wasm',
   '.task': 'application/octet-stream',
+  '.mp4': 'video/mp4',
 }
 
 function listFiles(dir: string, files: RegExp): string[] {
@@ -59,8 +66,27 @@ function selfHostedAssets(): Plugin {
             res.end(`Not found: ${path}`)
             return
           }
+          const size = statSync(file).size
           res.setHeader('Content-Type', CONTENT_TYPES[extname(name)] ?? 'application/octet-stream')
-          res.setHeader('Content-Length', statSync(file).size)
+          res.setHeader('Accept-Ranges', 'bytes')
+          // Byte ranges: Safari refuses to play a video without them, and seeking needs them everywhere.
+          const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
+          if (range && (range[1] || range[2])) {
+            const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]))
+            const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1
+            if (start > end || start >= size) {
+              res.statusCode = 416
+              res.setHeader('Content-Range', `bytes */${size}`)
+              res.end()
+              return
+            }
+            res.statusCode = 206
+            res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`)
+            res.setHeader('Content-Length', end - start + 1)
+            createReadStream(file, { start, end }).pipe(res)
+            return
+          }
+          res.setHeader('Content-Length', size)
           createReadStream(file).pipe(res)
           return
         }
