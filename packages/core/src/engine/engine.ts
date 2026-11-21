@@ -13,11 +13,12 @@
  * param changes of every filter → update every layer with the latest tracking result → render the stages.
  */
 import { createRegistry, extendRegistry, type SpecRegistry, type Stage } from '@ouaf/spec'
-import { createFaceFrame } from '../face.ts'
+import { createFaceFrame, type FaceFrame } from '../face.ts'
 import { FrameScheduler, type VideoFrameInfo } from '../scheduler.ts'
 import type { VideoSource } from '../video-source.ts'
 import type { FitMode } from '../viewport.ts'
-import { ProvisionalAnchors } from './anchor-provider.ts'
+import { FaceIdentityTracker, FaceSmoother } from '../anchoring/index.ts'
+import { FaceAnchors } from './anchor-provider.ts'
 import { CORE_LOADERS, memorySource, urlSource, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
 import { builtinPlugins } from './builtin.ts'
 import { Compositor, type StagePasses } from './compositor.ts'
@@ -131,7 +132,14 @@ export class Engine {
 
   #events = new Emitter<EngineEvents>((error) => this.#warn(`An event listener threw: ${String(error)}`))
   #compositor: Compositor
-  #anchors: ProvisionalAnchors
+  #anchors: FaceAnchors
+  /** Stable face ids (spec §5.4), smoothing and prediction of the tracking results (#13). */
+  #identity: FaceIdentityTracker
+  #smoother: FaceSmoother
+  /** Smoothed latest result, and the same predicted to the displayed frame (what layers and bindings read). */
+  #smoothed: FaceFrame
+  #drawn: FaceFrame
+  #seenResults = 0
   #bindingData = new FaceBindingData(createFaceFrame(1))
   #tracking: TrackingHub
   #fetch: typeof fetch
@@ -147,6 +155,8 @@ export class Engine {
   #handles = new Map<FilterInstance, FilterHandle>()
   #nextKey = 1
   #source: VideoSource | undefined
+  /** The source is live (a camera): frames are timed with the clock, not the media time. */
+  #live = false
   #scheduler: FrameScheduler | undefined
   #passes: { [S in 'background' | 'face' | 'warp' | 'color']: PassLayer[] } = { background: [], face: [], warp: [], color: [] }
   #objects: ObjectLayer[] = []
@@ -165,7 +175,11 @@ export class Engine {
     this.#fetch = options.fetch ?? ((input, init) => fetch(input, init))
     this.registry = createRegistry()
     this.#compositor = new Compositor({ canvas: options.canvas, fit: options.fit, scale: options.scale, width: options.width, height: options.height })
-    this.#anchors = new ProvisionalAnchors(createFaceFrame(1), this.#compositor.camera)
+    this.#anchors = new FaceAnchors(createFaceFrame(1), this.#compositor.camera)
+    this.#identity = new FaceIdentityTracker({ maxFaces })
+    this.#smoother = new FaceSmoother(this.#identity)
+    this.#smoothed = createFaceFrame(maxFaces)
+    this.#drawn = createFaceFrame(maxFaces)
     for (const loader of CORE_LOADERS) for (const kind of loader.kinds) this.#loaders.set(kind, loader)
 
     for (const plugin of options.builtins === false ? [] : builtinPlugins()) this.use(plugin)
@@ -277,6 +291,7 @@ export class Engine {
     if (source.disposed) throw new IncompatibleSourceError('The source has been disposed.')
     this.#scheduler?.dispose()
     this.#source = source
+    this.#live = typeof MediaStream !== 'undefined' && source.video.srcObject instanceof MediaStream
     this.#compositor.setVideo(source.video, source.mirrored)
     this.#lastNow = -1
     this.#scheduler = new FrameScheduler(source.video, (frame) => this.#onFrame(frame), { onError: (e) => this.#error(e) })
@@ -359,25 +374,28 @@ export class Engine {
     const start = performance.now()
     const compositor = this.#compositor
     compositor.beginFrame()
-    this.#tracking.submit(this.#source.video, info.now, info.mediaTime)
+    // The frame's time (s): the media time for files (deterministic, spec §12.5); for a live source the clock, since
+    // browsers do not always advance a camera's media time (Firefox reports 0 for every frame).
+    const time = this.#live ? info.now / 1000 : info.mediaTime
+    this.#tracking.submit(this.#source.video, info.now, time)
 
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
       // Media time drives transitions: deterministic with file sources (spec §12.5); a loop counts as no time.
-      filter.params.beginFrame(info.mediaTime * 1000)
+      filter.params.beginFrame(time * 1000)
     }
 
-    const faces = this.#tracking.faces
-    this.#anchors.setFrame(faces, compositor.mirrored)
+    const faces = this.#trackedFaces(time)
+    this.#anchors.setFrame(faces, this.#identity.ids, compositor.mirrored)
     const data = this.#bindingData
     data.faces = faces
-    data.time = info.mediaTime
+    data.time = time
     data.mirrored = compositor.mirrored
     data.videoToClip = compositor.videoToClip
     const frame = this.#frame
     frame.dt = this.#lastNow < 0 ? 0 : info.now - this.#lastNow
     frame.now = info.now
-    frame.time = info.mediaTime
+    frame.time = time
     frame.faces = faces
     frame.width = compositor.width
     frame.height = compositor.height
@@ -394,6 +412,24 @@ export class Engine {
 
     compositor.render(this.#passes as StagePasses)
     this.#recordStats(info.now, performance.now() - start, faces.count)
+  }
+
+  /**
+   * The faces layers see this frame: each new tracking result goes through face identity and smoothing (on the time
+   * of the analysed frame), then the smoothed faces are predicted to the displayed frame's time, which
+   * hides most of the result age of an asynchronous tracker (docs/decisions/tracking-worker.md).
+   */
+  #trackedFaces(time: number): FaceFrame {
+    const tracking = this.#tracking
+    const raw = tracking.faces
+    if (!tracking.active) return raw
+    if (tracking.results !== this.#seenResults) {
+      this.#seenResults = tracking.results
+      this.#identity.update(raw, raw.mediaTime)
+      this.#smoother.update(raw, raw.mediaTime, this.#smoothed)
+    }
+    this.#smoother.predict(this.#smoothed, time, this.#drawn)
+    return this.#drawn
   }
 
   #recordStats(now: number, ms: number, faces: number): void {
