@@ -12,7 +12,7 @@ npm workspaces monorepo, TypeScript only, Node >= 24.
 | `packages/spec` | `@ouaf/spec`: TypeBox schemas and validator of the Ouaf v1 manifest; `scripts/build-schema.ts` |
 | `packages/core` | `@ouaf/core`: the engine (camera, scheduler, face tracking, anchors, renderer, perf stats) |
 | `packages/cli` | `@ouaf/cli`: the `ouaf` command (`validate`; one file per command in `src/commands/`) |
-| `packages/builtins` | `@ouaf/builtins`: built-in fonts, LUTs, emoji set (`assets/`, credits in `assets/CREDITS.md`) and the `builtin:` resolver; `scripts/make.sh` rebuilds them |
+| `packages/builtins` | `@ouaf/builtins`: built-in fonts and LUTs (`assets/`, credits in `assets/CREDITS.md`) and the `builtin:` resolver; `scripts/make.sh` rebuilds the fonts |
 | `apps/playground` | Vite dev app; `spikes/*.html` are extra pages for phase 0 spikes; `scripts/fetch-models.ts` |
 | `e2e/` | Playwright browser tests, driving the playground on the test clips |
 | `test-media/` | Licensed test clips (CC BY 4.0) and `make.sh` to rebuild them |

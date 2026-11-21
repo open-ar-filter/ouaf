@@ -2,8 +2,8 @@
 
 The files of this folder are the engine's built-in resources (spec §10.3), referenced by filters as `builtin:<name>`.
 They are served by the host next to the engine and loaded only when a filter uses them; the engine never fetches them
-from a third party at runtime (spec §15). `scripts/make.sh` rebuilds the fonts and the emoji set from the pinned
-upstream sources below; `scripts/build-luts.ts` generates the LUTs.
+from a third party at runtime (spec §15). `scripts/make.sh` rebuilds the fonts from the pinned upstream sources
+below; `scripts/build-luts.ts` generates the LUTs.
 
 ## Fonts (`fonts/`)
 
@@ -29,26 +29,8 @@ Coverage (code points kept when the font has them): Basic Latin, Latin-1, Latin 
 modifiers, combining diacritics, phonetic extensions, Latin Extended Additional (Vietnamese included), Latin
 Extended-C and -D, Latin ligatures, general punctuation, currency symbols, letterlike symbols (™, №…), basic arrows.
 That is Google Fonts' `latin`, `latin-ext` and `vietnamese` subsets. Greek and Cyrillic are not included. A character
-missing from a built-in font falls back to the system fonts.
-
-## Emoji (`emoji/`)
-
-`font/emoji`: [Noto Color Emoji](https://github.com/googlefonts/noto-emoji), release `v2026-09-24-unicode18_0`
-(font version 2.057, commit `e20cbc2bbec1926686be9f9bee7d1d2cfa1fea0e`), Copyright 2013 Google LLC, SIL Open Font
-License 1.1 (`licenses/OFL-noto-emoji.txt`). The flag images are derived from
-[region-flags](https://github.com/googlefonts/region-flags), in the public domain.
-
-Every emoji of the Unicode 18.0 RGI set (3,972 sequences: 3,964 images and 8 flag aliases) is one PNG of 136×128 px,
-extracted byte for byte from the bitmaps of the font's CBDT table (`scripts/extract-emoji.py`), named after its code
-points (`1f600.png`, `1f1eb-1f1f7.png`); `index.json` lists them with the font's metrics.
-
-Why images and not the font: the acceptance criterion is that emoji look the same on Android, iOS and desktop, and no
-color font format does that today. Noto Color Emoji ships as CBDT bitmaps (Chrome and Android; Safari does not render
-them) and as COLRv1 vectors (Chrome 98+, Firefox 107+, Samsung Internet 18+; Safari on macOS and iOS has no COLRv1 up to
-Safari 27, WebKit bug 233496). Chrome has no SVG-in-OpenType, and COLRv0 regressed in Safari 17 (WebKit bug 262223).
-System emoji fonts differ by platform. Plain images draw the same
-everywhere with Canvas 2D (`drawImage`, also in a worker through `createImageBitmap`), and only the emoji a filter
-uses are downloaded (about 3 KB each, 11 MB for the whole set).
+missing from a built-in font falls back to the system fonts. Emoji are not built in: they are drawn with the
+platform's emoji font (spec §6.3).
 
 ## LUTs (`luts/`)
 

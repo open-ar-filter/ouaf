@@ -48,7 +48,7 @@ export const AssetInlineSvg = Type.Object(
 
 export const AssetEmoji = Type.Object(
   { emoji: Type.String({ minLength: 1, maxLength: 32 }) },
-  { additionalProperties: false, description: 'Emoji rendered with the built-in emoji set (identical on every device).' },
+  { additionalProperties: false, description: "Emoji drawn as an image, with the platform's emoji font or the host's reference set." },
 )
 
 export const AssetEntry = Type.Union([AssetPath, AssetFile, AssetInlineSvg, AssetEmoji], {

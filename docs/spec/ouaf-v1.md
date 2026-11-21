@@ -184,7 +184,9 @@ implementation are listed in Appendix D (informative).
 Normative behavior:
 
 - `text`: the engine SHOULD rasterize text once and redraw it only when its content or style changes.
-  Emoji MUST be rendered with the built-in set (`builtin:font/emoji`) so they look the same on every device.
+  Emoji (in text and `{ "emoji": … }` assets) are drawn with the platform's emoji font, so they look different from
+  one device to another. A host MAY provide a reference emoji set; the engine then SHOULD draw emoji from it, so
+  they look the same on every device.
 - `model.occlusion: "head"`: the part of the object hidden by the head is not drawn (hat, glasses temples).
 - `model.fit`: the object is rescaled so its bounding box has the requested width or height.
 - `model.src: { shape }`: primitives `box`, `sphere`, `torus`, `ring`, `cone`, `cylinder`, `plane`, of size 1, usable without any file.
@@ -306,7 +308,7 @@ The kind is inferred from the extension; `kind` overrides it when needed.
 
 ### 10.3 v1 built-in resources
 
-Fonts `builtin:font/sans`, `sans-bold` (default), `rounded-bold`, `serif`, `mono`, `handwritten`, `emoji` (Noto);
+Fonts `builtin:font/sans`, `sans-bold` (default), `rounded-bold`, `serif`, `mono`, `handwritten`;
 LUTs `builtin:lut/vintage`, `noir`, `warm`, `cool`, `vivid`.
 
 ### 10.4 Loading

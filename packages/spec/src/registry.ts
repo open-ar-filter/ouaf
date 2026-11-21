@@ -151,7 +151,6 @@ export const BUILTINS: Array<[string, BuiltinDef['kind'], string]> = [
   ['font/serif', 'font', 'Serif.'],
   ['font/mono', 'font', 'Monospace.'],
   ['font/handwritten', 'font', 'Handwritten.'],
-  ['font/emoji', 'font', 'Noto emoji set (used automatically for emoji).'],
   ['lut/vintage', 'lut', 'Faded warm tones.'],
   ['lut/noir', 'lut', 'High-contrast black and white.'],
   ['lut/warm', 'lut', 'Warms the image.'],

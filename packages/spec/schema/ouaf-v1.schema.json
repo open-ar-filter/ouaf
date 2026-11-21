@@ -133,7 +133,7 @@
       "required": ["emoji"],
       "properties": { "emoji": { "type": "string", "minLength": 1, "maxLength": 32 } },
       "additionalProperties": false,
-      "description": "Emoji rendered with the built-in emoji set (identical on every device)."
+      "description": "Emoji drawn as an image, with the platform's emoji font or the host's reference set."
     },
     "AssetEntry": {
       "anyOf": [

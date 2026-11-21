@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Rebuilds the fonts and the emoji set of assets/ from their upstream sources (see assets/CREDITS.md).
+# Rebuilds the fonts of assets/ from their upstream sources (see assets/CREDITS.md).
 # Requires curl, sha256sum, python3 with fontTools and brotli
 # (`pip install fonttools brotli`).
 # Not run by CI: the outputs are committed. The LUTs are our own work, see build-luts.ts (`npm run build:luts`).
 #
-#   packages/builtins/scripts/make.sh [fonts|emoji|all] [work-dir]   (default: all, packages/builtins/.work)
+#   packages/builtins/scripts/make.sh [work-dir]   (default: packages/builtins/.work)
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 assets=$here/../assets
-what=${1:-all}
-work=${2:-$here/../.work}
+work=${1:-$here/../.work}
 mkdir -p "$work"
 
 fetch() { # url file sha256
@@ -38,26 +37,11 @@ fonts=(
   "handwritten   caveat        Caveat%5Bwght%5D.ttf              wght=500          0bdb6b660482d31531b3945849fba5916b3ef8695da7024a9e6b9ee3c4157988"
 )
 
-if [ "$what" = fonts ] || [ "$what" = all ]; then
-  for f in "${fonts[@]}"; do
-    read -r name dir file axes sha <<<"$f"
-    fetch "$gf/$dir/$file" "$work/fonts/$dir.ttf" "$sha"
-    curl -fsSL -o "$assets/licenses/OFL-$dir.txt" "$gf/$dir/OFL.txt"
-    python3 -I "$here/make-font.py" "$work/fonts/$dir.ttf" "$assets/fonts/$name.woff2" "$axes" "$ranges"
-  done
-  ls -l "$assets/fonts"
-fi
+for f in "${fonts[@]}"; do
+  read -r name dir file axes sha <<<"$f"
+  fetch "$gf/$dir/$file" "$work/fonts/$dir.ttf" "$sha"
+  curl -fsSL -o "$assets/licenses/OFL-$dir.txt" "$gf/$dir/OFL.txt"
+  python3 -I "$here/make-font.py" "$work/fonts/$dir.ttf" "$assets/fonts/$name.woff2" "$axes" "$ranges"
+done
+ls -l "$assets/fonts"
 
-# Noto Color Emoji (googlefonts/noto-emoji, release v2026-09-24-unicode18_0): the CBDT font holds every emoji as a
-# PNG, flags included (the repository's png/ folders have no flags). The Unicode 18.0 emoji-test.txt lists the RGI set.
-noto=https://raw.githubusercontent.com/googlefonts/noto-emoji/e20cbc2bbec1926686be9f9bee7d1d2cfa1fea0e
-if [ "$what" = emoji ] || [ "$what" = all ]; then
-  fetch "$noto/2D/fonts/NotoColorEmoji.ttf" "$work/NotoColorEmoji.ttf" 15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44
-  fetch "$noto/emoji_aliases.txt" "$work/emoji_aliases.txt" 8486155d242f84e8c04108705383b11f9f351cc60147734c15d50b8eaa4df370
-  fetch https://www.unicode.org/Public/18.0.0/emoji/emoji-test.txt "$work/emoji-test.txt" \
-    8f3735cda1f92a779d78af67cf86066bb1f07143dc22f2ac29394d9bc57ab21a
-  curl -fsSL -o "$assets/licenses/OFL-noto-emoji.txt" "$noto/LICENSE"
-  python3 -I "$here/extract-emoji.py" "$work/NotoColorEmoji.ttf" "$work/emoji-test.txt" "$work/emoji_aliases.txt" \
-    "$assets/fonts" "$assets/emoji"
-  du -sh --apparent-size "$assets/emoji"
-fi

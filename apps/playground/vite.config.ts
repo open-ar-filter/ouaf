@@ -33,10 +33,10 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
     files: /^[\w-]+\.mp4$/,
   },
   // Built-in resources (#65), lazy-loaded by URL: `assetsBaseUrl` is `<base>builtins/` (see @ouaf/builtins).
-  ...['fonts', 'luts', 'emoji'].map((dir) => ({
+  ...['fonts', 'luts'].map((dir) => ({
     prefix: `builtins/${dir}/`,
     dir: resolve(here, '../../packages/builtins/assets', dir),
-    files: /^[\w-]+\.(woff2|cube|png|json)$/,
+    files: /^[\w-]+\.(woff2|cube)$/,
   })),
   {
     // Filter folders (demos #37, test fixtures), committed at the repository root: `/filters/<id>/manifest.json`.

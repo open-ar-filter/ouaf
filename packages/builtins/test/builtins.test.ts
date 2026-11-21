@@ -15,8 +15,7 @@ describe('built-in resources', () => {
     for (const [name, def] of registry) {
       const asset = findBuiltin(`builtin:${name}`)
       expect(asset, name).toBeDefined()
-      // font/emoji is registered as a font; it is an image set here.
-      expect(asset!.kind === 'emoji' ? 'font' : asset!.kind, name).toBe(def.kind)
+      expect(asset!.kind, name).toBe(def.kind)
       expect(existsSync(file(asset!.path)), asset!.path).toBe(true)
       const url = resolveBuiltin(`builtin:${name}`, 'https://example.com/ouaf/')
       expect(url.href).toBe(`https://example.com/ouaf/${asset!.path}`)
@@ -37,7 +36,7 @@ describe('built-in resources', () => {
 
   it('ships the licence of every font and the credits', () => {
     const credits = readFileSync(file('CREDITS.md'), 'utf8')
-    for (const name of ['inter', 'nunito', 'notoserif', 'jetbrainsmono', 'caveat', 'noto-emoji']) {
+    for (const name of ['inter', 'nunito', 'notoserif', 'jetbrainsmono', 'caveat']) {
       const licence = readFileSync(file(`licenses/OFL-${name}.txt`), 'utf8')
       expect(licence, name).toContain('SIL Open Font License, Version 1.1')
       expect(credits, name).toContain(`licenses/OFL-${name}.txt`)

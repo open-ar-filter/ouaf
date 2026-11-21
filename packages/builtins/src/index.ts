@@ -1,6 +1,5 @@
 /**
- * Built-in resources of the engine (spec §10.3): fonts, LUTs and the emoji set, referenced by filters as
- * `builtin:<name>`.
+ * Built-in resources of the engine (spec §10.3): fonts and LUTs, referenced by filters as `builtin:<name>`.
  *
  * The files live in this package's `assets/` folder, which the host serves next to the engine (same origin or its
  * own CDN, never a third party: spec §15) under an `assetsBaseUrl`. This module only maps names to URLs: nothing is
@@ -28,16 +27,7 @@ export interface BuiltinLut {
   size: number
 }
 
-/**
- * The emoji set: `path` is its index (`EmojiIndex`, see emoji.ts); each emoji is a separate image next to it,
- * loaded only when some text uses it.
- */
-export interface BuiltinEmojiSet {
-  kind: 'emoji'
-  path: string
-}
-
-export type BuiltinAsset = BuiltinFont | BuiltinLut | BuiltinEmojiSet
+export type BuiltinAsset = BuiltinFont | BuiltinLut
 
 const font = (file: string, family: string, weight: number): BuiltinFont => ({
   kind: 'font',
@@ -50,8 +40,7 @@ const lut = (name: string): BuiltinLut => ({ kind: 'lut', path: `luts/${name}.cu
 
 /**
  * Every built-in resource, by name (without the `builtin:` prefix). Same names as the spec registry
- * (`BUILTINS` in @ouaf/spec); `font/emoji` is registered there as a font but is an image set here, because no
- * color font format renders the same in every browser (see assets/CREDITS.md).
+ * (`BUILTINS` in @ouaf/spec).
  */
 export const BUILTIN_ASSETS: Readonly<Record<string, BuiltinAsset>> = {
   'font/sans': font('sans', 'Ouaf Sans', 400),
@@ -60,7 +49,6 @@ export const BUILTIN_ASSETS: Readonly<Record<string, BuiltinAsset>> = {
   'font/serif': font('serif', 'Ouaf Serif', 400),
   'font/mono': font('mono', 'Ouaf Mono', 400),
   'font/handwritten': font('handwritten', 'Ouaf Handwritten', 500),
-  'font/emoji': { kind: 'emoji', path: 'emoji/index.json' },
   'lut/vintage': lut('vintage'),
   'lut/noir': lut('noir'),
   'lut/warm': lut('warm'),
@@ -91,16 +79,8 @@ export function resolveBuiltin(ref: string, assetsBaseUrl: string | URL): URL {
   return new URL(asset.path, baseUrl(assetsBaseUrl))
 }
 
-/** URL of one emoji image, from its key (see `EmojiSet.split`). */
-export function emojiImageUrl(key: string, assetsBaseUrl: string | URL): URL {
-  if (!/^[0-9a-f]+(-[0-9a-f]+)*$/.test(key)) throw new Error(`Invalid emoji key "${key}"`)
-  return new URL(`emoji/${key}.png`, baseUrl(assetsBaseUrl))
-}
-
 function baseUrl(base: string | URL): URL {
   const s = String(base)
   const abs = URL.canParse(s) ? s : new URL(s, globalThis.location?.href).href
   return new URL(abs.endsWith('/') ? abs : abs + '/')
 }
-
-export * from './emoji.ts'

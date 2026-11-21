@@ -1,19 +1,9 @@
 /**
  * Built-ins page (`/builtins.html`): shows the resources of `@ouaf/builtins` (#65) the way the text and color
- * layers will use them, until those layers exist: the fonts registered with `FontFace`, text with emoji drawn on a
- * canvas from the image set, and the LUTs applied in WebGL 2 to a test clip or the camera.
+ * layers will use them, until those layers exist: the fonts registered with `FontFace`, and the LUTs applied in
+ * WebGL 2 to a test clip or the camera.
  */
-import {
-  BUILTIN_ASSETS,
-  EmojiSet,
-  emojiBox,
-  emojiImageUrl,
-  mayContainEmoji,
-  parseEmojiIndex,
-  resolveBuiltin,
-  type BuiltinFont,
-  type BuiltinLut,
-} from '@ouaf/builtins'
+import { BUILTIN_ASSETS, resolveBuiltin, type BuiltinFont, type BuiltinLut } from '@ouaf/builtins'
 
 const BASE = new URL('builtins/', document.baseURI)
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -27,7 +17,6 @@ const css = (f: BuiltinFont, size: number) => `${f.weight} ${size}px "${f.family
 const fontText = $<HTMLInputElement>('font-text')
 fontText.value = 'Ouaf! Ça déjà vu, Ærøskøbing, Łódź, Tiếng Việt — 0123456789 €£¥ → “quotes”'
 const samples: HTMLElement[] = []
-const fontLoads = new Map<string, Promise<unknown>>()
 
 for (const [name, font] of fonts) {
   const row = document.createElement('div')
@@ -47,109 +36,15 @@ for (const [name, font] of fonts) {
   const url = resolveBuiltin(`builtin:${name}`, BASE)
   const face = new FontFace(font.family, `url(${url.href})`, { weight: String(font.weight), style: font.style })
   const t0 = performance.now()
-  fontLoads.set(
-    name,
-    face.load().then(
-      (loaded) => {
-        document.fonts.add(loaded)
-        label.textContent = `builtin:${name}\n${font.family} ${font.weight}, ${Math.round(performance.now() - t0)} ms`
-      },
-      (err: unknown) => (label.textContent = `builtin:${name}\nfailed: ${String(err)}`),
-    ),
+  face.load().then(
+    (loaded) => {
+      document.fonts.add(loaded)
+      label.textContent = `builtin:${name}\n${font.family} ${font.weight}, ${Math.round(performance.now() - t0)} ms`
+    },
+    (err: unknown) => (label.textContent = `builtin:${name}\nfailed: ${String(err)}`),
   )
 }
 fontText.addEventListener('input', () => samples.forEach((s) => (s.textContent = fontText.value)))
-
-// --- Emoji -----------------------------------------------------------------------------------------------------
-
-const emojiText = $<HTMLTextAreaElement>('emoji-text')
-emojiText.value = [
-  'Hello 👋🏽 world 🌍! Flags 🇫🇷🇯🇵🇺🇦 🏴󠁧󠁢󠁳󠁣󠁴󠁿 🏳️‍🌈',
-  'ZWJ 👩‍👩‍👧‍👦 🧑🏿‍🚀 👨🏻‍❤️‍💋‍👨🏼 keycaps 1️⃣ #️⃣',
-  'No VS16: ❤ ☺ ✌ ▶   with VS15: ❤︎ ☺︎',
-  '© ® ™ stay text, ©️ ®️ ™️ are emoji',
-].join('\n')
-const emojiFont = $<HTMLSelectElement>('emoji-font')
-for (const [name] of fonts) emojiFont.add(new Option(name, name))
-const emojiSize = $<HTMLInputElement>('emoji-size')
-const emojiCanvas = $<HTMLCanvasElement>('emoji-canvas')
-const status = $('emoji-status')
-
-let emojiSet: Promise<EmojiSet> | undefined
-const images = new Map<string, Promise<ImageBitmap>>()
-
-/** The index is only fetched once some text may contain an emoji. */
-const loadSet = () =>
-  (emojiSet ??= fetch(resolveBuiltin('builtin:font/emoji', BASE))
-    .then((r) => r.json())
-    .then((json) => new EmojiSet(parseEmojiIndex(json))))
-
-const loadImage = (key: string) => {
-  let p = images.get(key)
-  if (!p) {
-    p = fetch(emojiImageUrl(key, BASE))
-      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`${r.status} for ${key}`))))
-      .then((b) => createImageBitmap(b))
-    images.set(key, p)
-  }
-  return p
-}
-
-let drawId = 0
-async function drawEmoji() {
-  const id = ++drawId
-  const text = emojiText.value
-  const [, font] = fonts.find(([n]) => n === emojiFont.value) ?? fonts[0]!
-  const size = Number(emojiSize.value)
-  $('native').style.font = `${font.weight} ${size}px "${font.family}", system-ui`
-  $('native').textContent = text
-  await fontLoads.get(emojiFont.value)
-
-  const set = mayContainEmoji(text) ? await loadSet() : undefined
-  const lines = text.split('\n').map((line) => (set ? set.split(line) : [{ emoji: false as const, text: line }]))
-  const keys = [...new Set(lines.flat().flatMap((r) => (r.emoji ? [r.key] : [])))]
-  const t0 = performance.now()
-  const bitmaps = new Map(await Promise.all(keys.map(async (k) => [k, await loadImage(k).catch(() => undefined)] as const)))
-  if (id !== drawId) return
-  status.textContent = set
-    ? `${keys.length} emoji images (${Math.round(performance.now() - t0)} ms), ${images.size} cached`
-    : 'no emoji: index not loaded'
-
-  const ctx = emojiCanvas.getContext('2d')!
-  ctx.font = css(font, size)
-  const box = set ? emojiBox(set.index, size) : undefined
-  const lineHeight = Math.ceil(size * 1.4)
-  const widths = lines.map((runs) => runs.reduce((w, r) => w + (r.emoji ? box!.advance : ctx.measureText(r.text).width), 0))
-  const dpr = devicePixelRatio
-  const width = Math.ceil(Math.max(100, ...widths) + 16)
-  const height = lineHeight * lines.length + 16
-  emojiCanvas.width = width * dpr
-  emojiCanvas.height = height * dpr
-  emojiCanvas.style.width = `${width}px`
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  ctx.font = css(font, size)
-  ctx.fillStyle = getComputedStyle(document.body).color
-  ctx.textBaseline = 'alphabetic'
-  lines.forEach((runs, i) => {
-    let x = 8
-    const y = 8 + i * lineHeight + size
-    for (const run of runs) {
-      if (!run.emoji) {
-        ctx.fillText(run.text, x, y)
-        x += ctx.measureText(run.text).width
-        continue
-      }
-      const bmp = bitmaps.get(run.key)
-      if (bmp) ctx.drawImage(bmp, x + box!.x, y + box!.y, box!.width, box!.height)
-      x += box!.advance
-    }
-  })
-  $('runs').textContent = lines
-    .map((runs) => runs.map((r) => (r.emoji ? `[${r.key}]` : JSON.stringify(r.text))).join(' '))
-    .join('\n')
-}
-for (const el of [emojiText, emojiFont, emojiSize]) el.addEventListener('input', () => void drawEmoji())
-void drawEmoji()
 
 // --- LUTs ------------------------------------------------------------------------------------------------------
 

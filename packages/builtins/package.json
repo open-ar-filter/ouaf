@@ -1,7 +1,7 @@
 {
   "name": "@ouaf/builtins",
   "version": "0.1.0",
-  "description": "Built-in resources of the Ouaf engine (fonts, LUTs, emoji set) and the resolver of builtin: references",
+  "description": "Built-in resources of the Ouaf engine (fonts, LUTs) and the resolver of builtin: references",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",

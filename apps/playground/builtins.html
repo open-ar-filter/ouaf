@@ -18,10 +18,7 @@
       .font-row .sample { font-size: 28px; overflow-wrap: anywhere; }
       .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 8px 0; }
       canvas { display: block; max-width: 100%; }
-      #emoji-canvas { background: color-mix(in srgb, currentColor 6%, transparent); }
       #lut-canvas { width: 100%; max-width: 640px; background: #000; touch-action: none; }
-      #native { white-space: pre-wrap; padding: 8px; background: color-mix(in srgb, currentColor 6%, transparent); }
-      #runs { font-size: 12px; white-space: pre-wrap; }
       video { position: fixed; top: 0; left: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
       .lut-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
       .lut-buttons button[aria-pressed='true'] { outline: 2px solid currentColor; }
@@ -35,22 +32,6 @@
       <h2>Fonts</h2>
       <input id="font-text" type="text" />
       <div id="fonts"></div>
-    </section>
-
-    <section>
-      <h2>Emoji</h2>
-      <textarea id="emoji-text" rows="6"></textarea>
-      <div class="controls">
-        <label>Font <select id="emoji-font"></select></label>
-        <label>Size <input id="emoji-size" type="range" min="12" max="96" value="40" /></label>
-        <span id="emoji-status"></span>
-      </div>
-      <h3>Drawn from the built-in set (canvas)</h3>
-      <canvas id="emoji-canvas"></canvas>
-      <h3>Same text with the system emoji font (DOM)</h3>
-      <div id="native"></div>
-      <h3>Runs</h3>
-      <pre id="runs"></pre>
     </section>
 
     <section>
