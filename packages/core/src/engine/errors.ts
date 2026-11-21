@@ -3,6 +3,7 @@
  * message; nothing is fixed silently (spec §9: invalid values are rejected, never corrected).
  */
 import type { Issue } from '@ouaf/spec'
+import { ParamError, type ParamErrorCode } from '../params/errors.ts'
 
 export type OuafErrorCode =
   | 'invalid-manifest'
@@ -100,11 +101,30 @@ export class AssetError extends OuafError {
 /** A parameter value was rejected (type, bounds, unknown option or param, invalid preset). */
 export class InvalidParamError extends OuafError {
   override name = 'InvalidParamError'
-  readonly param: string
+  /** Parameter concerned, when there is one. */
+  readonly param: string | undefined
+  /** Preset concerned, when the value comes from a preset. */
+  readonly preset: string | undefined
+  /** Why the value was rejected (`range`, `type`, `enum`, `unknown-param`…, see `ParamErrorCode`). */
+  readonly reason: ParamErrorCode | undefined
 
-  constructor(param: string, message: string) {
-    super('invalid-param', message)
-    this.param = param
+  constructor(message: string, details: { param?: string | undefined; preset?: string | undefined; reason?: ParamErrorCode | undefined; cause?: unknown } = {}) {
+    super('invalid-param', message, details.cause === undefined ? undefined : { cause: details.cause })
+    this.param = details.param
+    this.preset = details.preset
+    this.reason = details.reason
+  }
+}
+
+/** Runs `fn`, turning a `ParamError` of the params store into the public `InvalidParamError`. */
+export function withParamErrors<T>(filterId: string, fn: () => T): T {
+  try {
+    return fn()
+  } catch (error) {
+    if (error instanceof ParamError) {
+      throw new InvalidParamError(`Filter "${filterId}": ${error.message}`, { param: error.param, preset: error.preset, reason: error.code, cause: error })
+    }
+    throw error
   }
 }
 

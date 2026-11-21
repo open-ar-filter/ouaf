@@ -20,7 +20,7 @@ import type { Camera, Material, Object3D, Texture, WebGLRenderTarget, WebGLRende
 import type { FaceFrame } from '../face.ts'
 import type { AnchorProvider } from './anchor-provider.ts'
 import type { LoadedAssets } from './assets.ts'
-import type { ParamReader } from './params.ts'
+import type { ParamReader, ParamValue } from '../params/index.ts'
 
 /** A layer declaration as written in the manifest (already validated against the layer type's schema). */
 export type LayerDecl = { readonly type: string; readonly id?: string } & Readonly<Record<string, unknown>>
@@ -73,8 +73,11 @@ export interface LayerContext {
   readonly view: ObjectsView
   /** The filter's preloaded assets (spec §10.4: every asset is loaded before the filter is activated). */
   readonly assets: LoadedAssets
-  /** The filter's current parameter values (spec §9), read-only. */
-  readonly params: ParamReader
+  /**
+   * The filter's parameters (spec §9), read-only. Resolve a parameter once with `indexOf`, then read its **animated**
+   * value every frame with `numberAt` / `numbers` (transitions); `get` gives the committed value (strings, selects).
+   */
+  readonly params: ParamReader & { get(name: string): ParamValue }
   /** Maximum number of faces of the engine: size per-face resources for it. */
   readonly maxFaces: number
   /** Reports a non-fatal problem to the host (`engine.on('warning')`). */
