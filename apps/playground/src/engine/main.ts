@@ -76,5 +76,16 @@ async function start(): Promise<void> {
   }
 }
 
+// Diagnostic: the media time the engine receives for each frame (it drives smoothing, prediction and transitions).
+let lastMediaTime = -1
+let stuckFrames = 0
+const onVideoFrame = (_now: number, meta: VideoFrameCallbackMetadata) => {
+  stuckFrames = meta.mediaTime === lastMediaTime ? stuckFrames + 1 : 0
+  lastMediaTime = meta.mediaTime
+  show('media time', `${meta.mediaTime.toFixed(3)} s${stuckFrames > 5 ? ` (not advancing: fine for a camera, the engine times live sources with the clock)` : ''}`)
+  video.requestVideoFrameCallback(onVideoFrame)
+}
+if ('requestVideoFrameCallback' in video) video.requestVideoFrameCallback(onVideoFrame)
+
 startButton.addEventListener('click', () => void start())
 if (params.has('autostart') && SOURCE) void start()

@@ -28,7 +28,10 @@ export type LayerDecl = { readonly type: string; readonly id?: string } & Readon
 
 /** Per-frame data shared by every layer of the stack. Valid during `update`/`render` only; never retain it. */
 export interface FrameContext {
-  /** Media time of the frame in seconds (`time` data path; deterministic with file sources, spec §12.5). */
+  /**
+   * Time of the frame in seconds (`time` data path): the media time for video files (deterministic, spec §12.5),
+   * the clock for a live camera.
+   */
   readonly time: number
   /** Monotonic clock of the frame in milliseconds. */
   readonly now: number
