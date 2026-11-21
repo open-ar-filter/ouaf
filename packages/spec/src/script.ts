@@ -83,6 +83,10 @@ export interface Frame<FS = Record<string, unknown>> {
 
 /** A value `.animate()` can interpolate. */
 export type AnimValue = number | Vec2 | Vec3 | string
+/** Keyframes of `.animate()`, evenly spaced over `duration` (spec §12.4): at least two values. */
+export interface Keyframes {
+  keyframes: readonly [AnimValue, AnimValue, ...AnimValue[]]
+}
 /**
  * Properties `.set()` accepts (spec §12.4). `null` restores the manifest value (fixed or bound). Unknown names are
  * reported by the engine, since the set depends on the layer type.
@@ -115,8 +119,8 @@ export interface AnimateOptions {
 
 export interface LayerHandle {
   set(props: SettableProps): void
-  /** A value is the target, or a list of keyframes evenly spaced over `duration` (spec §12.4). */
-  animate(props: Record<string, AnimValue | readonly AnimValue[]>, options: AnimateOptions): void
+  /** A value is the target; `{ keyframes: [...] }` plays a list of values evenly spaced over `duration` (spec §12.4). */
+  animate(props: Record<string, AnimValue | Keyframes>, options: AnimateOptions): void
   /** Model layers: start a glTF animation. */
   play(animation: string): void
   /** Canvas layers: redraw at the next frame. */

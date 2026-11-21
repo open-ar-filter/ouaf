@@ -414,7 +414,7 @@ export default defineFilter({
     smile(f, { face }) {                      // every face event carries the face concerned
       f.state.smiles++
       f.layer('label', face).set({ text: `😄 × ${f.state.smiles}` })
-      f.layer('label', face).animate({ scale: [1, 1.4, 1] }, { duration: 300, easing: 'outBack' })
+      f.layer('label', face).animate({ scale: { keyframes: [1, 1.4, 1] } }, { duration: 300, easing: 'outBack' })
       f.emit('smiles', f.state.smiles)
     },
   },
@@ -446,10 +446,11 @@ export default defineFilter({
   `anchor`, `faces`, `stage`, `kind`, `width`, `height`) cannot be set. A set value **replaces** the property's
   binding, if any, until the script sets the property to `null`, which restores the manifest value (fixed or bound).
 - `.animate(props, { duration, easing?, delay?, repeat? })`: animates numbers, vectors and colors, played by the
-  engine at the frame rate (no per-frame message). A value is either the target (animated from the current value) or
-  a list of keyframes evenly spaced over `duration`: for a vector property (`offset`, `rotation`), a list of numbers
-  is the target and a list of vectors is keyframes; for `scale`, a list of numbers is keyframes of a uniform scale
-  (`{ scale: [1, 1.4, 1] }`). `repeat`: number of extra runs, `-1` for endless. Animating a
+  engine at the frame rate (no per-frame message). A value is the target, animated from the current value: a number,
+  a color or a vector (`{ scale: [1, 1.4, 1] }` stretches vertically). Keyframes are written `{ keyframes: [...] }`:
+  at least two values of the property's type, evenly spaced over `duration`, the first one replacing the current
+  value (`{ scale: { keyframes: [1, 1.4, 1] } }` is a uniform "pop"). An array is never read as keyframes, so a
+  vector target is never ambiguous. `repeat`: number of extra runs, `-1` for endless. Animating a
   property cancels the previous animation of that property. The final value stays set, as with `.set()`.
 - `.play(animationName)` (model), `.invalidate()` (canvas: redraw at the next frame).
 - Easings: `linear`, and `in`, `out`, `inOut` × `Quad`, `Cubic`, `Back`, `Elastic`, `Bounce` (e.g. `outBack`,

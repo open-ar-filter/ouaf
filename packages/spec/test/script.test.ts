@@ -30,7 +30,12 @@ describe('defineFilter', () => {
       smile(f, { face }) {
         f.state.smiles++
         f.layer('label', face).set({ text: `${f.state.smiles}`, opacity: null })
-        f.layer('label', face).animate({ scale: [1, 1.4, 1] }, { duration: 300, easing: 'outBack' })
+        f.layer('label', face).animate({ scale: { keyframes: [1, 1.4, 1] } }, { duration: 300, easing: 'outBack' })
+        f.layer('label').animate({ scale: [1, 1.4, 1], offset: { keyframes: [[0, 0, 0], [0, 1, 0]] } }, { duration: 300 })
+        // @ts-expect-error: keyframes need at least two values
+        f.layer('label').animate({ opacity: { keyframes: [0] } }, { duration: 100 })
+        // @ts-expect-error: a list of numbers longer than a vector is not a value (keyframes are explicit)
+        f.layer('label').animate({ scale: [1, 1.4, 1, 1.2] }, { duration: 100 })
         // @ts-expect-error: no layer has this id
         f.layer('nope')
         // @ts-expect-error: unknown easing
