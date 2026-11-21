@@ -108,7 +108,6 @@ the age of a worker tracker's results. Layers and bindings read these predicted 
 | Face tracker | MediaPipe tasks-vision, main thread | LiteRT.js pipeline in a worker (face-runtime.md, tracking-worker.md) |
 | Scripts, `send`, `filter:<name>` | warning, no-op | #26 sandbox |
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
-| Built-in resources (`builtin:`) | `<assetsBaseUrl>/builtin/<name>` | #65 layout |
 
 ## Testing a layer type
 
