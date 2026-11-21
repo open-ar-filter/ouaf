@@ -437,7 +437,8 @@ describe('expression events: recorded sequences', () => {
 })
 
 describe('expression events: allocation', () => {
-  it('allocates nothing per frame', () => {
+  // 230,000 frames with forced GC: about 2 s on a fast machine, more than Vitest's default 5 s on a CI runner.
+  it('allocates nothing per frame', { timeout: 30_000 }, () => {
     setFlagsFromString('--expose-gc')
     const gc = runInNewContext('gc') as () => void
     const maxFaces = 4
