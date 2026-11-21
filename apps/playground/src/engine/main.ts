@@ -18,6 +18,7 @@ declare global {
       frames: number
       warnings: string[]
       errors: string[]
+      events: Array<{ name: string; faceId: number; side: string | null }>
     }
   }
 }
@@ -32,7 +33,7 @@ const log = document.getElementById('log') as HTMLPreElement
 const startButton = document.getElementById('start') as HTMLButtonElement
 
 const engine = createEngine({ canvas, assetsBaseUrl: new URL('./', document.baseURI).href, maxFaces: MAX_FACES, plugins: [playgroundPlugin] })
-const hook = { engine, core, memorySource, stats: undefined as EngineStats | undefined, frames: 0, warnings: [] as string[], errors: [] as string[] }
+const hook = { engine, core, memorySource, stats: undefined as EngineStats | undefined, frames: 0, warnings: [] as string[], errors: [] as string[], events: [] as Array<{ name: string; faceId: number; side: string | null }> }
 window.ouaf = hook
 
 const lines = new Map<string, string>()
@@ -67,6 +68,14 @@ async function start(): Promise<void> {
     for (const url of FILTERS) {
       const handle = await engine.addFilter(url)
       show(`filter ${handle.index}`, `${handle.id} (${url})${handle.warnings.length ? ` — ${handle.warnings.join('; ')}` : ''}`)
+      // Expression events delivered to the filter (spec §13): counts and the last one.
+      const counts = new Map<string, number>()
+      handle.on('expression', (e) => {
+        counts.set(e.name, (counts.get(e.name) ?? 0) + 1)
+        hook.events.push(e)
+        const last = `${e.name}${e.side ? ` (${e.side})` : ''}, face ${e.faceId}`
+        show(`events ${handle.id}`, `last: ${last} — ${[...counts].map(([n, c]) => `${n} ×${c}`).join(', ')}`)
+      })
     }
     renderParams(document.getElementById('params') as HTMLElement, engine.filters, (message) => show('param error', message))
   } catch (error) {
