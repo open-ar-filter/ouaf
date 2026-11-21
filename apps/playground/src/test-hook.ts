@@ -1,4 +1,4 @@
-import { liveAnchorPosition, type FaceFrame, type LandmarkAnchor } from '@ouaf/core'
+import { BLENDSHAPES_STRIDE, LANDMARKS_STRIDE, MATRIX_STRIDE, liveAnchorPosition, type FaceFrame, type LandmarkAnchor } from '@ouaf/core'
 
 /**
  * Hooks for the browser tests (`?test`): counts what the pipeline produced and exposes it on `window.ouafTest`.
@@ -18,6 +18,11 @@ export interface OuafTestHook {
   delegate: string | null
   /** 16×16 luminance (0–255) of the last rendered canvas, row-major, for mirroring checks. */
   thumbnail: number[]
+  /**
+   * Set to `[]` to record face 0 on every processed frame (expression fixtures, `e2e/record-expressions.spec.ts`):
+   * media time, blendshapes, transformation matrix and landmarks, or `face: null` for frames without a face.
+   */
+  recording?: Array<{ time: number; blendshapes: number[]; matrix: number[]; landmarks: number[] } | { time: number; face: null }>
   /** True once a non-looping source has played to its end. */
   readonly ended: boolean
   /** Pauses the video at `time` (s) and resolves once that frame has been processed and rendered. */
@@ -102,6 +107,14 @@ export function createTestHook(video: HTMLVideoElement): { afterFrame(faces: Fac
           anchors[a] = { x: p.x, y: p.y }
         }
         hook.lastAnchors = anchors
+      }
+      if (hook.recording) {
+        hook.recording.push(faces.count === 0 ? { time: mediaTime, face: null } : {
+          time: mediaTime,
+          blendshapes: Array.from(faces.blendshapes.subarray(0, BLENDSHAPES_STRIDE)),
+          matrix: Array.from(faces.matrices.subarray(0, MATRIX_STRIDE)),
+          landmarks: Array.from(faces.landmarks.subarray(0, LANDMARKS_STRIDE)),
+        })
       }
       // The WebGL drawing buffer is still valid right after rendering, in the same task.
       if (canvas && thumbCtx) {
