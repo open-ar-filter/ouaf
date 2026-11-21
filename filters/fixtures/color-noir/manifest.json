@@ -4,12 +4,13 @@
   "name": "Noir (color layer fixture)",
   "version": "1.0.0",
   "license": "CC0-1.0",
-  "description": "Color layer fixture: the built-in black and white LUT (builtin:lut/noir), its intensity driven by a param.",
+  "description": "Color layer fixture: the built-in black and white LUT (builtin:lut/noir), its intensity driven by a param, and a tint in the same layer (white: none).",
   "requires": {},
   "params": {
-    "intensity": { "type": "number", "default": 1, "min": 0, "max": 1, "step": 0.05, "transition": 300, "label": { "en": "Intensity", "fr": "Intensité" } }
+    "intensity": { "type": "number", "default": 1, "min": 0, "max": 1, "step": 0.05, "transition": 300, "label": { "en": "Intensity", "fr": "Intensité" } },
+    "tint": { "type": "color", "default": "#ffffff", "label": { "en": "Tint", "fr": "Teinte" } }
   },
   "layers": [
-    { "type": "color", "lut": "builtin:lut/noir", "intensity": { "param": "intensity" } }
+    { "type": "color", "lut": "builtin:lut/noir", "intensity": { "param": "intensity" }, "tint": { "param": "tint" } }
   ]
 }
