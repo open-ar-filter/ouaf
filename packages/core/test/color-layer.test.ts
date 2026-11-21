@@ -159,6 +159,9 @@ describe('writeGradeUniforms', () => {
 
   it('does not allocate', () => {
     const a = amounts({ saturation: 0.3 })
+    // Until V8 optimizes it, the function boxes the numbers it returns (16 bytes a call). Under the load of the whole
+    // suite the optimizing compiler can lag behind heapGrowth's own warm-up, so warm up longer first.
+    for (let i = 0; i < 200_000; i++) writeGradeUniforms(a, WHITE, 1.5, out)
     expect(heapGrowth(() => writeGradeUniforms(a, WHITE, 1.5, out))).toBeLessThan(32 * 1024)
   })
 })
