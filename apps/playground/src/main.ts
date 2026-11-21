@@ -54,6 +54,9 @@ row('maxFaces', String(MAX_FACES))
 const SOURCE = /^[\w-]+$/.test(params.get('source') ?? '') ? params.get('source') : null
 /** `?autostart` starts without a tap (file sources only: iOS needs a gesture for the camera). */
 const AUTOSTART = params.has('autostart') && SOURCE !== null
+/** `?track=0` / `?render=0` turn tracking / WebGL rendering off, to find where the time goes. */
+const TRACK = params.get('track') !== '0'
+const RENDER = params.get('render') !== '0'
 /** `?test` exposes counters on `window.ouafTest` for the browser tests. */
 const testHook = params.has('test') ? createTestHook(video) : undefined
 
@@ -121,10 +124,10 @@ async function start() {
   }
 
   // The tracker survives camera switches; it is created once.
-  tracker ??= await createTracker({ maxFaces: MAX_FACES })
+  if (TRACK) tracker ??= await createTracker({ maxFaces: MAX_FACES })
   if (testHook) testHook.hook.delegate = tracker?.delegate ?? null
 
-  renderer = createRenderer(camera, { maxFaces: MAX_FACES })
+  renderer = RENDER ? createRenderer(camera, { maxFaces: MAX_FACES }) : undefined
   // The <video> stays displayed, behind the canvas when there is a renderer: browsers throttle or pause the decoding
   // of hidden (display: none) muted videos, which slows a file source down to a few fps on phones.
   video.hidden = false
