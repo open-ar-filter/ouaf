@@ -2,6 +2,7 @@
 export const VERSION = '0.1.0'
 
 export * from './camera.ts'
+export * from './video-source.ts'
 export * from './scheduler.ts'
 export * from './face.ts'
 export * from './anchors.ts'

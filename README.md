@@ -18,6 +18,7 @@ npm run build:schema   # regenerates the JSON Schema from packages/spec
 npm run fetch-models   # downloads the MediaPipe face model (needed for face tracking in the playground)
 npm run dev            # serves the playground over HTTPS on the LAN
 npm run build          # production build of the playground
+npm run test:browser   # browser tests on the test clips (Playwright; needs `npm run fetch-models`)
 ```
 
 ### Testing on a phone
@@ -25,6 +26,11 @@ npm run build          # production build of the playground
 The camera (`getUserMedia`) only works in a secure context, so `npm run dev` serves the playground over HTTPS
 with a self-signed certificate and listens on every interface. Open the `Network: https://…:5173/` URL printed
 by Vite on a phone connected to the same network, accept the certificate warning, then tap **Start camera**.
+
+### Without a camera
+
+`/?source=<clip>` plays one of the [test clips](test-media/README.md) instead of the camera (e.g.
+`/?source=pesquet-talk`), so tracking and rendering can be checked, and devices measured, on a fixed input.
 
 ### Face tracking assets
 
@@ -42,3 +48,4 @@ Content-Security-Policy; see [`docs/privacy.md`](docs/privacy.md) for what is se
 - Code (engine, packages, tools, generated JSON Schema): [Apache-2.0](LICENSE)
 - Specification text (`docs/spec/*.md`): [CC-BY-4.0](docs/spec/LICENSE)
 - Example filters and their assets: CC0-1.0 (dedicated `LICENSE` in their folder)
+- Test clips (`test-media/`): CC BY 4.0, Ifremer — see [`test-media/README.md`](test-media/README.md)

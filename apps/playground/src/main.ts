@@ -1,6 +1,7 @@
 import {
   CameraError,
   CameraSource,
+  VideoFileSource,
   FrameScheduler,
   VERSION,
   createFaceFrame,
@@ -8,9 +9,11 @@ import {
   type FaceFrame,
   type FaceTracker,
   type FacingMode,
+  type VideoSource,
 } from '@ouaf/core'
 import { createPerf, type PlaygroundPerf } from './perf.ts'
 import { createRenderer, type PlaygroundRenderer } from './render.ts'
+import { createTestHook } from './test-hook.ts'
 import { createTracker } from './tracking.ts'
 
 function $<T extends HTMLElement>(id: string): T {
@@ -47,8 +50,14 @@ const params = new URLSearchParams(location.search)
 /** `?maxFaces=N` (1–8, default 2) — multi-face cost spike (#8). */
 const MAX_FACES = Math.min(8, Math.max(1, Math.trunc(Number(params.get('maxFaces'))) || 2))
 row('maxFaces', String(MAX_FACES))
+/** `?source=<clip>` plays `test-media/<clip>.mp4` instead of the camera (#77); `&mirror=1` mirrors it, `&loop=0` plays it once. */
+const SOURCE = /^[\w-]+$/.test(params.get('source') ?? '') ? params.get('source') : null
+/** `?autostart` starts without a tap (file sources only: iOS needs a gesture for the camera). */
+const AUTOSTART = params.has('autostart') && SOURCE !== null
+/** `?test` exposes counters on `window.ouafTest` for the browser tests. */
+const testHook = params.has('test') ? createTestHook(video) : undefined
 
-let camera: CameraSource | undefined
+let camera: VideoSource | undefined
 let scheduler: FrameScheduler | undefined
 let tracker: FaceTracker | undefined
 let renderer: PlaygroundRenderer | undefined
@@ -91,18 +100,29 @@ async function start() {
   startButton.disabled = true
   cameraRow.textContent = 'opening…'
   try {
-    camera = await CameraSource.open({ facingMode, video })
+    camera = SOURCE
+      ? await VideoFileSource.open(new URL(`test-media/${SOURCE}.mp4`, document.baseURI).href, { video, mirror: params.get('mirror') === '1', loop: params.get('loop') !== '0' })
+      : await CameraSource.open({ facingMode, video })
   } catch (err) {
     cameraRow.textContent = err instanceof CameraError ? `${err.code}: ${err.message}` : String(err)
+    if (testHook) testHook.hook.error = cameraRow.textContent
     startButton.disabled = false
     return
   }
-  flipButton.disabled = stopButton.disabled = false
-  cameraRow.textContent = `${camera.width}×${camera.height}, facing ${camera.facingMode ?? 'unknown'}, ${camera.mirrored ? 'mirrored' : 'not mirrored'}`
-  trackRow.textContent = describeTrack(camera.stream)
+  stopButton.disabled = false
+  flipButton.disabled = camera instanceof VideoFileSource
+  const mirror = camera.mirrored ? 'mirrored' : 'not mirrored'
+  if (camera instanceof CameraSource) {
+    cameraRow.textContent = `${camera.width}×${camera.height}, facing ${camera.facingMode ?? 'unknown'}, ${mirror}`
+    trackRow.textContent = describeTrack(camera.stream)
+  } else {
+    cameraRow.textContent = `file test-media/${SOURCE}.mp4, ${camera.width}×${camera.height}, ${mirror}`
+    trackRow.textContent = '—'
+  }
 
   // The tracker survives camera switches; it is created once.
   tracker ??= await createTracker({ maxFaces: MAX_FACES })
+  if (testHook) testHook.hook.delegate = tracker?.delegate ?? null
 
   renderer = createRenderer(camera, { maxFaces: MAX_FACES })
   if (renderer) stage.append(renderer.element)
@@ -138,6 +158,7 @@ async function start() {
     sample.renderMs = performance.now() - t
 
     perf?.record(sample)
+    testHook?.afterFrame(faces, frame.mediaTime, renderer?.canvas)
 
     count++
     if (frame.now - since >= 1000) {
@@ -151,6 +172,7 @@ async function start() {
 }
 
 startButton.addEventListener('click', () => void start())
+if (AUTOSTART) void start()
 stopButton.addEventListener('click', stop)
 flipButton.addEventListener('click', () => {
   facingMode = facingMode === 'user' ? 'environment' : 'user'
