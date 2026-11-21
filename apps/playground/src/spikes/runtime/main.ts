@@ -263,7 +263,9 @@ async function ensureRuntime(): Promise<boolean> {
     }
   } catch (err) {
     console.error('[spike #83] runtime initialization failed:', err)
-    const hint = /model|tflite|task/i.test(String(err)) ? ' — run `npm run fetch-models`' : ''
+    // Only for a missing model (MediaPipe's message; LiteRT.js downloads already say so), not "model compilation
+    // failed (webgpu)" on a browser without WebGPU.
+    const hint = /face model/.test(String(err)) ? ' — run `npm run fetch-models`' : ''
     runtimeRow.textContent = `unavailable: ${err instanceof Error ? err.message : String(err)}${hint}`
     return false
   }
@@ -602,7 +604,18 @@ async function pauseAt(atSeconds?: number) {
   if (atSeconds !== undefined) {
     const seeked = new Promise((r) => video.addEventListener('seeked', r, { once: true }))
     video.currentTime = atSeconds
+    // WebKit fires `seeked` before the new frame can be drawn: a run started then analyses the previous frame. Wait
+    // for the frame callback of the seeked frame as well (the first callback can still be for a frame of the
+    // playback), with a timeout in case no new frame comes.
+    let waiting = true
+    const presented = new Promise<void>((resolve) => {
+      if (!('requestVideoFrameCallback' in video)) return resolve()
+      const wait = () => video.requestVideoFrameCallback((_, m) => (!waiting || Math.abs(m.mediaTime - atSeconds) < 0.1 ? resolve() : wait()))
+      wait()
+    })
     await seeked
+    await Promise.race([presented, new Promise((r) => setTimeout(r, 500))])
+    waiting = false
   }
 }
 

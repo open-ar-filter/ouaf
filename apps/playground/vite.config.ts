@@ -136,13 +136,30 @@ const HEADERS = { 'Content-Security-Policy': "connect-src 'self' ws: wss:" }
  * The page's LiteRT.js worker (`mode=worker`) too: a dedicated worker of an isolated page only loads, and only gets
  * `crossOriginIsolated` (hence threads), when its own script response carries the embedder policy
  * (`/src/spikes/runtime/litert.worker.ts` in dev, `/assets/litert.worker-<hash>.js` in the build).
+ *
+ * WebKit also checks the embedder policy of every module the worker imports (Chromium and Firefox only check the
+ * worker script): without the header on them it refuses `litert-pipeline.ts`, `protocol.ts` and Vite's `env.mjs`
+ * ("Worker load was blocked by Cross-Origin-Embedder-Policy") and the pipeline falls back to the main thread. Those
+ * requests are told apart by `Sec-Fetch-Dest: worker` with a module, not a page, as referrer (dev server only: the
+ * build bundles the worker into one script). The header on an imported module does not change the worker's own
+ * policy in the other browsers, so the #6 spike's worker, whose modules match too, is unaffected.
  */
 const ISOLATED = [/\/spikes\/runtime(\.html)?$/, /\/litert\/wasm\//, /\/mediapipe\/wasm\//, /\/models\//, /\/test-media\//, /\/litert\.worker[\w-]*\.(ts|js)$/]
 
+type Request = { url?: string; headers?: Record<string, string | string[] | undefined> }
+
+/** A static import inside a module worker: fetched as a worker script, from another module (not from a page). */
+function isWorkerImport(req: Request): boolean {
+  const referer = req.headers?.referer
+  if (req.headers?.['sec-fetch-dest'] !== 'worker' || typeof referer !== 'string') return false
+  const from = URL.canParse(referer) ? new URL(referer).pathname : ''
+  return /\.(ts|js|mjs)$/.test(from)
+}
+
 function crossOriginIsolation(): Plugin {
-  const middleware = (req: { url?: string }, res: { setHeader(name: string, value: string): void }, next: () => void) => {
+  const middleware = (req: Request, res: { setHeader(name: string, value: string): void }, next: () => void) => {
     const [path = '', query = ''] = (req.url ?? '').split('?')
-    if (ISOLATED.some((re) => re.test(path)) && !/(^|&)coi=0(&|$)/.test(query)) {
+    if ((ISOLATED.some((re) => re.test(path)) && !/(^|&)coi=0(&|$)/.test(query)) || isWorkerImport(req)) {
       res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
       res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
       // Lets an isolated page load these files whatever its own origin policy is.

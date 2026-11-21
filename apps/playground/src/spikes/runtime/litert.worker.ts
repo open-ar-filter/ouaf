@@ -89,7 +89,9 @@ async function init(requested: LiteRtOptions) {
   }
   const warnings: string[] = []
   const options = { ...requested }
-  const isolated = scope.crossOriginIsolated === true
+  // WebKit reports `crossOriginIsolated` from the worker script's own headers: true in the worker of a page that is
+  // not isolated (`?coi=0`), which has no SharedArrayBuffer, hence no threads.
+  const isolated = scope.crossOriginIsolated === true && typeof SharedArrayBuffer === 'function'
   if (options.accelerator === 'wasm' && options.threads > 1 && !isolated) {
     warnings.push(`the worker is not cross-origin isolated: ${options.threads} threads requested, 1 used`)
     options.threads = 1
