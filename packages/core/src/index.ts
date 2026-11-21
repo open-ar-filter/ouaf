@@ -17,3 +17,6 @@ export * from './device-info.ts'
 
 // The engine validates every manifest before loading it; expose the same validator to hosts.
 export { validateManifest, formatIssues, type Issue } from '@ouaf/spec'
+
+// Engine (#11, #12, #17)
+export * from './engine/index.ts'

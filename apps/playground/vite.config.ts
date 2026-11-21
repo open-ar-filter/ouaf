@@ -1,6 +1,6 @@
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, extname, join, resolve } from 'node:path'
+import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 import { defineConfig, type Plugin } from 'vite'
@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url)
  * Self-hosted tracking assets, served from the playground origin (no CDN at runtime):
  * URL prefix → local directory and the files to publish from it.
  */
-const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: string }> = [
+const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: string; nested?: boolean }> = [
   {
     // The classic loader (main thread); the ES module loader for module workers (`wasmLoader: 'module'`, #6 spike).
     prefix: 'mediapipe/wasm/',
@@ -33,6 +33,13 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
     files: /^[\w-]+\.mp4$/,
   },
   {
+    // Filter folders (demos #37, test fixtures), committed at the repository root: `/filters/<id>/manifest.json`.
+    prefix: 'filters/',
+    dir: resolve(here, '../../filters'),
+    files: /\.(json|png|webp|jpe?g|avif|svg|ktx2|mp4|webm|glb|gltf|bin|cube|frag|glsl|woff2?|ttf|otf|ogg|mp3|wav|opus|js)$/,
+    nested: true,
+  },
+  {
     // Downloaded by `npm run fetch-models` (gitignored).
     prefix: 'models/',
     dir: resolve(here, 'models'),
@@ -47,11 +54,28 @@ const CONTENT_TYPES: Record<string, string> = {
   '.task': 'application/octet-stream',
   '.tflite': 'application/octet-stream',
   '.mp4': 'video/mp4',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.avif': 'image/avif',
+  '.svg': 'image/svg+xml',
+  '.webm': 'video/webm',
+  '.glb': 'model/gltf-binary',
+  '.gltf': 'model/gltf+json',
+  '.woff2': 'font/woff2',
 }
 
-function listFiles(dir: string, files: RegExp): string[] {
-  return existsSync(dir) ? readdirSync(dir).filter((name) => files.test(name)) : []
+function listFiles(dir: string, files: RegExp, nested = false): string[] {
+  if (!existsSync(dir)) return []
+  if (!nested) return readdirSync(dir).filter((name) => files.test(name))
+  return (readdirSync(dir, { recursive: true }) as string[]).map((name) => name.split(sep).join('/')).filter((name) => files.test(name))
 }
+
+/** A file name, or a relative path when `nested`, without `..` or anything unusual. */
+const SAFE_NAME = /^[\w.-]+$/
+const SAFE_PATH = /^[\w-][\w.-]*(\/[\w-][\w.-]*)*$/
 
 /** Serves `SELF_HOSTED` in dev and copies it into the build output. */
 function selfHostedAssets(): Plugin {
@@ -64,12 +88,12 @@ function selfHostedAssets(): Plugin {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const path = req.url?.split('?')[0] ?? ''
-        for (const { prefix, dir, files } of SELF_HOSTED) {
+        for (const { prefix, dir, files, nested } of SELF_HOSTED) {
           if (!path.startsWith(base + prefix)) continue
           const name = decodeURIComponent(path.slice(base.length + prefix.length))
           const file = join(dir, name)
           // A plain 404 rather than Vite's SPA fallback (index.html), so a missing model fails clearly.
-          if (!/^[\w.-]+$/.test(name) || !files.test(name) || !existsSync(file)) {
+          if (!(nested ? SAFE_PATH : SAFE_NAME).test(name) || !files.test(name) || !existsSync(file) || !statSync(file).isFile()) {
             res.statusCode = 404
             res.end(`Not found: ${path}`)
             return
@@ -102,8 +126,8 @@ function selfHostedAssets(): Plugin {
       })
     },
     generateBundle() {
-      for (const { prefix, dir, files, hint } of SELF_HOSTED) {
-        const names = listFiles(dir, files)
+      for (const { prefix, dir, files, hint, nested } of SELF_HOSTED) {
+        const names = listFiles(dir, files, nested)
         if (names.length === 0 && hint) this.warn(`No file in ${dir}: ${hint}.`)
         for (const name of names) {
           this.emitFile({ type: 'asset', fileName: prefix + name, source: readFileSync(join(dir, name)) })
@@ -113,9 +137,9 @@ function selfHostedAssets(): Plugin {
   }
 }
 
-/** Extra pages: every `spikes/*.html` is a separate entry (one page per phase 0 spike). */
+/** Extra pages: the engine page, and every `spikes/*.html` as a separate entry (one page per phase 0 spike). */
 function pages(): Record<string, string> {
-  const input: Record<string, string> = { main: resolve(here, 'index.html') }
+  const input: Record<string, string> = { main: resolve(here, 'index.html'), engine: resolve(here, 'engine.html') }
   const dir = resolve(here, 'spikes')
   for (const name of listFiles(dir, /\.html$/)) input[`spikes/${name.replace(/\.html$/, '')}`] = join(dir, name)
   return input
