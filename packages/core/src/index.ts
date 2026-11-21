@@ -24,3 +24,6 @@ export * from './params/index.ts'
 export * from './bindings/index.ts'
 export * from './anchoring/index.ts'
 export * from './expressions/index.ts'
+
+// Built-in layer types (#19–#25)
+export * from './layers/sticker/index.ts'
