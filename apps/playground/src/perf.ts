@@ -16,7 +16,16 @@ export interface PlaygroundPerf extends FrameSampleSink {
   /** Element holding the overlay (fps, timings, recorder controls). */
   readonly element: HTMLElement
   setInfo(info: PipelineInfo): void
+  /** Logs a `note` event in the recording (ignored when not recording). */
+  note(message: string): void
   dispose(): void
+}
+
+export interface PerfOptions {
+  /** Extra per-frame columns recorded from `FrameSample.extra` (see `SessionRecorderOptions.columns`). */
+  columns?: readonly string[]
+  /** Extra `app` fields of the export (e.g. the resolved spike variant), read at export time. */
+  app?: () => Record<string, string | number | boolean>
 }
 
 /** Overlay refresh period: a few times per second, never per frame. */
@@ -96,12 +105,12 @@ type PressureObserverCtor = new (cb: (records: PressureRecordLike[]) => void) =>
  * Creates the performance overlay and recorder: live rolling statistics (refreshed a few times per second) and a
  * session recorder with 5/10-minute presets and JSON export. Keeps the screen awake while recording.
  */
-export function createPerf(): PlaygroundPerf | undefined {
+export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefined {
   // `?window=N`: seconds covered by the live figures (default 2; longer = steadier, e.g. a whole test clip loop).
   const windowS = Math.min(60, Math.max(1, Number(new URLSearchParams(location.search).get('window')) || 2))
   const stats = new RollingStats({ windowMs: windowS * 1000, capacity: Math.max(256, windowS * 130) })
   const snap = createRollingSnapshot()
-  const recorder = new SessionRecorder()
+  const recorder = new SessionRecorder(options.columns ? { columns: options.columns } : {})
   let info: PipelineInfo | undefined
   let device: DeviceInfo | null = null
   let exported = true
@@ -246,6 +255,7 @@ export function createPerf(): PlaygroundPerf | undefined {
         // Which page and URL options produced the recording (spike variants, maxFaces, delegate…).
         page: location.pathname,
         params: location.search,
+        ...options.app?.(),
       },
     })
     const text = stringifySession(doc)
@@ -363,6 +373,9 @@ export function createPerf(): PlaygroundPerf | undefined {
     record(sample: Readonly<FrameSample>) {
       stats.record(sample)
       recorder.record(sample)
+    },
+    note(message: string) {
+      recorder.event({ type: 'note', message })
     },
     setInfo(next: PipelineInfo) {
       info = { ...next }

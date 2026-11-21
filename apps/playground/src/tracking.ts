@@ -21,7 +21,7 @@ function facesRow(): HTMLElement {
 }
 
 /** `?delegate=CPU` forces the CPU delegate (to compare with GPU); default: GPU with automatic CPU fallback. */
-function requestedDelegate(): Delegate {
+export function requestedDelegate(): Delegate {
   return new URLSearchParams(location.search).get('delegate')?.toUpperCase() === 'CPU' ? 'CPU' : 'GPU'
 }
 

@@ -120,6 +120,12 @@ export function blendshapeIndex(name: BlendshapeName): number {
   return BLENDSHAPE_NAMES.indexOf(name)
 }
 
+/**
+ * Frames a tracker accepts: the camera `<video>` (main thread), or a frame captured from it and sent elsewhere, e.g.
+ * to a worker (`VideoFrame`, `ImageBitmap`).
+ */
+export type TrackerInput = HTMLVideoElement | VideoFrame | ImageBitmap
+
 /** Inference backend actually in use. */
 export type Delegate = 'GPU' | 'CPU'
 
@@ -132,9 +138,10 @@ export interface FaceTracker {
   readonly delegate: Delegate
   readonly maxFaces: number
   /**
-   * Runs tracking on the video's current frame. `timestampMs` must increase strictly between calls
-   * (use the scheduler's `now`). Writes `count`, `mediaTime`, `width`, `height` and the face slices of `out`.
+   * Runs tracking on the video's current frame (or on a captured frame). `timestampMs` must increase strictly
+   * between calls (use the scheduler's `now`). Writes `count`, `mediaTime`, `width`, `height` and the face slices
+   * of `out`. A captured frame is not closed: the caller owns it.
    */
-  detect(video: HTMLVideoElement, timestampMs: number, mediaTime: number, out: FaceFrame): void
+  detect(source: TrackerInput, timestampMs: number, mediaTime: number, out: FaceFrame): void
   dispose(): void
 }

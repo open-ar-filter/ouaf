@@ -15,6 +15,11 @@ export interface FrameSample {
   renderMs: number
   /** Faces detected in the frame. */
   faces: number
+  /**
+   * Values of the recorder's extra columns (`SessionRecorderOptions.columns`), by column name. A missing or
+   * non-finite value is recorded as "no value" (`null` in the export). Reuse one object.
+   */
+  extra?: Record<string, number>
 }
 
 export function createFrameSample(): FrameSample {

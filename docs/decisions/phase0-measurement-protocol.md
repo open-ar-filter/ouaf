@@ -48,7 +48,51 @@ faces and nobody has to stand in front of the camera; `&autostart` starts playba
 
 ## #6 — Tracking in a Worker vs main thread
 
-To be completed with the #6 spike.
+Goal: decide whether tracking runs in a Web Worker (MediaPipe on an `OffscreenCanvas`, frames transferred from the
+page) or on the main thread with the GPU delegate.
+
+Page: `/spikes/worker.html` (links on `/spikes/`). Options: `mode=main|worker` (default `worker`),
+`transfer=videoframe|bitmap` (worker: `new VideoFrame(video)` or `createImageBitmap(video)`, default `videoframe`),
+`load=N` (N ms of synthetic main-thread work per frame: a busy host page), plus `maxFaces` (default 2) and
+`delegate=CPU` as on the main page, and `source=<clip>&autostart` to play a test clip instead of the camera. The links
+at the top of the page switch variant and keep the other options. Run 6a–6e on `&source=pesquet-closeup&autostart&window=10`
+(same input on every device), then 6a and 6b once with the camera for the capture cost and `cameraLatencyMs`.
+
+| Run | URL | Duration |
+|---|---|---|
+| 6a | `/spikes/worker.html?mode=main&maxFaces=1` | 1 min |
+| 6b | `/spikes/worker.html?mode=worker&transfer=videoframe&maxFaces=1` | 1 min |
+| 6c | `/spikes/worker.html?mode=worker&transfer=bitmap&maxFaces=1` | 1 min |
+| 6d | `/spikes/worker.html?mode=main&maxFaces=1&load=15` | 1 min |
+| 6e | `/spikes/worker.html?mode=worker&maxFaces=1&load=15` (transfer of 6b or 6c, whichever is better) | 1 min |
+
+- One face in view, still, same light. Pick **Manual** or stop after a minute (the presets are 5 and 10 minutes).
+- Before each run, check the **Tracker** row: `ready: worker, GPU, videoframe` (or `CPU` after a fallback, which is a
+  result in itself) and the **Warnings** row. If 6b fails on a browser (no `VideoFrame`, or it cannot be uploaded in
+  the worker), note the message and use 6c.
+- Keep a run going for more than a minute once per browser: the **MediaPipe metrics** row must read `blocked …`
+  (the worker is covered by the CSP header; `sent` means the metrics left the device).
+- On iPhone, the worker variant needs WebGL on `OffscreenCanvas` in workers (Safari 17+); on older versions it falls
+  back to CPU or fails, note which.
+
+What to look at (live panel, then `summary.columns` in the export; columns in `docs/perf/session-format.md`):
+
+- **Frame rate**: `fps` (and `missed`: camera frames the page never saw because the main thread was busy).
+- **Main-thread cost**: `track` = `trackingMs` (main: `detect`; worker: capture + post + receive, expected well
+  under 1 ms for `videoframe`; `bitmap` adds `captureMs`). This is what the worker variant saves.
+- **Main-thread availability**: `lagMs` p95/max and `longTaskMs` (Chromium only): what a host page loses to tracking.
+- **Inference**: `inferenceMs` in the worker vs on the main thread (a worker may be slower: no shared GPU context,
+  frame upload in the worker, contention with the page).
+- **Latency**: `latencyMs` (frame → results on the main thread), `cameraLatencyMs` where available (Chromium), and
+  `resultAgeMs`: in worker mode the landmarks drawn are one frame (or more) behind the video; check visually whether
+  the lag is noticeable when moving the head.
+- **Dropped frames**: `dropped` sum / samples = frames not tracked because the worker was busy (results are reused).
+- **Busy host** (6d vs 6e): with `load=15` the main-thread variant should lose fps and accumulate `missed` frames,
+  the worker variant should keep the camera rate with stale results instead.
+
+Decision rule: the worker variant is worth its complexity if, on the phones, it keeps fps at the camera rate with
+`load=15` where the main thread does not, or cuts `lagMs` p95 noticeably, without raising `latencyMs` / `resultAgeMs`
+by more than about one frame.
 
 ## #7 — Shared WebGL context (GPU-side masks)
 

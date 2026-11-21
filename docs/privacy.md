@@ -47,6 +47,9 @@ Notes:
   hot reload, as the playground does).
 - If your page already has a CSP with a `script-src`, MediaPipe needs `'wasm-unsafe-eval'` in it to compile its
   WebAssembly.
+- **Workers**: a worker loaded from a URL does not get the page's `<meta>` policy; only the `Content-Security-Policy`
+  header of the worker script's own response applies to it. If MediaPipe runs in a worker, send the header on the
+  worker script (simplest: on every response). A worker created from a `blob:` URL inherits the page's policy.
 
 ### Checking
 
@@ -58,4 +61,6 @@ Open the browser developer tools, **Network** tab, filter on `odml`, and run the
 ## Reference
 
 The playground (`apps/playground/index.html`) blocks the metrics with
-`connect-src 'self' ws: wss:` (`ws:`/`wss:` for Vite's hot reload).
+`connect-src 'self' ws: wss:` (`ws:`/`wss:` for Vite's hot reload), in a `<meta>` tag and, from its dev and preview
+servers, as a header too (for the tracking worker of the `/spikes/worker.html` page, which reports what happens to the
+request in its "MediaPipe metrics" row). A static deployment of the playground must send that header itself.
