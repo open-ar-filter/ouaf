@@ -13,11 +13,12 @@
  * param changes of every filter → update every layer with the latest tracking result → render the stages.
  */
 import { createRegistry, extendRegistry, type SpecRegistry, type Stage } from '@ouaf/spec'
-import { createFaceFrame } from '../face.ts'
+import { createFaceFrame, type FaceFrame } from '../face.ts'
 import { FrameScheduler, type VideoFrameInfo } from '../scheduler.ts'
 import type { VideoSource } from '../video-source.ts'
 import type { FitMode } from '../viewport.ts'
-import { ProvisionalAnchors } from './anchor-provider.ts'
+import { FaceIdentityTracker, FaceSmoother } from '../anchoring/index.ts'
+import { FaceAnchors } from './anchor-provider.ts'
 import { CORE_LOADERS, memorySource, urlSource, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
 import { builtinPlugins } from './builtin.ts'
 import { Compositor, type StagePasses } from './compositor.ts'
@@ -131,7 +132,14 @@ export class Engine {
 
   #events = new Emitter<EngineEvents>((error) => this.#warn(`An event listener threw: ${String(error)}`))
   #compositor: Compositor
-  #anchors: ProvisionalAnchors
+  #anchors: FaceAnchors
+  /** Stable face ids (spec §5.4), smoothing and prediction of the tracking results (#13). */
+  #identity: FaceIdentityTracker
+  #smoother: FaceSmoother
+  /** Smoothed latest result, and the same predicted to the displayed frame (what layers and bindings read). */
+  #smoothed: FaceFrame
+  #drawn: FaceFrame
+  #seenResults = 0
   #bindingData = new FaceBindingData(createFaceFrame(1))
   #tracking: TrackingHub
   #fetch: typeof fetch
@@ -165,7 +173,11 @@ export class Engine {
     this.#fetch = options.fetch ?? ((input, init) => fetch(input, init))
     this.registry = createRegistry()
     this.#compositor = new Compositor({ canvas: options.canvas, fit: options.fit, scale: options.scale, width: options.width, height: options.height })
-    this.#anchors = new ProvisionalAnchors(createFaceFrame(1), this.#compositor.camera)
+    this.#anchors = new FaceAnchors(createFaceFrame(1), this.#compositor.camera)
+    this.#identity = new FaceIdentityTracker({ maxFaces })
+    this.#smoother = new FaceSmoother(this.#identity)
+    this.#smoothed = createFaceFrame(maxFaces)
+    this.#drawn = createFaceFrame(maxFaces)
     for (const loader of CORE_LOADERS) for (const kind of loader.kinds) this.#loaders.set(kind, loader)
 
     for (const plugin of options.builtins === false ? [] : builtinPlugins()) this.use(plugin)
@@ -367,8 +379,8 @@ export class Engine {
       filter.params.beginFrame(info.mediaTime * 1000)
     }
 
-    const faces = this.#tracking.faces
-    this.#anchors.setFrame(faces, compositor.mirrored)
+    const faces = this.#trackedFaces(info.mediaTime)
+    this.#anchors.setFrame(faces, this.#identity.ids, compositor.mirrored)
     const data = this.#bindingData
     data.faces = faces
     data.time = info.mediaTime
@@ -394,6 +406,24 @@ export class Engine {
 
     compositor.render(this.#passes as StagePasses)
     this.#recordStats(info.now, performance.now() - start, faces.count)
+  }
+
+  /**
+   * The faces layers see this frame: each new tracking result goes through face identity and smoothing (on the media
+   * time of the analysed frame), then the smoothed faces are predicted to the displayed frame's media time, which
+   * hides most of the result age of an asynchronous tracker (docs/decisions/tracking-worker.md).
+   */
+  #trackedFaces(mediaTime: number): FaceFrame {
+    const tracking = this.#tracking
+    const raw = tracking.faces
+    if (!tracking.active) return raw
+    if (tracking.results !== this.#seenResults) {
+      this.#seenResults = tracking.results
+      this.#identity.update(raw, raw.mediaTime)
+      this.#smoother.update(raw, raw.mediaTime, this.#smoothed)
+    }
+    this.#smoother.predict(this.#smoothed, mediaTime, this.#drawn)
+    return this.#drawn
   }
 
   #recordStats(now: number, ms: number, faces: number): void {

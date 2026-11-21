@@ -29,7 +29,8 @@ A failed `addFilter`/`setFilters` leaves the stack unchanged. Compatibility (spe
 camera frame (FrameScheduler, requestVideoFrameCallback)
  → tracking.submit(video)        eager, one frame in flight, shared by the stack (spec §7)
  → params.beginFrame(mediaTime)   per filter: transitions advance, queued changes commit, paramChange fires
- → anchors.setFrame(latest result, mirrored)
+ → identity + smoothing        on each new tracking result (media time of the analysed frame)
+ → prediction to the displayed frame, anchors.setFrame(predicted faces, ids, mirrored)
  → layer.update(frame)           every layer of every enabled filter, then plugin render passes
  → compositor.render(stages)
 ```
@@ -92,18 +93,18 @@ space, scaled so 1 unit = the distance between the eye centres (spec §5.1). Mir
 poses (M' = S·M·S, S = diag(-1, 1, 1)), never to the projection, so text and models are not mirrored.
 `anchors.screen(out)` places `anchor: "screen"` content on a plane in front of the faces, 1 unit = screen height.
 
-The current `AnchorProvider` is **provisional** (landmark positions at the head's depth, MediaPipe's pose matrix when
-present, roll from the eyes otherwise); #13 replaces it with the real anchor math (pose from landmarks, rigid vs
-expression anchors, smoothing, stable face ids) behind the same interface.
+Anchors come from #13 (`packages/core/src/anchoring/`): head pose fitted to the landmarks (MediaPipe's face geometry,
+so any tracker works), rigid anchors from the canonical face, expression anchors from the live landmarks. Each new
+tracking result gets a stable face id (500 ms grace delay, `frame.anchors.id(i)`) and One Euro smoothing per face;
+every rendered frame then extrapolates the smoothed landmarks to its own time (at most 100 ms), which hides most of
+the age of a worker tracker's results. Layers and bindings read these predicted faces.
 
 ## Provisional parts, and who replaces them
 
 | Part | Now | Replaced by |
 |---|---|---|
 | Params `apply: "reload"` | applied at the next frame like `live` | engine `ReloadHooks`: preload a new filter instance, swap it in |
-| Anchors (`ProvisionalAnchors`) | landmark positions, MediaPipe pose | #13 |
 | Face tracker | MediaPipe tasks-vision, main thread | LiteRT.js pipeline in a worker (face-runtime.md, tracking-worker.md) |
-| Bindings | read by each layer by hand | #15 evaluator, compiled per layer |
 | Scripts, `send`, `filter:<name>` | warning, no-op | #26 sandbox |
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
 | Built-in resources (`builtin:`) | `<assetsBaseUrl>/builtin/<name>` | #65 layout |
