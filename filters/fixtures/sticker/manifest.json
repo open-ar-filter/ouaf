@@ -1,0 +1,31 @@
+{
+  "ouaf": "1",
+  "id": "sticker",
+  "name": "Stickers (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Sticker layer (#20) on a face: PNG, SVG, spritesheet, packed-alpha video, emoji, { pick }, blend, overlay. Synthetic assets (../make-sticker-assets.sh).",
+  "requires": { "face": true },
+  "params": {
+    "size": { "type": "number", "default": 1, "min": 0.3, "max": 2, "step": 0.1, "transition": 300, "label": { "en": "Size", "fr": "Taille" } },
+    "rate": { "type": "number", "default": 1, "min": 0, "max": 4, "step": 0.25, "label": { "en": "Playback rate", "fr": "Vitesse" } },
+    "flame": { "type": "boolean", "default": true, "label": { "en": "Flame", "fr": "Flamme" } }
+  },
+  "assets": {
+    "disc": "assets/disc.png",
+    "walk": { "src": "assets/walk.png", "frames": { "cols": 4, "rows": 2, "fps": 4 } },
+    "flame": { "src": "assets/flame.mp4", "alpha": "packed" },
+    "star": { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><polygon points='50,4 61,38 97,38 68,59 79,93 50,72 21,93 32,59 3,38 39,38' fill='#ffd000' stroke='#a06000' stroke-width='3'/></svg>" },
+    "cool": { "emoji": "😎" }
+  },
+  "layers": [
+    { "id": "nose", "type": "sticker", "src": "disc", "anchor": "noseTip", "size": 0.5 },
+    { "id": "star", "type": "sticker", "src": "star", "anchor": "forehead", "offset": [0, 0.6, 0], "size": { "param": "size" }, "orient": "screen" },
+    { "id": "walk", "type": "sticker", "src": "walk", "anchor": "leftCheek", "offset": [-0.2, -0.2, 0], "size": 0.5, "rate": { "param": "rate" } },
+    { "id": "pick", "type": "sticker", "src": { "pick": ["cool", "star", "disc"] }, "anchor": "rightCheek", "offset": [0.2, -0.2, 0], "size": 0.5, "rotation": [0, 0, -15] },
+    { "id": "flame", "type": "sticker", "src": "flame", "anchor": "chin", "offset": [0, -0.6, 0], "size": 0.8, "blend": "add",
+      "visible": { "param": "flame" }, "rate": { "param": "rate" },
+      "opacity": { "bind": "face.blendshapes.jawOpen", "range": [0, 0.4], "to": [0.4, 1], "default": 1 } },
+    { "id": "badge", "type": "sticker", "src": "assets/badge.webp", "anchor": "screen", "offset": [0, -0.44, 0], "size": 0.05, "overlay": true }
+  ]
+}

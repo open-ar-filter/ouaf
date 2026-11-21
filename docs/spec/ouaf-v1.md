@@ -200,6 +200,14 @@ Normative behavior:
   head); only its orientation counts; default `[0, 1]` (up). `opacity` scales the strength. The deformation SHOULD
   never fold the image over itself. In the reference implementation, at strength 1, `bulge` magnifies the center 4×,
   `swirl` turns it half a turn and `stretch` moves it by 0.6 radius.
+- `color` works on the sRGB-encoded values of the image (what `.cube` LUTs for photo and video expect), in this
+  order, on each channel c in 0–1: `lut` (input mapped from `DOMAIN_MIN`–`DOMAIN_MAX`; `LUT_3D_SIZE` or
+  `LUT_1D_SIZE`); `brightness` b: c^(2^−b), black and white unchanged; `contrast` k: (c − ½)(1 + k) + ½;
+  `saturation` s: Y + (c − Y)(1 + s), Y the Rec. 709 luma; `temperature` t: red × (1 + 0.2t), blue × (1 − 0.2t);
+  `tint`: multiplied by the color, its alpha being the strength; `vignette` v: × (1 − v·smoothstep(0.35, 1, r)), r
+  from 0 at the centre to 1 in the corners; `grain` g: monochrome noise of amplitude ±0.1g whose pattern depends
+  only on the pixel and the frame time (12.5). The result is clamped to 0–1 and mixed with the image below by
+  `intensity` × `opacity`. `region: "face"` limits it to the face ovals, with a soft edge; it uses face tracking.
 - `canvas`: see 12.6.
 
 ### 6.4 Reserved types (later versions)

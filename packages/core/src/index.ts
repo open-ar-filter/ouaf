@@ -24,3 +24,7 @@ export * from './params/index.ts'
 export * from './bindings/index.ts'
 export * from './anchoring/index.ts'
 export * from './expressions/index.ts'
+
+// Layer types (#19–#25), each a built-in plugin
+export * from './layers/color/index.ts'
+export * from './layers/sticker/index.ts'
