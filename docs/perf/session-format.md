@@ -109,6 +109,24 @@ to the next sample.
 | `lagMs`           | ms   | Largest event-loop lag since the previous sample: a probe every 20 ms (timer, then `MessageChannel` message) measures how late it runs. About 0.1 ms on an idle page. |
 | `longTaskMs`      | ms   | Total duration of the main-thread long tasks (> 50 ms) reported since the previous sample; `null` where unsupported (only Chromium reports them). |
 
+### Spike #7: shared WebGL context, GPU-side masks (`/spikes/gl-share.html`)
+
+`trackingMs` is the MediaPipe inference time (segmentation, plus face tracking with `face=…`) and `renderMs` the
+three.js draw only. `app` adds the variant (`path`, `copy`, `reset`, `delegate`, `mask` size and storage, `adapter`,
+`contexts` created by the page and `pipelineContexts` created by the variant, `autoResizeDisabled`…); the alignment
+check result is logged as a `note` event.
+
+| Column           | Unit  | Meaning |
+|------------------|-------|---------|
+| `segmentationMs` | ms    | Main-thread time of `ImageSegmenter.segmentForVideo` until its callback runs (GPU delegate: submission only, the GPU work may still be queued). |
+| `transferMs`     | ms    | Getting the mask out of MediaPipe: `getAsWebGLTexture` + `resetState` (`shared`), `getAsFloat32Array` readback (`cpu`, `webgpu&copy=readback`, incl. byte conversion), drawing it into MediaPipe's canvas (`webgpu`). |
+| `uploadMs`       | ms    | Getting it into the renderer: texture upload (`cpu`), `copyExternalImageToTexture` (`webgpu`) or `writeTexture` (`webgpu&copy=readback`); `null` for `shared`. |
+| `pipelineMs`     | ms    | Whole frame on the main thread: face tracking (when enabled), segmentation, transfer, upload, render. |
+| `readbacks`      | count | `readPixels` / `getBufferSubData` calls during the frame, in every WebGL context of the page. |
+| `readbackBytes`  | bytes | Bytes requested by those calls. |
+| `syncCalls`      | count | Calls that wait on the GPU without transferring data: `clientWaitSync` with a timeout, `finish`, `getError`, `checkFramebufferStatus`. |
+| `maskReads`      | count | `MPMask.getAsFloat32Array` / `getAsUint8Array` calls made by the page. |
+
 ## Example
 
 ```json

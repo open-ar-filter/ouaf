@@ -24,6 +24,11 @@ export interface PlaygroundPerf extends FrameSampleSink {
 export interface PerfOptions {
   /** Extra per-frame columns recorded from `FrameSample.extra` (see `SessionRecorderOptions.columns`). */
   columns?: readonly string[]
+  /**
+   * Extra columns also shown live in the overlay, by name: `ms` columns as p50/p95, `count` columns as the mean per
+   * frame (missing / NaN values skipped). Default: none.
+   */
+  live?: readonly { column: string; label: string; kind: 'ms' | 'count' }[]
   /** Extra `app` fields of the export (e.g. the resolved spike variant), read at export time. */
   app?: () => Record<string, string | number | boolean>
 }
@@ -132,6 +137,8 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
   const [trackCell, trackValue] = cell('track')
   const [renderCell, renderValue] = cell('render')
   const [facesCell, facesValue] = cell('faces')
+  const live = (options.live ?? []).map((c) => ({ ...c, cell: cell(c.label) }))
+  const extraWindow = live.length > 0 ? createExtraWindow(live.map((c) => c.column), windowS * 1000) : undefined
   const infoLine = el('div', { className: 'ouaf-perf-info', textContent: 'p50/p95 in ms over the last 2 s' })
 
   const preset = el('select', { title: 'Recording duration' }, ...PRESETS.map((p, i) => el('option', { value: String(i), textContent: p.label })))
@@ -147,7 +154,7 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
     'section',
     { className: 'ouaf-perf', ariaLabel: 'Performance' },
     el('style', { textContent: STYLE }),
-    el('div', { className: 'ouaf-perf-grid' }, fpsCell, frameCell, delegateCell, trackCell, renderCell, facesCell),
+    el('div', { className: 'ouaf-perf-grid' }, fpsCell, frameCell, delegateCell, trackCell, renderCell, facesCell, ...live.map((c) => c.cell[0])),
     infoLine,
     el('div', { className: 'ouaf-perf-rec' }, preset, recordButton, timeLabel, exportButton, shareButton, copyButton),
     message,
@@ -353,6 +360,13 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
     renderValue.textContent = `${fmt(snap.renderMs.p50)}/${fmt(snap.renderMs.p95)}`
     facesValue.textContent = fmt(snap.faces, 1)
     delegateValue.textContent = info?.delegate ?? '—'
+    if (extraWindow) {
+      const since = performance.now() - windowS * 1000
+      live.forEach((c, i) => {
+        const v = extraWindow.stats(i, since)
+        c.cell[1].textContent = c.kind === 'ms' ? `${fmt(v.p50)}/${fmt(v.p95)}` : fmt(v.mean, 2)
+      })
+    }
 
     const recording = recorder.recording
     recordButton.textContent = recording ? '■ Stop' : '● Record'
@@ -372,6 +386,7 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
     element,
     record(sample: Readonly<FrameSample>) {
       stats.record(sample)
+      extraWindow?.record(sample)
       recorder.record(sample)
     },
     note(message: string) {
@@ -394,6 +409,46 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
       releaseWakeLock()
       pressure?.disconnect()
       element.remove()
+    },
+  }
+}
+
+/**
+ * Ring buffer of the last values of some extra columns (`FrameSample.extra`), for the live overlay; sized for
+ * `windowMs` at up to 120 fps, allocation-free in the steady state.
+ */
+function createExtraWindow(columns: readonly string[], windowMs: number) {
+  const capacity = Math.max(256, Math.ceil((windowMs / 1000) * 120))
+  const t = new Float64Array(capacity).fill(-Infinity)
+  const values = columns.map(() => new Float64Array(capacity))
+  const scratch = new Float64Array(capacity)
+  let next = 0
+  const result = { p50: NaN, p95: NaN, mean: NaN }
+  return {
+    record(sample: Readonly<FrameSample>) {
+      t[next] = sample.now
+      for (let c = 0; c < columns.length; c++) (values[c] as Float64Array)[next] = sample.extra?.[columns[c]!] ?? NaN
+      next = (next + 1) % capacity
+    },
+    /** Statistics of the `index`-th column over the samples since `since` (ms). */
+    stats(index: number, since: number) {
+      const v = values[index]
+      let n = 0
+      let sum = 0
+      if (v) {
+        for (let i = 0; i < capacity; i++) {
+          const x = v[i] as number
+          if ((t[i] as number) >= since && !Number.isNaN(x)) {
+            scratch[n++] = x
+            sum += x
+          }
+        }
+      }
+      const sorted = scratch.subarray(0, n).sort()
+      result.mean = n > 0 ? sum / n : NaN
+      result.p50 = n > 0 ? (sorted[Math.floor((n - 1) * 0.5)] as number) : NaN
+      result.p95 = n > 0 ? (sorted[Math.floor((n - 1) * 0.95)] as number) : NaN
+      return result
     },
   }
 }

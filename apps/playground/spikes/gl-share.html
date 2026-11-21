@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- No data leaves: blocks MediaPipe's usage metrics (POST to odml.pa.googleapis.com); ws/wss for Vite HMR. -->
+    <meta http-equiv="Content-Security-Policy" content="connect-src 'self' ws: wss:" />
+    <title>Ouaf spike #7 — shared WebGL context</title>
+    <style>
+      :root { font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 16px; }
+      h1 { font-size: 1.3em; margin: 0 0 8px; }
+      nav { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 8px; }
+      dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 14px; }
+      dt { font-weight: 600; }
+      dd { margin: 0; overflow-wrap: anywhere; }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      button { font: inherit; padding: 8px 16px; }
+      #big { font: 600 20px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 8px 0; padding: 6px 8px; border-radius: 6px;
+        background: #1b5e20; color: #fff; max-width: 640px; box-sizing: border-box; }
+      #big:empty { display: none; }
+      #big.bad { background: #b71c1c; }
+      #stage > canvas { display: block; width: 100%; max-width: 640px; background: #000; }
+    </style>
+  </head>
+  <body>
+    <h1>Spike #7 — MediaPipe mask on the GPU</h1>
+    <nav>
+      <a href="?path=shared">shared</a>
+      <a href="?path=cpu">cpu</a>
+      <a href="?path=webgpu">webgpu</a>
+      <a href="?path=webgpu&amp;copy=readback">webgpu readback</a>
+      <a href="?path=shared&amp;view=mask">shared mask view</a>
+      <a href="?path=cpu&amp;view=mask">cpu mask view</a>
+      <a href="?path=shared&amp;face=shared">shared + face</a>
+      <a href="./">all spikes</a>
+    </nav>
+    <dl id="status"></dl>
+    <div class="actions">
+      <button id="start" type="button">Start camera</button>
+      <button id="check" type="button" disabled>Check alignment</button>
+      <button id="stop" type="button" disabled>Stop</button>
+    </div>
+    <div id="big"></div>
+    <div id="perf"></div>
+    <div id="stage">
+      <video id="video" playsinline muted hidden></video>
+    </div>
+    <script type="module" src="/src/spikes/gl-share/main.ts"></script>
+  </body>
+</html>
