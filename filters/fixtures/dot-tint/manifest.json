@@ -1,0 +1,16 @@
+{
+  "ouaf": "1",
+  "id": "dot-tint",
+  "name": "Dot and tint (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Browser-test fixture of the engine skeleton: a green dot on the nose tip (object stage) and a yellow tint (color stage), from the playground test plugin.",
+  "requires": { "face": true, "plugins": ["playground@^1"] },
+  "params": {
+    "tint": { "type": "number", "default": 1, "min": 0, "max": 1 }
+  },
+  "layers": [
+    { "type": "playground:dot", "anchor": "noseTip", "color": "#00ff00", "size": 0.5 },
+    { "type": "playground:tint", "color": "#ffff00", "amount": { "param": "tint" } }
+  ]
+}

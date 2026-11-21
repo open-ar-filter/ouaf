@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- No data leaves: blocks MediaPipe's usage metrics (POST to odml.pa.googleapis.com); ws/wss for Vite HMR. -->
+    <meta http-equiv="Content-Security-Policy" content="connect-src 'self' ws: wss:" />
+    <title>Ouaf engine</title>
+    <style>
+      :root { font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 16px; }
+      canvas { display: block; width: 100%; max-width: 640px; background: #000; }
+      video { position: fixed; top: 0; left: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+      pre { font-size: 12px; white-space: pre-wrap; }
+      button { font: inherit; padding: 8px 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>Ouaf engine</h1>
+    <p>
+      <code>?source=&lt;clip&gt;</code> plays <code>test-media/&lt;clip&gt;.mp4</code> (camera otherwise),
+      <code>&amp;filter=&lt;url&gt;</code> (repeatable) loads filter folders, e.g. <code>/filters/&lt;id&gt;/</code>,
+      <code>&amp;maxFaces=N</code>, <code>&amp;autostart</code>.
+    </p>
+    <button id="start" type="button">Start</button>
+    <canvas id="canvas"></canvas>
+    <video id="video" muted playsinline></video>
+    <pre id="log"></pre>
+    <script type="module" src="/src/engine/main.ts"></script>
+  </body>
+</html>
