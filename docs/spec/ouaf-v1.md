@@ -91,7 +91,8 @@ Any property not defined by this document is an **error** (no free-form fields),
 
 | Field | v1 | Effect |
 |---|---|---|
-| `face` | ✔ | Loads face tracking (478 landmarks, 52 blendshapes, pose). |
+| `face` | ✔ | Loads face tracking (478 landmarks, pose, and blendshapes when the filter uses them). |
+| `blendshapes` | ✔ | The filter does not work without blendshapes: the engine never drops them (16.2) and hides the filter rather than degrading it. Requires `face`. |
 | `hands`, `segmentation`, `pose`, `audio` | reserved | Warning in v1; provided by later versions. |
 | `plugins` | ✔ | Required plugins: `["mood@^1"]`. An engine MUST refuse the filter when a plugin is missing, with an explicit message. |
 
@@ -235,6 +236,9 @@ A property marked *bindable* accepts, instead of a fixed value:
 
 v1 data paths: `time`, `faces.count`, `face.index`, `face.size`, `face.pose.yaw`, `face.pose.pitch`,
 `face.pose.roll`, `face.blendshapes.<name>` (appendix B). Plugins MAY add more (e.g. `face.mood`).
+
+Blendshapes are an optional capability (16.2): while the engine has dropped them, `face.blendshapes.<name>` bindings
+take their `default` value, as when no face is visible.
 
 Bindings are evaluated by the engine, **outside the sandbox**: they cost neither latency nor data transfer.
 The language is deliberately limited to these forms; any richer logic belongs in the script.
@@ -381,7 +385,8 @@ export default {
 | `f.after(ms, fn)`, `f.every(ms, fn)` | Timers, in media time. |
 
 `frame` contains `time` (media time, s), `faces` (list), and for each face `id`, `index`, and depending on `uses`:
-`face.pose` + `face.size` (default), `face.blendshapes` (default), `face.anchors` (screen positions), `face.landmarks` (478 points).
+`face.pose` + `face.size` (default), `face.blendshapes` (default; absent while the engine has dropped them, 16.2),
+`face.anchors` (screen positions), `face.landmarks` (478 points).
 
 ### 12.5 Determinism
 
@@ -415,6 +420,9 @@ repeated overruns stop the script (the declarative rest of the filter keeps work
 | `message:<name>` | Message from the host (`engine.send(name, data)`) | — |
 
 - Expression events fire **once** at the start of the gesture, with **hysteresis** (no bursts on the slightest twitch).
+- Expression events MUST keep working when blendshapes are dropped (16.2): the engine then derives them from the
+  landmark geometry (mouth opening, eyelid opening, eyebrow height, mouth corners…), mapped to the same 0–1 scale as
+  the blendshapes, so the thresholds above keep their meaning.
 - `events.<name>.threshold` and `minDurationMs` tune detection; the engine MAY calibrate against the person's neutral face.
 - Reserved: `tap`, `doubleTap`, `longPress`, `drag`, `pinch`, `swipe`, `tap:<layer>`, `ended`, `cue:<time>`.
 
@@ -442,19 +450,72 @@ repeated overruns stop the script (the declarative rest of the filter keeps work
 7. **Expressions, not emotions.** Events describe expressions (smile, open mouth). Emotion inference is reserved for an
    explicit plugin; hosts in education or workplace settings MUST disable it (EU AI Act).
 
-## 16. Versioning and compatibility
+## 16. Performance and device adaptation
+
+The power of the devices that run filters varies by a factor of ten or more, and it cannot be predicted from the
+device model: on some phones the GPU inference path is twice as slow as the CPU one. An engine therefore adapts to
+what it **measures** while the filter runs, within limits the filter declares.
+
+### 16.1 Tracking rate and floor
+
+- The **tracking rate** is the number of tracking results completed per second, measured over a sliding window of a
+  few seconds. It can be lower than the rendering frame rate: an engine MAY render every camera frame and update
+  tracking less often.
+- **Floor: 15 Hz.** Below it, anchored content visibly lags behind the face. A filter that uses face tracking is not
+  displayed while the rate stays below the floor (16.3).
+- Filters without face tracking (e.g. a color grade on the whole image) are not subject to the floor.
+
+### 16.2 Optional capabilities
+
+To keep the tracking rate above the floor, an engine MAY drop the following capabilities, **in this order**:
+
+| Order | Capability | While dropped |
+|---|---|---|
+| 1 | Blendshapes, unless `requires.blendshapes` (4.1) | `face.blendshapes.<name>` bindings take their `default` (8); `face.blendshapes` is absent from script data (12.4); expression events come from the landmark geometry (13). |
+| 2 | Faces beyond the first | The engine lowers `maxFaces` (5.4): layers keep applying to the faces still tracked. |
+| 3 | Analysis resolution | The engine analyses a smaller copy of the camera image; tracking is less precise on small faces. |
+
+- An engine MUST NOT drop a required capability: face landmarks and pose, and blendshapes when `requires.blendshapes`
+  is set.
+- Before hiding a filter (16.3), an engine MUST have dropped every optional capability the filter uses. It MAY drop
+  them earlier to reach a higher rate than the floor.
+- An engine SHOULD restore dropped capabilities one at a time, in reverse order, with hysteresis, so that they do not
+  switch on and off around a threshold.
+- Capabilities reserved for later versions (segmentation, irises, hands) will be added to this list with their version.
+
+### 16.3 Below the floor
+
+- **At startup**, the engine judges the rate over the first 3 s, after dropping the optional capabilities it needs to.
+- **While running**, the filter is hidden once the rate has stayed below **15 Hz for 3 s**, and shown again once the
+  rate is back above **18 Hz**. The gap between the two thresholds prevents flicker.
+- While a filter is hidden, the engine renders the **raw camera image**, without any part of the filter. The filter is
+  suspended: no layers are drawn, no events are delivered and its script is not called. Tracking keeps running, to
+  measure when the filter can be shown again.
+- The engine notifies the host with a `performance` event (`engine.on('performance', e)`) at each state change:
+  `e.state` is `"ok"`, `"degraded"` (some optional capabilities dropped, listed in `e.dropped`) or `"unsupported"`
+  (filter hidden), and `e.trackingHz` is the measured rate. The engine displays no message of its own: the host
+  decides what to tell the person.
+
+### 16.4 Choosing the inference backend
+
+- An engine SHOULD choose its inference backend (wasm CPU, WebGL, WebGPU…) by **measuring** it on the device, not from
+  the device model, GPU name or number of cores. The reference implementation runs a short benchmark (1 to 2 s) at
+  first start and caches the result locally, keyed by engine version.
+- The benchmark result stays on the device: it MUST NOT be transmitted (15).
+
+## 17. Versioning and compatibility
 
 - The `ouaf` field changes value only for a breaking change.
 - Minor versions of the spec (1.1, 1.2…) add fields, types, anchors or events **without** breaking existing filters.
 - A 1.x engine MUST refuse a filter whose `engine` range excludes its version, with an explicit message.
 - Plugins follow semver; `requires.plugins` expresses a range.
 
-## 17. Conformance
+## 18. Conformance
 
 - **Conforming validator**: checks the schema **and** the semantic rules (anchors, asset references, parameters and presets,
   bindings, events, drawn canvas layers, `requires`), and reports for each problem a code, a JSON pointer, a message and,
   when possible, a suggestion. Reference implementation: `validateManifest()` in `@ouaf/spec`, and `ouaf validate`.
-- **Conforming engine**: follows sections 5 to 15; rendering differences between engines are acceptable as long as
+- **Conforming engine**: follows sections 5 to 16; rendering differences between engines are acceptable as long as
   anchoring, stage order and layer semantics are respected.
 
 ---
@@ -503,7 +564,8 @@ the extra one being `_neutral`):
 - Offset of the `head` origin (Appendix D), to be checked once rigid anchors are rendered.
 - Detailed script API (section 12): signatures, available easings, per-frame time budget.
 - Provisional shader inputs (`ouaf_personMask`, `ouaf_audioLevel`, anchors).
-- Default event thresholds, after measurements on a variety of faces.
+- Default event thresholds, after measurements on a variety of faces, and the mapping of the geometric measures used
+  when blendshapes are dropped (13, 16.2) onto the same scale.
 - Numeric limits (package size, dimensions, number of layers) after measurements on mobile.
 
 ## Appendix D — Reference anchor mapping (informative)

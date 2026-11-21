@@ -145,7 +145,11 @@
       "properties": {
         "face": {
           "type": "boolean",
-          "description": "Face tracking (478 landmarks, 52 blendshapes, pose)."
+          "description": "Face tracking (478 landmarks, pose, and blendshapes when used)."
+        },
+        "blendshapes": {
+          "type": "boolean",
+          "description": "The filter does not work without blendshapes: the engine never drops them and hides the filter rather than degrading it (spec 16.2). Requires \"face\"."
         },
         "hands": {
           "type": "boolean",
