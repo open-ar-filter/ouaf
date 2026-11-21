@@ -43,6 +43,11 @@ playground still runs and the **Faces** row says why tracking is unavailable.
 MediaPipe Tasks always sends usage metrics (no images, no face data) to Google. The playground blocks them with a
 Content-Security-Policy; see [`docs/privacy.md`](docs/privacy.md) for what is sent and how to block it.
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) (setup, checks, conventions) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+Coding agents: [`AGENTS.md`](AGENTS.md).
+
 ## License
 
 - Code (engine, packages, tools, generated JSON Schema): [Apache-2.0](LICENSE)
