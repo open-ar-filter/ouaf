@@ -428,7 +428,37 @@ checkButton.addEventListener('click', () => {
 })
 if (SOURCE !== null && params.has('autostart')) void start()
 
-/** Hook for automated runs (headless measurements): recent timings and the MediaPipe comparison. */
+/**
+ * Deterministic micro-benchmark for the browser tests: pauses the video (at `atSeconds` when given), runs the pipeline
+ * once to find the face and its ROI, then `runs` times on that frame. Returns the median landmark model time and how
+ * often a face was found.
+ */
+async function bench(runs: number, atSeconds?: number): Promise<{ landmarksMs: number; found: number; runs: number }> {
+  if (!litert) throw new Error('only for runtime=litert, once started')
+  video.pause()
+  while (busy) await new Promise((r) => setTimeout(r, 5))
+  if (atSeconds !== undefined) {
+    const seeked = new Promise((r) => video.addEventListener('seeked', r, { once: true }))
+    video.currentTime = atSeconds
+    await seeked
+  }
+  litert.reset()
+  const width = video.videoWidth
+  const height = video.videoHeight
+  const out = createFaceResult()
+  await litert.run(video, width, height, out)
+  const times: number[] = []
+  let found = 0
+  for (let i = 0; i < runs; i++) {
+    await litert.run(video, width, height, out)
+    if (out.found) found++
+    if (Number.isFinite(litert.timings.landmarksMs)) times.push(litert.timings.landmarksMs)
+  }
+  times.sort((a, b) => a - b)
+  return { landmarksMs: times[Math.floor(times.length / 2)] ?? NaN, found, runs }
+}
+
+/** Hook for automated runs (headless measurements, browser tests): recent timings, MediaPipe comparison, bench. */
 Object.assign(window, {
   __spike83: {
     recent,
@@ -442,5 +472,7 @@ Object.assign(window, {
       return runtimeRow.textContent
     },
     check,
+    bench,
+    threads: RUNTIME === 'litert' && ACCEL === 'wasm' ? THREADS : 0,
   },
 })
