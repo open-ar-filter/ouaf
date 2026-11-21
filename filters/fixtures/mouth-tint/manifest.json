@@ -4,10 +4,10 @@
   "name": "Mouth tint (engine test fixture)",
   "version": "1.0.0",
   "license": "CC0-1.0",
-  "description": "Bindings fixture: the image turns red as the mouth opens (face.blendshapes.jawOpen through range/to), and the dot grows with the param `size`.",
+  "description": "Bindings fixture: the image turns red as the mouth opens (face.blendshapes.jawOpen through range/to), with a white dot on the mouth; the param `strength` adds a blue veil, chained after the red tint (both multiply: red then blue gives near black).",
   "requires": { "face": true, "plugins": ["playground@^1"] },
   "params": {
-    "strength": { "type": "number", "default": 1, "min": 0, "max": 1, "transition": 500 }
+    "strength": { "type": "number", "default": 0, "min": 0, "max": 1, "transition": 500 }
   },
   "layers": [
     { "type": "playground:dot", "anchor": "mouth", "color": "#ffffff", "size": 0.3 },
