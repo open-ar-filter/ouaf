@@ -50,7 +50,7 @@ export const DEFAULT_EVENT_THRESHOLDS = {
   mouthOpen: 0.35,
   smile: 0.5,
   eyebrowRaise: 0.5,
-  kiss: 0.6,
+  kiss: 0.7,
   nod: 0.5,
   shake: 0.5,
 } as const satisfies Partial<Record<ExpressionEventName, number>>
@@ -69,7 +69,8 @@ export const DEFAULT_EVENT_MIN_DURATION_MS: Readonly<Record<Exclude<ExpressionEv
   smile: 100,
   smileEnd: 100,
   eyebrowRaise: 100,
-  kiss: 100,
+  // Speech ("oo") briefly puckers the lips above 0.6: a kiss must hold a little longer than a syllable.
+  kiss: 150,
   nod: 200,
   shake: 200,
 }

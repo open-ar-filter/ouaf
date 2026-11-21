@@ -217,8 +217,14 @@ describe('expression events: mouth, smile, eyebrows, kiss', () => {
 
   it('eyebrowRaise and kiss', () => {
     expect(names(simulate({ ms: 3000, face: during(1000, 1500, { brow: 0.8 }) }))).toEqual(['eyebrowRaise'])
-    expect(names(simulate({ ms: 3000, face: during(1000, 1500, { pucker: 0.5 }) }))).toEqual([]) // below 0.6
+    expect(names(simulate({ ms: 3000, face: during(1000, 1500, { pucker: 0.65 }) }))).toEqual([]) // below 0.7
     expect(names(simulate({ ms: 3000, face: during(1000, 1500, { pucker: 0.75 }) }))).toEqual(['kiss'])
+  })
+
+  it('a syllable that puckers the lips briefly is not a kiss', () => {
+    // Speech ("oo") puckers the lips past the threshold for about one syllable; a kiss holds it for 150 ms or more.
+    expect(names(simulate({ ms: 3000, face: during(1000, 1100, { pucker: 0.8 }) }))).toEqual([])
+    expect(names(simulate({ ms: 3000, face: during(1000, 1250, { pucker: 0.8 }) }))).toEqual(['kiss'])
   })
 
   it('two separate gestures fire twice', () => {

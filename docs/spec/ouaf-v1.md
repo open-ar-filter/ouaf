@@ -414,7 +414,7 @@ repeated overruns stop the script (the declarative rest of the filter keeps work
 | `mouthOpen`, `mouthClose` | `jawOpen` crosses the threshold | 0.35 |
 | `smile`, `smileEnd` | Average of `mouthSmileLeft/Right` | 0.5 |
 | `eyebrowRaise` | `browInnerUp` | 0.5 |
-| `kiss` | `mouthPucker` | 0.6 |
+| `kiss` | `mouthPucker` | 0.7 |
 | `nod`, `shake` | Vertical / horizontal head oscillation | 0.5 |
 | `paramChange` | A parameter changed: `{ name, value, previous }` | — |
 | `message:<name>` | Message from the host (`engine.send(name, data)`) | — |
