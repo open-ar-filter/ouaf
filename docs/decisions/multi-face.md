@@ -1,8 +1,8 @@
 # Default `maxFaces` per device class (#8)
 
-Status: **proposed** for desktop, **open** for phones. The numbers below come from one desktop machine, in headless
-browsers. The decision is final once an Android phone and an iPhone have run the #8 protocol in
-[`phase0-measurement-protocol.md`](phase0-measurement-protocol.md#8--multi-face-cost).
+Status: **proposed**. Desktop numbers come from one machine in headless browsers; the phone numbers from a Redmi
+Note 11S (2026-11-21, below). An iPhone and a high-end Android phone still have to run the
+[#8 protocol](phase0-measurement-protocol.md#8--multi-face-cost) (#95).
 
 ## Question
 
@@ -101,40 +101,59 @@ Rendering takes 0.4–1 ms in every run and does not depend on the number of fac
 - Firefox headless stays at ≈ 24–25 fps even with 10 ms of tracking per frame. That is a limit of the headless
   setup, not of tracking: compare its `trackingMs`, not its fps.
 
-## Context: phones
+## Results (Redmi Note 11S)
 
-The only phone result so far is in #9. On a Redmi Note 11S (Helio G96, Mali-G57, Android Chrome) with MediaPipe,
-**one face** costs ≈ 75–100 ms per frame: 92 ms with the camera and 108 ms on `pesquet-closeup` with the GPU delegate,
-96 ms with the CPU delegate. That is ≈ 9–10 Hz, **already below the 15 Hz floor with one face**. Those runs used
-`maxFaces=2`. If the desktop ratios hold:
+`2201117SY` (Helio G96, Mali-G57, Chrome 157), driven over USB (raw CDP), 1 min per run after 5 s of warm-up,
+battery 34–36 °C, 2026-11-21. Raw exports: [`data/8-multi-face/redmi-note-11s/`](data/8-multi-face/redmi-note-11s/)
+(`rerun-*`: 45 s runs done afterwards). `trackingMs` p50 / p95 over the whole run, and frame rate.
 
-- capacity 1 instead of 2 would save ≈ 15–27 % with one person, roughly 100 → 75–85 ms;
-- two faces would cost ≈ 1.7× one face (≈ 160–180 ms, ≈ 6 Hz), and four faces ≈ 2.5× (≈ 250 ms, 4 Hz).
+| Faces tracked | Run | MediaPipe CPU | MediaPipe GPU |
+|---|---|---|---|
+| 0, detector only | 8d `no-face`, capacity 4 | 69 / 80 · 13.3 fps | 77 / 98 · 11.5 fps |
+| 1 | 8a `four-faces-grid`, capacity 1 | 112 / 122 · 8.5 fps | 186 / 303 · 4.8 fps |
+| 2 | 8b `four-faces-grid`, capacity 2 | 150 / 165 · 6.4 fps | 343 / 441 · 2.8 fps |
+| 3 (capacity 4) | 8e `three-faces-grid` | | 585 / 678 · 1.8 fps |
+| 4 | 8c `four-faces-grid`, capacity 4 | 254 / 271 · 3.9 fps | 635 / 745 · 1.5 fps |
 
-The LiteRT.js pipeline of [`face-runtime.md`](face-runtime.md) brings one face to ≈ 50–60 ms on that phone, about
-15–19 Hz. That leaves no room for a second face either. On mid-range phones, multi-face is out of reach for now.
-Spec 16.2 drops to one face, and dropping the spare capacity is itself worth ≈ 15–27 %. These are extrapolations: the
-phone runs (8a–8d, 8h–8j) must measure them.
+Spare capacity, one person (`pesquet-closeup`):
+
+| Capacity | Run | MediaPipe CPU | MediaPipe GPU |
+|---|---|---|---|
+| 1 | 8h | 98 / 140 · 9.2 fps (rerun) | 197 / 261 · 4.8 fps; rerun 163 / 187 |
+| 2 | 8i | 113 / 157 · 7.8 fps (rerun) | 310 / 378 · 3.2 fps; rerun 212 / 261 |
+| 4 | 8j | 119 / 134 · 8.2 fps | 299 / 351 · 3.4 fps |
+
+Two faces in view (`two-faces-stacked`), GPU: capacity 2 (8g) 375 ms, capacity 4 (8f) 475 ms.
+
+Reading:
+
+- **The GPU delegate was 2–3× slower this afternoon than in the morning** on the same clip (≈ 107 ms in #9, 163–310
+  ms here). Not caused by the page (same result with and without the hidden-video CSS rule of #96), nor by
+  throttling (thermal status 0); a stale spike tab in the background explained part of it (280 → 212 ms once
+  closed). The CPU delegate stayed consistent with the morning (≈ 96–113 ms), so the reading below uses CPU.
+- **Each extra face costs ≈ 35–50 ms on this phone** (CPU: 112 → 150 → 254 ms for 1, 2, 4 faces), the same ≈ 2.3×
+  ratio for four faces as on desktop. Two faces run at 6 fps: multi-face is out of reach with MediaPipe on this
+  phone, and one face already is below the 15 Hz floor.
+- **A spare slot costs ≈ 15 %** with one person (8h → 8i, CPU: 98 → 113 ms), at the threshold set for the decision.
+- With our own pipeline ([`face-runtime.md`](face-runtime.md)), one face tracks at ≈ 14.6 Hz on this phone and
+  18.4 Hz on a Redmi Note 14 Pro 5G: still no room for a second face on mid-range phones.
 
 ## Proposal
 
 - **Desktop: keep `maxFaces = 4`.** With one or two people in view, it costs the same as 2 (see the spare capacity
   table). With four people it stays above the floor on this laptop (≥ 19 fps). On a slower desktop, spec 16.2 lowers
   it when the rate falls.
-- **Phones: undecided until the phone runs.** On the only measured phone, even one face is below the floor, so the
-  default matters less than the adaptation: spec 16.2 brings `maxFaces` to 1 within the first seconds. Two candidate
-  rules for the maintainer's runs to settle:
-  - keep 2 if 8i ≈ 8h on phones (no cost for the spare capacity);
-  - otherwise default to 1 on phones, and let a host or filter ask for more, if 8h saves ≥ 15 % against 8i (as on
-    desktop). A capacity of 1 means a second person is never picked up unless the engine raises it again, so this
-    trades multi-face support for tracking rate on the devices that need it most.
+- **Phones: `maxFaces = 1`.** On the measured phone a spare slot costs ≈ 15 % and a second face ≈ 35–50 ms, with
+  one face already near or below the floor. A host or filter can ask for more (`requires` / optional extra faces,
+  spec 16), and the startup benchmark of #90 can raise the capacity on phones that measure fast enough. A capacity
+  of 1 means a second person is never picked up unless the engine raises it again: multi-face filters need a
+  device that can afford it.
 
 ## Next
 
-1. Run the #8 protocol (8a–8j, then 8a–8d and 8j with `&delegate=CPU`) on an Android mid-range phone and an iPhone,
-   and add the results here.
-2. Decide the phone default from 8h vs 8i, and confirm the desktop default on a mid-range laptop (headed browser,
-   real camera, Chrome, Firefox, Safari).
+1. Run the #8 protocol on an iPhone and a high-end Android phone (#95), and on a mid-range laptop (headed browser,
+   real camera, Chrome, Firefox, Safari) to confirm the desktop default.
+2. Re-run the multi-face cost with our own pipeline once it supports several faces ([`face-runtime.md`](face-runtime.md)).
 3. Engine (phase 1): apply the default per device class, and make spec 16.2's "faces beyond the first" also cover
-   the spare capacity (go down to `maxFaces = 1` while a single face is in view, since a spare slot costs 15–27 %),
-   if the phones confirm that cost.
+   the spare capacity (go down to `maxFaces = 1` while a single face is in view: a spare slot costs ≈ 15 % on the
+   phone and 15–27 % on desktop).

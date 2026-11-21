@@ -7,9 +7,10 @@ How to run the phase 0 spikes (#6, #7, #8, #83) on real devices so that one meas
 
 | Class | Device | Browser |
 |---|---|---|
-| Desktop | (fill in) | Chrome, Firefox, Safari |
-| Android mid-range | (fill in) | Chrome |
-| iPhone | (fill in) | Safari |
+| Desktop | Linux laptop, Core Ultra 9 275HX, Intel iGPU (headless runs only so far) | Chrome, Firefox; WebKit as a Safari proxy ([`webkit-compat.md`](webkit-compat.md)) |
+| Android mid-range | Redmi Note 11S (Helio G96), Redmi Note 14 Pro 5G (Dimensity 7300) | Chrome 157 |
+| Android high-end | wanted: #95 | Chrome |
+| iPhone | wanted: #95 | Safari |
 
 Before the iPhone session: [`webkit-compat.md`](webkit-compat.md) lists what the pages do in desktop WebKit (Playwright
 on Linux, a proxy for Safari, not a device result) and what remains to be checked on the iPhone.
@@ -64,7 +65,7 @@ only difference between them.
 ## #6 — Tracking in a Worker vs main thread
 
 Goal: decide whether tracking runs in a Web Worker (MediaPipe on an `OffscreenCanvas`, frames transferred from the
-page) or on the main thread with the GPU delegate.
+page) or on the main thread with the GPU delegate. Decision: [`tracking-worker.md`](tracking-worker.md).
 
 Page: `/spikes/worker.html` (links on `/spikes/`). Options: `mode=main|worker` (default `worker`),
 `transfer=videoframe|bitmap` (worker: `new VideoFrame(video)` or `createImageBitmap(video)`, default `videoframe`),
