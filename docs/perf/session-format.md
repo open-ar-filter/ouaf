@@ -127,6 +127,24 @@ check result is logged as a `note` event.
 | `syncCalls`      | count | Calls that wait on the GPU without transferring data: `clientWaitSync` with a timeout, `finish`, `getError`, `checkFramebufferStatus`. |
 | `maskReads`      | count | `MPMask.getAsFloat32Array` / `getAsUint8Array` calls made by the page. |
 
+### Spike #83: face models on another runtime (`/spikes/runtime.html`)
+
+`trackingMs` is the main-thread time spent in tracking during the frame callback (MediaPipe: the whole `detect`;
+LiteRT.js: the synchronous part of a run, the rest completes after the callback) and `renderMs` the 2D canvas draw
+(frame and landmarks). `app` adds `runtime`, `variant`, `description`, `crossOriginIsolated`, `cores`, `threads` and
+`blendshapes`; the "Check vs MediaPipe" result is logged as a `note` event.
+
+| Column          | Unit  | Meaning |
+|-----------------|-------|---------|
+| `pipelineMs`    | ms    | Frame → result of the run that completed since the previous sample (`null` when none). MediaPipe: same as `trackingMs`. |
+| `detectMs`      | ms    | LiteRT.js: letterbox, face detector and decoding, when it ran (no face tracked, or `detect=always`). |
+| `cropMs`        | ms    | LiteRT.js: rotated crop of the ROI to 256×256 on a 2D canvas, readback and conversion to floats. |
+| `landmarksMs`   | ms    | LiteRT.js: landmark model, input upload and output readback included. |
+| `blendshapesMs` | ms    | LiteRT.js: blendshapes model (146 points → 52 scores), when enabled. |
+| `readMs`        | ms    | LiteRT.js: copying outputs back to JavaScript (GPU → CPU with WebGPU), also counted in the stages above. |
+| `dropped`       | 0/1   | LiteRT.js: 1 when the frame was not analysed because the previous run was still going. |
+| `presence`      | 0–1   | LiteRT.js: face presence score of the landmark model (below 0.5 the detector runs again). |
+
 ## Example
 
 ```json

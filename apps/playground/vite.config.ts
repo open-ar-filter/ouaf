@@ -20,6 +20,13 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
     files: /^vision_wasm(_module)?_internal\.(js|wasm)$/,
   },
   {
+    // LiteRT.js runtime (#83 spike): single-threaded, threaded (pthreads, cross-origin isolated pages only) and JSPI
+    // builds; `loadLiteRt()` picks one from this directory.
+    prefix: 'litert/wasm/',
+    dir: dirname(require.resolve('@litertjs/core/wasm/litert_wasm_internal.wasm')),
+    files: /^litert_wasm(_threaded|_jspi|_compat)?_internal\.(js|wasm)$/,
+  },
+  {
     // Test clips (#77), committed at the repository root; played with `?source=<clip>`.
     prefix: 'test-media/',
     dir: resolve(here, '../../test-media'),
@@ -121,10 +128,37 @@ function pages(): Record<string, string> {
  */
 const HEADERS = { 'Content-Security-Policy': "connect-src 'self' ws: wss:" }
 
+/**
+ * Cross-origin isolation (`crossOriginIsolated`, hence `SharedArrayBuffer` and wasm threads) for the pages that need
+ * it, not the whole playground: the #83 runtime spike, the LiteRT.js files it loads (its pthread workers run
+ * `litert_wasm_threaded_internal.js`, whose response must carry the same embedder policy) and the MediaPipe wasm
+ * it uses as the reference. `?coi=0` on the page turns it off, to measure what isolation itself changes.
+ */
+const ISOLATED = [/\/spikes\/runtime(\.html)?$/, /\/litert\/wasm\//, /\/mediapipe\/wasm\//, /\/models\//, /\/test-media\//]
+
+function crossOriginIsolation(): Plugin {
+  const middleware = (req: { url?: string }, res: { setHeader(name: string, value: string): void }, next: () => void) => {
+    const [path = '', query = ''] = (req.url ?? '').split('?')
+    if (ISOLATED.some((re) => re.test(path)) && !/(^|&)coi=0(&|$)/.test(query)) {
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
+      res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
+      // Lets an isolated page load these files whatever its own origin policy is.
+      res.setHeader('Cross-Origin-Resource-Policy', 'same-origin')
+    }
+    next()
+  }
+  return {
+    name: 'ouaf-cross-origin-isolation',
+    // Before Vite's own middlewares (and the self-hosted assets), so every response of these paths gets the headers.
+    configureServer: (server) => void server.middlewares.use(middleware),
+    configurePreviewServer: (server) => void server.middlewares.use(middleware),
+  }
+}
+
 // getUserMedia requires a secure context: serve over HTTPS (self-signed certificate) and listen on
 // every interface so a phone on the same network can open the playground.
 export default defineConfig({
-  plugins: [basicSsl({ name: 'ouaf-playground' }), selfHostedAssets()],
+  plugins: [basicSsl({ name: 'ouaf-playground' }), crossOriginIsolation(), selfHostedAssets()],
   server: { host: true, port: 5173, headers: HEADERS },
   preview: { host: true, port: 4173, headers: HEADERS },
   build: { target: 'es2023', rolldownOptions: { input: pages() } },

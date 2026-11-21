@@ -24,6 +24,14 @@
         <a href="worker.html?mode=worker&amp;load=15">worker + 15 ms load</a>
       </li>
       <li><a href="../?maxFaces=1">Multi-face cost (#8): maxFaces=1</a> · <a href="../?maxFaces=2">2</a> · <a href="../?maxFaces=4">4</a></li>
+      <li>
+        Face models on another runtime (#83):
+        <a href="runtime.html?runtime=mediapipe">MediaPipe GPU</a> ·
+        <a href="runtime.html?runtime=mediapipe&amp;delegate=CPU">MediaPipe CPU</a> ·
+        <a href="runtime.html?threads=1">LiteRT wasm, 1 thread</a> ·
+        <a href="runtime.html">LiteRT wasm, threads</a> ·
+        <a href="runtime.html?accel=webgpu">LiteRT WebGPU</a>
+      </li>
       <li><a href="gl-share.html?path=shared">Shared WebGL context, GPU-side masks (#7): shared</a> · <a href="gl-share.html?path=cpu">cpu</a> · <a href="gl-share.html?path=webgpu">webgpu</a></li>
     </ul>
   </body>

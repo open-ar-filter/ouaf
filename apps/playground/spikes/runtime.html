@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- No data leaves: blocks MediaPipe's usage metrics (POST to odml.pa.googleapis.com); ws/wss for Vite HMR.
+         Served with COOP/COEP (cross-origin isolated) by the dev/preview servers, for wasm threads. -->
+    <meta http-equiv="Content-Security-Policy" content="connect-src 'self' ws: wss:" />
+    <title>Ouaf spike #83: face models on another runtime</title>
+    <style>
+      :root { font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 16px; }
+      h1 { font-size: 1.25rem; margin: 0 0 8px; }
+      dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; font-size: 14px; }
+      dt { font-weight: 600; }
+      dd { margin: 0; overflow-wrap: anywhere; }
+      nav { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 4px 0 8px; }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      button { font: inherit; padding: 8px 16px; }
+      #stage > canvas { display: block; width: 100%; max-width: 640px; background: #000; }
+      /* Kept rendered (tiny) rather than hidden: phones throttle the decoding of hidden muted videos. */
+      #video { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+    </style>
+  </head>
+  <body>
+    <h1>Spike #83: MediaPipe face models on LiteRT.js vs MediaPipe</h1>
+    <nav id="variants" aria-label="Variants"></nav>
+    <dl id="status"></dl>
+    <div class="actions">
+      <button id="start" type="button">Start</button>
+      <button id="check" type="button" disabled>Check vs MediaPipe</button>
+      <button id="stop" type="button" disabled>Stop</button>
+    </div>
+    <div id="perf"></div>
+    <div id="stage">
+      <video id="video" playsinline muted></video>
+    </div>
+    <script type="module" src="/src/spikes/runtime/main.ts"></script>
+  </body>
+</html>
