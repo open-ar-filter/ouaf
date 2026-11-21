@@ -101,6 +101,12 @@ describe('createFaceTracker', () => {
     expect(created[0]!.calls).toEqual([{ frame: WARMUP, ts: 0 }])
   })
 
+  it('can skip the blendshapes model', async () => {
+    const { backend, created } = fakeBackend()
+    await createFaceTrackerWith({ ...base, blendshapes: false }, backend)
+    expect(created[0]!.options.outputFaceBlendshapes).toBe(false)
+  })
+
   it('falls back to CPU when the GPU landmarker cannot be created, and reports it', async () => {
     const { backend, created, loadModel } = fakeBackend({ failCreate: ['GPU'] })
     const onWarning = vi.fn()
