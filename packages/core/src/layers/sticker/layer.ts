@@ -2,12 +2,16 @@
  * The `sticker` layer type (spec §6.2, §6.3): an image, spritesheet or video on a quad attached to an anchor.
  *
  * One quad per selected face (`faces`), or a single one for `anchor: "screen"`. Each quad shows the layer's asset, or
- * with `{ pick }` the asset chosen for its face (stable per face id, or drawn once per activation). `size` is the
+ * with `{ pick }` the asset chosen for its face, kept while the face keeps its stable id: `(id − 1) mod n` with
+ * `by: "face"`, a random draw when the face appears with `by: "random"`; a screen sticker picks for its first
+ * selected face (id 0 while there is none). `size` is the
  * height in anchor units, the width follows the asset's aspect ratio. Bindable properties (`visible`, `opacity`,
  * `size`, `offset`, `rotation`) are evaluated per face; `rate` once per layer, for the first selected face.
  *
- * Playback (spritesheets, videos) follows the layer's clock (`playback.ts`): it starts when the layer is activated,
- * advances with the frame time times `rate`, stays on the first frame with `autoplay: false` (a script will start it,
+ * Playback (spritesheets, videos) follows the layer's clock (`playback.ts`): it starts from the first frame each time
+ * the layer becomes visible (no quad shown on the previous frame: activation, `visible` turning true, the first face
+ * appearing; faces that appear while it is shown join the running animation), advances with the frame time times
+ * `rate`, stays on the first frame with `autoplay: false` (a script will start it,
  * #26) and holds the last frame at the end without `loop`. A video plays natively at `rate` and is re-synchronized to
  * the clock when it drifts by more than `VIDEO_SYNC_TOLERANCE`; it is paused while no quad has shown it for
  * `VIDEO_IDLE_PAUSE_MS` (spec §10.4 recommends at most two videos playing at once on mobile).
@@ -46,7 +50,7 @@ export function stickerRefs(decl: LayerDecl): string[] {
 }
 
 export interface StickerOptions {
-  /** Random draw in [0, 1) for `{ pick, by: "random" }`. Default: `Math.random`. */
+  /** Random draws in [0, 1) for `{ pick, by: "random" }`, one per face. Default: `Math.random`. */
   random?: () => number
 }
 
@@ -127,7 +131,7 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
     return value
   })
   const by: PickMode = typeof d.src === 'object' && d.src.by === 'random' ? 'random' : 'face'
-  const draw = (options.random ?? Math.random)()
+  const random = options.random ?? Math.random
 
   const anchor = d.anchor ?? 'head'
   const screen = anchor === 'screen'
@@ -188,11 +192,13 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
   // Playback state (clock, last frame time, rate) in a typed array: a double in a closure variable is boxed on write.
   const play = new Float64Array(3)
   play[LAST_TIME] = -1
+  // No quad was shown on the previous frame: the next shown frame restarts playback.
+  let hidden = true
 
   const pickFor = (inst: Instance, faceId: number) => {
     if (inst.faceId === faceId) return
     inst.faceId = faceId
-    inst.mesh.material.setAsset(assets[pickIndex(by, faceId, assets.length, draw)]!)
+    inst.mesh.material.setAsset(assets[pickIndex(by, faceId, assets.length, by === 'random' && assets.length > 1 ? random() : 0)]!)
   }
 
   /** Places `inst` for face slot `face` (NO_FACE for the screen); false when it is not shown this frame. */
@@ -250,10 +256,13 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
       rate.write(lead, num, 2)
       const r = autoplay ? Math.max(0, num[2]!) : 0
       play[RATE] = r
-      play[CLOCK]! += clockStep(play[LAST_TIME]!, frame.time) * r
+      // Hidden on the previous frame: (re)start from the first frame.
+      if (hidden) play[CLOCK] = 0
+      else play[CLOCK]! += clockStep(play[LAST_TIME]!, frame.time) * r
       play[LAST_TIME] = frame.time
 
       shownVideos.fill(0)
+      let any = false
       for (let i = 0; i < instances.length; i++) {
         const inst = instances[i]!
         let shown = false
@@ -266,12 +275,14 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
           shown = place(inst, face, frame)
         }
         inst.mesh.visible = shown
+        if (shown) any = true
         if (shown && players.length > 0) {
           const asset = inst.mesh.material.asset
           for (let p = 0; p < players.length; p++) if (players[p]!.asset === asset) shownVideos[p] = 1
         }
       }
       for (let p = 0; p < players.length; p++) players[p]!.sync(play, shownVideos[p] === 1, frame)
+      hidden = !any
     },
     dispose() {
       for (const p of players) p.release()

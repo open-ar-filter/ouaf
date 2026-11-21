@@ -72,7 +72,7 @@ export const TextLayer = layerType(
   {
     ...Anchored,
     text: Bindable(Type.String({ maxLength: 500, description: 'Displayed text (emoji included).' })),
-    size: Type.Optional(Bindable(Type.Number({ exclusiveMinimum: 0, default: 0.3, description: 'Line height, in anchor units.' }))),
+    size: Type.Optional(Bindable(Type.Number({ exclusiveMinimum: 0, default: 0.3, description: 'Font size (em), in anchor units.' }))),
     font: Type.Optional({ ...AssetRef, default: 'builtin:font/sans-bold', description: 'Font: WOFF2 asset or "builtin:font/…".' }),
     color: Type.Optional(Bindable({ ...Color, default: '#ffffff' })),
     outline: Type.Optional(
@@ -83,13 +83,17 @@ export const TextLayer = layerType(
     ),
     shadow: Type.Optional(
       Type.Object(
-        { color: Color, blur: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })), offset: Type.Optional(Vec2) },
-        { additionalProperties: false },
+        {
+          color: Color,
+          blur: Type.Optional(Type.Number({ minimum: 0, maximum: 1, default: 0.1, description: 'Blur radius, relative to the font size.' })),
+          offset: Type.Optional({ ...Vec2, default: [0.04, -0.04], description: 'Offset relative to the font size, +y up.' }),
+        },
+        { additionalProperties: false, description: 'Drop shadow of the text and its outline.' },
       ),
     ),
     align: Type.Optional(Type.Union([Type.Literal('left'), Type.Literal('center'), Type.Literal('right')], { default: 'center' })),
     maxWidth: Type.Optional(Type.Number({ exclusiveMinimum: 0, description: 'Maximum width before wrapping (anchor units).' })),
-    lineHeight: Type.Optional(Type.Number({ minimum: 0.5, maximum: 3, default: 1.2 })),
+    lineHeight: Type.Optional(Type.Number({ minimum: 0.5, maximum: 3, default: 1.2, description: 'Line spacing, as a multiple of the font size.' })),
   },
   'Text attached to an anchor. Rasterized once into a texture, redrawn only when it changes.',
 )
@@ -152,7 +156,7 @@ export const WarpLayer = layerType(
     anchor: Type.Union([AnchorName, Type.Array(AnchorName, { minItems: 1, maxItems: 8 })], { description: 'Center(s) of the deformation.' }),
     radius: Type.Optional(Bindable(Type.Number({ exclusiveMinimum: 0, maximum: 5, default: 0.5, description: 'Radius in face units.' }))),
     strength: Type.Optional(Bindable(Type.Number({ minimum: -1, maximum: 1, default: 0.3, description: 'Strength from -1 to 1.' }))),
-    direction: Type.Optional(Bindable({ ...Vec2, description: 'Direction (stretch), in the anchor frame.' })),
+    direction: Type.Optional(Bindable({ ...Vec2, default: [0, 1], description: 'Direction (stretch), in the anchor frame; only its orientation counts.' })),
     faces: Type.Optional(FacesSelector),
   },
   'Image deformation around anchors (big eyes, stretched face…). Also deforms face textures.',
@@ -164,7 +168,7 @@ export const ColorLayer = layerType(
   'color',
   {
     lut: Type.Optional({ ...AssetRef, description: '.cube color lookup table (or "builtin:lut/…").' }),
-    intensity: Type.Optional(Bindable(Type.Number({ minimum: 0, maximum: 1, default: 1, description: 'Mix with the original image.' }))),
+    intensity: Type.Optional(Bindable(Type.Number({ minimum: 0, maximum: 1, default: 1, description: 'Strength of the LUT (mix with the image before it).' }))),
     brightness: Amount('Brightness.'),
     contrast: Amount('Contrast.'),
     saturation: Amount('Saturation (-1 = black and white).'),

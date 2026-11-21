@@ -27,6 +27,7 @@ uniform sampler3D uLut;
 uniform vec3 uLutScale;  // input → [0, 1]: 1 / (DOMAIN_MAX - DOMAIN_MIN)
 uniform vec3 uLutOffset; // -DOMAIN_MIN / (DOMAIN_MAX - DOMAIN_MIN)
 uniform float uLutSize;
+uniform float uLutMix; // intensity
 #endif
 uniform vec4 uGrade;  // mix, brightness exponent, contrast factor, saturation factor
 uniform vec4 uGrade2; // red gain, blue gain, vignette, grain amplitude
@@ -58,7 +59,7 @@ void main() {
   vec3 c = src;
 #ifdef HAS_LUT
   vec3 t = clamp(c * uLutScale + uLutOffset, 0.0, 1.0);
-  c = texture(uLut, t * ((uLutSize - 1.0) / uLutSize) + 0.5 / uLutSize).rgb;
+  c = mix(c, texture(uLut, t * ((uLutSize - 1.0) / uLutSize) + 0.5 / uLutSize).rgb, uLutMix);
 #endif
   c = pow(max(c, 0.0), vec3(uGrade.y));
   c = (c - 0.5) * uGrade.z + 0.5;

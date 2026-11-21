@@ -73,11 +73,11 @@ describe('sticker face selection and pick', () => {
     expect(selectFaces('all', 0, ids, sizes, out)).toBe(0)
   })
 
-  it('picks per face id (stable, successive faces get successive assets) or at random once', () => {
+  it('picks per face id (stable, successive faces get successive assets) or from a random draw', () => {
     expect([1, 2, 3, 4].map((id) => pickIndex('face', id, 3, 0))).toEqual([0, 1, 2, 0])
     expect(pickIndex('face', 0, 3, 0)).toBe(0)
     expect(pickIndex('random', 5, 3, 0.7)).toBe(2)
-    expect(pickIndex('random', 6, 3, 0.7)).toBe(2) // the same draw for every face
+    expect(pickIndex('random', 6, 3, 0.1)).toBe(0) // the face id does not count
     expect(pickIndex('random', 1, 3, 0.999999)).toBe(2)
     expect(pickIndex('face', 9, 1, 0.5)).toBe(0)
   })
@@ -321,13 +321,34 @@ describe('sticker layer', () => {
     layer.dispose()
   })
 
-  it('{ pick, by: "random" } draws once per activation, the same for every face', () => {
+  it('{ pick, by: "random" } draws once per face, kept while the face keeps its id', () => {
     const assets = { a: asset('image', 10, 10), b: asset('image', 10, 10), c: asset('image', 10, 10) }
-    const make = (draw: number) => createSticker({ type: 'sticker', src: { pick: ['a', 'b', 'c'], by: 'random' } } as LayerDecl, context(assets), { random: () => draw })
-    const layer = make(0.5)
-    layer.update(frameAt(0, fakeAnchors([1, 2])))
-    expect(meshes(layer).map((m) => m.material.asset)).toEqual([assets.b, assets.b])
+    const draws = [0.5, 0.9, 0.1]
+    let calls = 0
+    const random = () => draws[calls++ % draws.length]!
+    const layer = createSticker({ type: 'sticker', src: { pick: ['a', 'b', 'c'], by: 'random' } } as LayerDecl, context(assets), { random })
+    const ids = [1, 2]
+    const anchors = fakeAnchors(ids)
+    layer.update(frameAt(0, anchors))
+    expect(meshes(layer).map((m) => m.material.asset)).toEqual([assets.b, assets.c])
+    layer.update(frameAt(0.033, anchors))
+    expect(calls).toBe(2) // no new draw while the faces stay
+    ids[1] = 3 // a new face in slot 1: a new draw for it only
+    layer.update(frameAt(0.066, anchors))
+    expect(meshes(layer).map((m) => m.material.asset)).toEqual([assets.b, assets.a])
+    expect(calls).toBe(3)
     layer.dispose()
+
+    // A screen sticker picks for its first selected face: one draw while no face is tracked, one more when one comes.
+    calls = 0
+    const screen = createSticker({ type: 'sticker', anchor: 'screen', src: { pick: ['a', 'b', 'c'], by: 'random' } } as LayerDecl, context(assets), { random })
+    const none = fakeAnchors([])
+    screen.update(frameAt(0, none))
+    screen.update(frameAt(0.033, none))
+    expect([meshes(screen)[0]!.material.asset, calls]).toEqual([assets.b, 1])
+    screen.update(frameAt(0.066, fakeAnchors([4])))
+    expect([meshes(screen)[0]!.material.asset, calls]).toEqual([assets.c, 2])
+    screen.dispose()
   })
 
   it('plays a spritesheet with the frame time, at `rate`, looping or not', () => {
@@ -353,6 +374,34 @@ describe('sticker layer', () => {
     // The source loops back to 0: no time passes.
     expect(run({}, [2, 2.1, 0, 0.1])).toEqual([0, 1, 1, 2])
     expect(sheet.width / sheet.height).toBe(1)
+  })
+
+  it('restarts playback when the layer becomes visible, not when another face joins', () => {
+    const sheet = asset('spritesheet', 400, 200, { width: 100, height: 100, frames: { cols: 4, rows: 2, count: 8, fps: 10 } })
+    const layer = createSticker({ type: 'sticker', src: 'walk' } as LayerDecl, context({ walk: sheet }, 2))
+    const frameOf = (i: number) => {
+      const r = meshes(layer)[i]!.material.uniforms.uRect!.value as Vector4
+      return Math.round(r.y / r.w) * 4 + Math.round(r.x / r.z)
+    }
+    const ids = [1, 2]
+    const anchors = fakeAnchors(ids)
+    anchors.count = 0
+    layer.update(frameAt(0, anchors)) // activated with no face: nothing shown, the clock does not run
+    layer.update(frameAt(0.5, anchors))
+    anchors.count = 1
+    layer.update(frameAt(1, anchors))
+    expect(frameOf(0)).toBe(0) // the first face appears: from the first frame
+    layer.update(frameAt(1.2, anchors))
+    expect(frameOf(0)).toBe(2)
+    anchors.count = 2
+    layer.update(frameAt(1.3, anchors))
+    expect([frameOf(0), frameOf(1)]).toEqual([3, 3]) // the second face joins the running animation
+    anchors.count = 0
+    layer.update(frameAt(1.4, anchors))
+    anchors.count = 1
+    layer.update(frameAt(1.5, anchors))
+    expect(frameOf(0)).toBe(0) // every face left, then one came back: restarted
+    layer.dispose()
   })
 
   it('refuses an asset that is not an image, spritesheet or video', () => {
