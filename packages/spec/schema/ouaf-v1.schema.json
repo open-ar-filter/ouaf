@@ -128,6 +128,19 @@
       "x-bindable": true,
       "x-hint": "Fixed value, { \"param\": \"name\" } or { \"bind\": \"face.…\" }."
     },
+    "Anchored.scale": {
+      "anyOf": [
+        {
+          "anyOf": [{ "type": "number", "exclusiveMinimum": 0 }, { "$ref": "#/$defs/Vec3" }],
+          "default": 1,
+          "description": "Size multiplier, a number or [x, y, z]."
+        },
+        { "$ref": "#/$defs/Binding" }
+      ],
+      "description": "Size multiplier, a number or [x, y, z].",
+      "x-bindable": true,
+      "x-hint": "Fixed value, { \"param\": \"name\" } or { \"bind\": \"face.…\" }."
+    },
     "AssetEmoji": {
       "type": "object",
       "required": ["emoji"],
@@ -271,6 +284,7 @@
         "anchor": { "$ref": "#/$defs/Anchored.anchor" },
         "offset": { "$ref": "#/$defs/Anchored.offset" },
         "rotation": { "$ref": "#/$defs/Anchored.rotation" },
+        "scale": { "$ref": "#/$defs/Anchored.scale" },
         "orient": { "$ref": "#/$defs/Anchored.orient" },
         "follow": { "$ref": "#/$defs/Anchored.follow" },
         "faces": { "$ref": "#/$defs/FacesSelector" },
@@ -557,6 +571,7 @@
         "anchor": { "$ref": "#/$defs/Anchored.anchor" },
         "offset": { "$ref": "#/$defs/Anchored.offset" },
         "rotation": { "$ref": "#/$defs/Anchored.rotation" },
+        "scale": { "$ref": "#/$defs/Anchored.scale" },
         "orient": { "$ref": "#/$defs/Anchored.orient" },
         "follow": { "$ref": "#/$defs/Anchored.follow" },
         "faces": { "$ref": "#/$defs/FacesSelector" },
@@ -565,14 +580,6 @@
         "src": {
           "anyOf": [{ "$ref": "#/$defs/AssetRef" }, { "$ref": "#/$defs/AssetPick" }, { "$ref": "#/$defs/Shape" }],
           "description": "glTF/GLB model, random pick, or procedural primitive."
-        },
-        "scale": {
-          "anyOf": [
-            { "anyOf": [{ "type": "number", "exclusiveMinimum": 0 }, { "$ref": "#/$defs/Vec3" }], "default": 1 },
-            { "$ref": "#/$defs/Binding" }
-          ],
-          "x-bindable": true,
-          "x-hint": "Fixed value, { \"param\": \"name\" } or { \"bind\": \"face.…\" }."
         },
         "fit": {
           "type": "object",
@@ -727,7 +734,7 @@
           "items": {
             "type": "string",
             "x-registry": "scriptData",
-            "examples": ["face.pose", "face.blendshapes", "face.anchors", "face.landmarks"]
+            "examples": ["face.pose", "face.blendshapes", "face.anchors", "face.landmarks", "pairs"]
           },
           "uniqueItems": true,
           "description": "Data sent to the script (minimization). Default: face.pose and face.blendshapes."
@@ -826,6 +833,14 @@
           "patternProperties": { "^[A-Za-z][A-Za-z0-9_-]{0,63}$": { "$ref": "#/$defs/AssetRef" } },
           "maxProperties": 4,
           "description": "Extra textures (sampler2D of the same name)."
+        },
+        "anchors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AnchorName" },
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "description": "Face anchors given to the shader as ouaf_anchor_<name>[OUAF_MAX_FACES]."
         }
       },
       "additionalProperties": false,
@@ -875,6 +890,7 @@
         "anchor": { "$ref": "#/$defs/Anchored.anchor" },
         "offset": { "$ref": "#/$defs/Anchored.offset" },
         "rotation": { "$ref": "#/$defs/Anchored.rotation" },
+        "scale": { "$ref": "#/$defs/Anchored.scale" },
         "orient": { "$ref": "#/$defs/Anchored.orient" },
         "follow": { "$ref": "#/$defs/Anchored.follow" },
         "faces": { "$ref": "#/$defs/FacesSelector" },
@@ -942,6 +958,7 @@
         "anchor": { "$ref": "#/$defs/Anchored.anchor" },
         "offset": { "$ref": "#/$defs/Anchored.offset" },
         "rotation": { "$ref": "#/$defs/Anchored.rotation" },
+        "scale": { "$ref": "#/$defs/Anchored.scale" },
         "orient": { "$ref": "#/$defs/Anchored.orient" },
         "follow": { "$ref": "#/$defs/Anchored.follow" },
         "faces": { "$ref": "#/$defs/FacesSelector" },

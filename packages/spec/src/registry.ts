@@ -104,11 +104,13 @@ const FACE_EVENTS: Array<Omit<EventDef, 'plugin'>> = [
   { name: 'kiss', description: 'Kissing lips (mouthPucker).', status: 'stable', threshold: 0.7, tunable: true, face: true },
   { name: 'nod', description: 'Head nod "yes" (pitch oscillation).', status: 'stable', threshold: 0.5, tunable: true, face: true },
   { name: 'shake', description: 'Head shake "no" (yaw oscillation).', status: 'stable', threshold: 0.5, tunable: true, face: true },
+  { name: 'pairContact', description: 'Two faces touch on screen; payload.faces = [a, b]. Threshold: gap between the face outlines, in face units.', status: 'stable', threshold: 0, tunable: true, face: true },
+  { name: 'pairSeparate', description: 'Two faces in contact move apart; payload.faces = [a, b].', status: 'stable', face: true },
 ]
 
 const HOST_EVENTS: Array<Omit<EventDef, 'plugin'>> = [
   { name: 'paramChange', description: 'A parameter changed; payload = { name, value, previous }.', status: 'stable' },
-  { name: 'message:', description: 'Message sent by the host page via engine.send(name, data); e.g. "message:startGame".', status: 'stable' },
+  { name: 'message:', description: 'Message sent by the host page via handle.send(name, data) or engine.send(name, data); e.g. "message:startGame".', status: 'stable' },
 ]
 
 const RESERVED_EVENTS: Array<Omit<EventDef, 'plugin'>> = [
@@ -140,8 +142,9 @@ const DATA: Array<Omit<DataPathDef, 'plugin'>> = [
 const SCRIPT_DATA: ScriptDataDef[] = [
   { name: 'face.pose', description: 'Head pose (yaw, pitch, roll) and size.', default: true },
   { name: 'face.blendshapes', description: 'The 52 blendshapes.', default: true },
-  { name: 'face.anchors', description: 'Screen position of the anchors (collisions, mini-games).', default: false },
-  { name: 'face.landmarks', description: 'The 478 raw face landmarks.', default: false },
+  { name: 'face.anchors', description: 'Position of the anchors in display space, normalized (collisions, mini-games).', default: false },
+  { name: 'face.landmarks', description: 'The 478 face landmarks (display space, normalized).', default: false },
+  { name: 'pairs', description: 'Distance and contact between each pair of faces (frame.pairs).', default: false },
 ]
 
 export const BUILTINS: Array<[string, BuiltinDef['kind'], string]> = [

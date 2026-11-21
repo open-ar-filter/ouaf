@@ -36,6 +36,9 @@ export const Anchored = {
     Bindable({ ...Vec3, description: 'Offset [x, y, z] in the anchor frame (1 unit = distance between the eye centers).' }),
   ),
   rotation: Type.Optional(Bindable({ ...Vec3, description: 'Rotation [x, y, z] in degrees, in the anchor frame.' })),
+  scale: Type.Optional(
+    Bindable(Type.Union([Type.Number({ exclusiveMinimum: 0 }), Vec3], { default: 1, description: 'Size multiplier, a number or [x, y, z].' })),
+  ),
   orient: Type.Optional(
     Type.Union([Type.Literal('face'), Type.Literal('screen')], {
       default: 'face',
@@ -124,7 +127,6 @@ export const ModelLayer = layerType(
   {
     ...Anchored,
     src: Type.Union([AssetRef, AssetPick, Shape], { description: 'glTF/GLB model, random pick, or procedural primitive.' }),
-    scale: Type.Optional(Bindable(Type.Union([Type.Number({ exclusiveMinimum: 0 }), Vec3], { default: 1 }))),
     fit: Type.Optional(
       Type.Object(
         { width: Type.Optional(Type.Number({ exclusiveMinimum: 0 })), height: Type.Optional(Type.Number({ exclusiveMinimum: 0 })) },
@@ -189,6 +191,9 @@ export const ShaderLayer = layerType(
     ),
     uniforms: Type.Optional(Type.Record(Name, Bindable(UniformValue), { maxProperties: 32, description: 'Declared uniforms, available by name in the shader.' })),
     textures: Type.Optional(Type.Record(Name, AssetRef, { maxProperties: 4, description: 'Extra textures (sampler2D of the same name).' })),
+    anchors: Type.Optional(
+      Type.Array(AnchorName, { minItems: 1, maxItems: 16, uniqueItems: true, description: 'Face anchors given to the shader as ouaf_anchor_<name>[OUAF_MAX_FACES].' }),
+    ),
   },
   'Custom effect written in GLSL (fragment only).',
 )

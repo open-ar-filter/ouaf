@@ -267,3 +267,37 @@ describe('registry and plugins', () => {
     expect(closest('xyz', ['mouth', 'chin'])).toBeUndefined()
   })
 })
+
+describe('script API and shaders (spec §11, §12, #66)', () => {
+  const shader = (extra: Record<string, unknown>) => ({ type: 'shader', src: 'assets/fx.frag', ...extra })
+
+  it('accepts scale on anchored layers, shader anchors and pair events', () => {
+    const r = validateManifest({
+      ...base,
+      layers: [
+        { id: 'label', type: 'text', text: 'Hi', scale: 1.2 },
+        { type: 'sticker', src: 'assets/hat.png', scale: [1, 2, 1] },
+        shader({ anchors: ['noseTip', 'leftEye'] }),
+      ],
+      events: { pairContact: { threshold: 0.2 } },
+      script: { entry: 'script.js', on: ['pairContact', 'pairSeparate'], uses: ['pairs', 'face.anchors'] },
+    })
+    expect(codes(r.errors)).toEqual([])
+  })
+
+  it('refuses a screen anchor in a shader', () => {
+    const r = validateManifest({ ...base, layers: [shader({ anchors: ['screen'] })] })
+    expect(codes(r.errors)).toEqual(['not-face-anchor@/layers/0/anchors/0'])
+  })
+
+  it('needs requires.face for a face-stage shader, shader anchors and face script data', () => {
+    const noFace = { ...base, requires: {} }
+    for (const m of [
+      { ...noFace, layers: [shader({ stage: 'face' })] },
+      { ...noFace, layers: [shader({ anchors: ['mouth'] })] },
+      { ...noFace, layers: [], script: { entry: 'script.js', update: true, uses: ['pairs'] } },
+    ]) {
+      expect(codes(validateManifest(m).errors)).toContain('requires-face@/requires')
+    }
+  })
+})

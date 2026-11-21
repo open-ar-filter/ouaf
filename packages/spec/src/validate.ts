@@ -8,6 +8,7 @@ import { ManifestEnvelope, type TManifest } from './manifest.ts'
 import { ParamTypes, type ParamTypeName } from './params.ts'
 import { createRegistry, findEvent, type SpecRegistry } from './registry.ts'
 import { assetKind, type TAssetEntry } from './assets.ts'
+import type { TShaderLayer } from './layers.ts'
 
 export type Severity = 'error' | 'warning'
 
@@ -446,6 +447,7 @@ function checkLayers(ctx: Ctx) {
     if (ctx.errors.length === before) walk(ctx, layer, def.schema, path)
     if (def.anchored && layer.anchor === undefined) ctx.usesFace = true // default anchor: "head"
     if (layer.type === 'color' && layer.region === 'face') ctx.usesFace = true // masked by the tracked face ovals
+    if (layer.type === 'shader') checkShader(ctx, layer as TShaderLayer, path)
     if (layer.id !== undefined) {
       if (ids.has(layer.id)) err(ctx, 'duplicate-id', `${path}/id`, `Duplicate layer id "${layer.id}" (already used by /layers/${ids.get(layer.id)}).`)
       ids.set(layer.id, i)
@@ -469,9 +471,22 @@ function checkLayers(ctx: Ctx) {
     }
   })
   script?.uses?.forEach((u, i) => {
+    if (u.startsWith('face.') || u === 'pairs') ctx.usesFace = true
     if (!ctx.reg.scriptData.has(u)) {
       err(ctx, 'unknown-data', `/script/uses/${i}`, `Unknown script data "${u}". ${didYouMean(u, ctx.reg.scriptData.keys())}`.trim(),
         `Possible values: ${listOf(ctx.reg.scriptData.keys())}.`)
+    }
+  })
+}
+
+/** Shader layers (spec §11): the face stage and declared anchors need face tracking; only face anchors make sense. */
+function checkShader(ctx: Ctx, layer: TShaderLayer, path: string) {
+  if (layer.stage === 'face') ctx.usesFace = true
+  layer.anchors?.forEach((name, i) => {
+    const a = ctx.reg.anchors.get(name)
+    if (a && a.subject !== 'face') {
+      err(ctx, 'not-face-anchor', `${path}/anchors/${i}`, `Shader anchors are face anchors: "${name}" is not one.`,
+        'Use ouaf_resolution and uv for screen positions.')
     }
   })
 }
