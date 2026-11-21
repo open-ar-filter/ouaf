@@ -15,7 +15,7 @@ npm install
 npm test               # validator and published-schema tests
 npm run typecheck
 npm run build:schema   # regenerates the JSON Schema from packages/spec
-npm run fetch-models   # downloads the MediaPipe face model (needed for face tracking in the playground)
+npm run fetch-models   # downloads the MediaPipe models (needed for face tracking in the playground) and extracts their TFLite files
 npm run dev            # serves the playground over HTTPS on the LAN
 npm run build          # production build of the playground
 npm run test:browser   # browser tests on the test clips (Playwright; needs `npm run fetch-models`)

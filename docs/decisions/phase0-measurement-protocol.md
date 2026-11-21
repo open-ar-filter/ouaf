@@ -1,6 +1,6 @@
 # Phase 0 measurement protocol
 
-How to run the phase 0 spikes (#6, #7, #8) on real devices so that one measurement session feeds every decision
+How to run the phase 0 spikes (#6, #7, #8, #83) on real devices so that one measurement session feeds every decision
 (#9). Results and decisions go in `docs/decisions/` next to this file, raw exports in `docs/decisions/data/`.
 
 ## Devices
@@ -139,6 +139,41 @@ with `gpu=low-power`), 20 s per run, p50 (ms):
 | `shared&face=shared` (close-up clip, 1 face) | 30 | 11.3 / 14.6 | 0.7 (+10.8 face) | 0.0 | — | 0.3 | 2 (5.8 kB: landmarks) |
 
 These are not device numbers (headless, a desktop iGPU, the camera capping at 30 fps): the device runs above decide.
+
+## #83 — Face models on another runtime
+
+Goal: find out whether MediaPipe's own face models (detector, 478 landmarks, blendshapes, extracted from
+`face_landmarker.task` by `npm run fetch-models`) run faster on LiteRT.js, with several wasm threads or WebGPU, than in
+MediaPipe tasks-vision 1.2.3 (single-threaded wasm, WebGL GPU delegate). Decision: [`face-runtime.md`](face-runtime.md).
+
+Page: `/spikes/runtime.html`, served cross-origin isolated (COOP `same-origin`, COEP `require-corp`) so that wasm
+threads exist; the **Isolation** row must read `crossOriginIsolated yes`. Options: `runtime=litert|mediapipe`,
+`accel=wasm|webgpu`, `threads=N` (default min(4, cores); `threads=1` loads the single-threaded build),
+`delegate=CPU|GPU` (MediaPipe), `blendshapes=0`, `detect=always` (detector on every frame), `coi=0` (page served
+without isolation). The links at the top switch variant and keep the other options. All runs on
+`&source=pesquet-closeup&autostart&window=10`, one minute each:
+
+| Run | URL | What |
+|---|---|---|
+| R1 | `/spikes/runtime.html?runtime=mediapipe` | reference, GPU delegate |
+| R2 | `…?runtime=mediapipe&delegate=CPU` | reference, CPU delegate |
+| R3 | `…?threads=1` | LiteRT.js, single-threaded wasm (works without isolation) |
+| R4 | `…?threads=2` | LiteRT.js, 2 threads |
+| R5 | `…?threads=4` | LiteRT.js, 4 threads |
+| R6 | `…?threads=6` (8-core phones) | LiteRT.js, more threads: does it still scale? |
+| R7 | `…?accel=webgpu` | LiteRT.js, WebGPU (Chrome desktop and Android, Safari 26+) |
+| R8 | best of R3–R7 `&blendshapes=0` | blendshapes cost |
+| R9 | best of R3–R7 `&detect=always` | detector cost on every frame |
+
+- Read `pipeline` p50/p95 (frame → result), the per-stage cells (`detect`, `crop`, `lmk`, `bs`, `read`) and fps. With
+  LiteRT.js the run is asynchronous: a frame arriving while the previous one is analysed is skipped (`drop/fr`), so
+  fps stays at the clip rate while results lag; compare `pipeline`, not fps.
+- Once per device, with a face in view, press **Check vs MediaPipe** (LiteRT variants): the mean landmark distance
+  should stay within a few % of the face size. MediaPipe runs in IMAGE mode for that check and can miss a face in
+  profile ("MediaPipe found no face"): press again on a frontal frame.
+- On the phone, watch whether `pipeline` drifts over a 10-minute run with the best variant (threads heat several
+  cores at once).
+- iPhone: R3, R5 and R7 (WebGPU only on Safari 26+); note any page error.
 
 ## Levers on slow devices
 

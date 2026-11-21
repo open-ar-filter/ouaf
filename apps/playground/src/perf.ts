@@ -26,9 +26,10 @@ export interface PerfOptions {
   columns?: readonly string[]
   /**
    * Extra columns also shown live in the overlay, by name: `ms` columns as p50/p95, `count` columns as the mean per
-   * frame (missing / NaN values skipped). Default: none.
+   * frame, `rate` columns as the sum of their values per second, e.g. events counted per frame (missing / NaN values
+   * skipped). Default: none.
    */
-  live?: readonly { column: string; label: string; kind: 'ms' | 'count' }[]
+  live?: readonly { column: string; label: string; kind: 'ms' | 'count' | 'rate' }[]
   /** Extra `app` fields of the export (e.g. the resolved spike variant), read at export time. */
   app?: () => Record<string, string | number | boolean>
 }
@@ -324,6 +325,8 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
       `ouaf perf · ${location.pathname}${location.search}${model ? ` · ${model}` : ''}`,
       `fps ${fpsValue.textContent} · frame ${frameValue.textContent} · track ${trackValue.textContent} · ` +
         `render ${renderValue.textContent} · faces ${facesValue.textContent} · ${delegateValue.textContent}`,
+      // The page's own columns (e.g. the #83 pipeline stages), which the figures above do not cover.
+      ...(live.length > 0 ? [live.map((c) => `${c.label} ${c.cell[1].textContent}`).join(' · ')] : []),
       infoLine.textContent ?? '',
     ].join('\n')
   }
@@ -364,7 +367,8 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
       const since = performance.now() - windowS * 1000
       live.forEach((c, i) => {
         const v = extraWindow.stats(i, since)
-        c.cell[1].textContent = c.kind === 'ms' ? `${fmt(v.p50)}/${fmt(v.p95)}` : fmt(v.mean, 2)
+        c.cell[1].textContent =
+          c.kind === 'ms' ? `${fmt(v.p50)}/${fmt(v.p95)}` : c.kind === 'rate' ? fmt(v.rate, 1) : fmt(v.mean, 2)
       })
     }
 
@@ -423,7 +427,8 @@ function createExtraWindow(columns: readonly string[], windowMs: number) {
   const values = columns.map(() => new Float64Array(capacity))
   const scratch = new Float64Array(capacity)
   let next = 0
-  const result = { p50: NaN, p95: NaN, mean: NaN }
+  /** `rate`: sum of the values per second, over the span they actually cover (the window may not be full yet). */
+  const result = { p50: NaN, p95: NaN, mean: NaN, rate: NaN }
   return {
     record(sample: Readonly<FrameSample>) {
       t[next] = sample.now
@@ -435,16 +440,27 @@ function createExtraWindow(columns: readonly string[], windowMs: number) {
       const v = values[index]
       let n = 0
       let sum = 0
+      let first = Infinity
+      let last = -Infinity
+      let firstValue = 0
       if (v) {
         for (let i = 0; i < capacity; i++) {
           const x = v[i] as number
-          if ((t[i] as number) >= since && !Number.isNaN(x)) {
+          const at = t[i] as number
+          if (at >= since && !Number.isNaN(x)) {
             scratch[n++] = x
             sum += x
+            if (at < first) {
+              first = at
+              firstValue = x
+            }
+            last = Math.max(last, at)
           }
         }
       }
       const sorted = scratch.subarray(0, n).sort()
+      // The first sample's value happened before the covered span: left out.
+      result.rate = n > 1 && last > first ? ((sum - firstValue) * 1000) / (last - first) : NaN
       result.mean = n > 0 ? sum / n : NaN
       result.p50 = n > 0 ? (sorted[Math.floor((n - 1) * 0.5)] as number) : NaN
       result.p95 = n > 0 ? (sorted[Math.floor((n - 1) * 0.95)] as number) : NaN
