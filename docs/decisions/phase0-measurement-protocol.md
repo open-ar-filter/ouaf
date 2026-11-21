@@ -28,23 +28,35 @@ How to run the phase 0 spikes (#6, #7, #8, #83) on real devices so that one meas
 
 ## #8 — Multi-face cost
 
-Goal: choose the default `maxFaces` per device class.
+Goal: choose the default `maxFaces` per device class. Decision: [`multi-face.md`](multi-face.md).
 
 The runs use the [test clips](../../test-media/README.md) (`?source=`), so every device analyses exactly the same
-faces and nobody has to stand in front of the camera; `&autostart` starts playback without a tap.
+faces and nobody has to stand in front of the camera; `&autostart` starts playback without a tap. 8a–8c play the same
+clip (`four-faces-grid`: four faces in a 2×2 grid) and only change `maxFaces`, so the number of tracked faces is the
+only difference between them.
 
-| Run | URL | Faces | Duration |
+| Run | URL | Faces tracked | Duration |
 |---|---|---|---|
-| 8a | `/?source=pesquet-talk&autostart&maxFaces=1` | 1 | 1 min |
-| 8b | `/?source=two-faces-stacked&autostart&maxFaces=2` | 2 | 1 min |
-| 8c | `/?source=two-faces-stacked&autostart&maxFaces=4` | 2 (capacity 4) | 1 min |
-| 8d | `/?source=no-face&autostart&maxFaces=4` | 0 (detector cost alone) | 1 min |
+| 8a | `/?source=four-faces-grid&autostart&window=10&maxFaces=1` | 1 (of 4 in view) | 1 min |
+| 8b | `/?source=four-faces-grid&autostart&window=10&maxFaces=2` | 2 (of 4) | 1 min |
+| 8c | `/?source=four-faces-grid&autostart&window=10&maxFaces=4` | 4 | 1 min |
+| 8d | `/?source=no-face&autostart&window=10&maxFaces=4` | 0 (detector cost alone) | 1 min |
+| 8e | `/?source=three-faces-grid&autostart&window=10&maxFaces=4` | 3 (capacity 4) | 1 min |
+| 8f | `/?source=two-faces-stacked&autostart&window=10&maxFaces=4` | 2 (capacity 4) | 1 min |
+| 8g | `/?source=two-faces-stacked&autostart&window=10&maxFaces=2` | 2 (reference for 8f) | 1 min |
+| 8h | `/?source=pesquet-closeup&autostart&window=10&maxFaces=1` | 1 (capacity 1) | 1 min |
+| 8i | `/?source=pesquet-closeup&autostart&window=10&maxFaces=2` | 1 (capacity 2) | 1 min |
+| 8j | `/?source=pesquet-closeup&autostart&window=10&maxFaces=4` | 1 (capacity 4) | 1 min |
 
+- Then 8a–8d and 8j again with `&delegate=CPU` to compare delegates.
+- `maxFaces` is a capacity: while fewer faces than `maxFaces` are tracked, MediaPipe also looks for new ones. 8a–8c
+  fill the capacity (cost per tracked face), 8d is the detector alone, and 8e–8j show what a spare capacity costs
+  (8f against 8g: same two faces, capacity 4 or 2; 8h–8j: one person, the usual case, under each candidate default).
+- If time is short on a phone, run 8a–8d, 8h and 8j first (GPU, then CPU).
 - MediaPipe only finds faces that are large enough (selfie distance): the faces of `group-far` (≈ 12 % of the frame
-  width) are not detected. More than 2 simultaneous faces needs a dedicated clip if 4 faces is to be measured.
+  width) are not detected. The faces of `four-faces-grid` are ≈ 35–40 % of the frame width; all four are found.
 - Look at `trackingMs` p50/p95 and fps for each number of faces; the `faces` column of the export tells which
-  samples had how many faces.
-- Also run 8a with `&delegate=CPU` to compare delegates.
+  samples had how many faces (the clips loop every 3.1 s and a face can be lost for a few frames at the loop point).
 
 ## #6 — Tracking in a Worker vs main thread
 
