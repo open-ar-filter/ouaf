@@ -68,6 +68,11 @@ export class TrackingHub {
     return this.#needed && this.#tracker ? this.#front : this.#empty
   }
 
+  /** Tracking runs: a filter needs it and the tracker has started. */
+  get active(): boolean {
+    return this.#needed && this.#tracker !== undefined
+  }
+
   get description(): string | undefined {
     return this.#tracker?.description
   }
