@@ -68,3 +68,24 @@ ffmpeg -nostdin -loglevel error \
   -g 30 -movflags +faststart -map_metadata -1 -fflags +bitexact -flags:v +bitexact -y "$here/two-faces-stacked.mp4"
 echo two-faces-stacked.mp4
 
+
+# Four (and three) frontal faces in a 2×2 grid, for the multi-face cost (#8). Each cell is 360×640: the source is
+# scaled to 702×1248 (0.65) and cropped around the face, so that faces stay ≈ 35 % of the frame width, large enough
+# for MediaPipe's short-range detector. Only two extracts have a frontal face for 3 s, so the bottom row reuses them
+# played backwards and mirrored (different pose and side at every instant):
+#   top-left  = 57770 89.1–92.2 s          top-right    = 57768 5.4–8.5 s
+#   bottom-left = 57768, reversed, mirrored  bottom-right = 57770, reversed, mirrored
+#                                            (three-faces-grid: 57769 6.0–9.1 s, underwater, no face)
+cells="[0:v]scale=702:1248,crop=360:640:34:304,fps=30,split[a1][a2];[1:v]scale=702:1248,crop=360:640:184:408,fps=30,split[b1][b2];[a2]reverse,hflip[ar];[b2]reverse,hflip[br]"
+ffmpeg -nostdin -loglevel error \
+  -ss 89.1 -t 3.1 -i "$work/57770.webm" -ss 5.4 -t 3.1 -i "$work/57768.webm" -an \
+  -filter_complex "$cells;[a1][b1][br][ar]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0" \
+  -c:v libx264 -profile:v main -pix_fmt yuv420p -crf 26 -preset slow \
+  -g 30 -movflags +faststart -map_metadata -1 -fflags +bitexact -flags:v +bitexact -y "$here/four-faces-grid.mp4"
+echo four-faces-grid.mp4
+ffmpeg -nostdin -loglevel error \
+  -ss 89.1 -t 3.1 -i "$work/57770.webm" -ss 5.4 -t 3.1 -i "$work/57768.webm" -ss 6.0 -t 3.1 -i "$work/57769.webm" -an \
+  -filter_complex "$cells;[ar]nullsink;[2:v]scale=702:1248,crop=360:640:171:304,fps=30[empty];[a1][b1][br][empty]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0" \
+  -c:v libx264 -profile:v main -pix_fmt yuv420p -crf 26 -preset slow \
+  -g 30 -movflags +faststart -map_metadata -1 -fflags +bitexact -flags:v +bitexact -y "$here/three-faces-grid.mp4"
+echo three-faces-grid.mp4

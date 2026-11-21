@@ -2,6 +2,9 @@ import { defineConfig, devices } from '@playwright/test'
 
 // Browser tests (#77): drive the playground on the committed test clips, without a camera.
 // Requires the face model: `npm run fetch-models`.
+// `OUAF_PORT=5199 npm run test:browser` uses another port (e.g. while a dev server runs on 5173).
+const port = Number(process.env.OUAF_PORT) || 5173
+
 export default defineConfig({
   testDir: 'e2e',
   timeout: 120_000,
@@ -9,7 +12,7 @@ export default defineConfig({
   workers: 1,
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: {
-    baseURL: 'https://localhost:5173',
+    baseURL: `https://localhost:${port}`,
     ignoreHTTPSErrors: true,
     ...devices['Desktop Chrome'],
     launchOptions: {
@@ -18,8 +21,8 @@ export default defineConfig({
     },
   },
   webServer: {
-    command: 'npm run dev',
-    url: 'https://localhost:5173',
+    command: `npm run dev -w @ouaf/playground -- --port ${port} --strictPort`,
+    url: `https://localhost:${port}`,
     ignoreHTTPSErrors: true,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
