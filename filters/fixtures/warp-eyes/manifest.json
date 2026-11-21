@@ -1,0 +1,16 @@
+{
+  "ouaf": "1",
+  "id": "warp-eyes",
+  "name": "Swirl between the eyes (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Warp test fixture: a swirl between the eyes of every face (radius 1 unit, strength param); a green dot marks the anchor, drawn after the warp so it is not deformed.",
+  "requires": { "face": true, "plugins": ["playground@^1"] },
+  "params": {
+    "strength": { "type": "number", "default": 1, "min": -1, "max": 1, "label": { "en": "Strength", "fr": "Force" } }
+  },
+  "layers": [
+    { "type": "warp", "kind": "swirl", "anchor": "eyes", "radius": 1, "strength": { "param": "strength" } },
+    { "type": "playground:dot", "anchor": "eyes", "color": "#00ff00", "size": 0.3 }
+  ]
+}
