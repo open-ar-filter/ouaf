@@ -1,0 +1,20 @@
+{
+  "ouaf": "1",
+  "id": "fixture-broken",
+  "name": "Broken fixture",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "requires": { "face": true },
+  "assets": {
+    "hat": "assets/hat.png",
+    "photo": "assets/photo.png",
+    "grade": "assets/grade.cube",
+    "fx": "assets/fx.frag"
+  },
+  "layers": [
+    { "type": "sticker", "src": "hat", "anchor": "nose" },
+    { "type": "sticker", "src": "photo", "anchor": "forehead" },
+    { "type": "color", "lut": "grade" },
+    { "type": "shader", "src": "fx" }
+  ]
+}

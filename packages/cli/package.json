@@ -1,0 +1,25 @@
+{
+  "name": "@ouaf/cli",
+  "version": "0.1.0",
+  "description": "Ouaf (Open Universal AR Filter) command-line tool: validates filter folders and .ouaf packages",
+  "type": "module",
+  "bin": {
+    "ouaf": "./src/bin.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-ar-filter/ouaf.git",
+    "directory": "packages/cli"
+  },
+  "dependencies": {
+    "@ouaf/spec": "0.1.0",
+    "typebox": "^1.4.7"
+  }
+}
