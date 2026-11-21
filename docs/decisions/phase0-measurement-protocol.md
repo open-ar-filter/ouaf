@@ -11,6 +11,9 @@ How to run the phase 0 spikes (#6, #7, #8, #83) on real devices so that one meas
 | Android mid-range | (fill in) | Chrome |
 | iPhone | (fill in) | Safari |
 
+Before the iPhone session: [`webkit-compat.md`](webkit-compat.md) lists what the pages do in desktop WebKit (Playwright
+on Linux, a proxy for Safari, not a device result) and what remains to be checked on the iPhone.
+
 ## General rules
 
 - `npm run fetch-models` once, then `npm run dev`; open the `Network: https://…` URL on the device.
@@ -85,7 +88,8 @@ at the top of the page switch variant and keep the other options. Run 6a–6e on
 - Keep a run going for more than a minute once per browser: the **MediaPipe metrics** row must read `blocked …`
   (the worker is covered by the CSP header; `sent` means the metrics left the device).
 - On iPhone, the worker variant needs WebGL on `OffscreenCanvas` in workers (Safari 17+); on older versions it falls
-  back to CPU or fails, note which.
+  back to CPU or fails, note which (desktop WebKit has no WebGL in workers and fails with
+  `ModuleFactory not set`, see [`webkit-compat.md`](webkit-compat.md)).
 
 What to look at (live panel, then `summary.columns` in the export; columns in `docs/perf/session-format.md`):
 
