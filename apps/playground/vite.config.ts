@@ -14,10 +14,10 @@ const require = createRequire(import.meta.url)
  */
 const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: string }> = [
   {
-    // Only the classic (non-module) loader is used by @ouaf/core.
+    // The classic loader (main thread); the ES module loader for module workers (`wasmLoader: 'module'`, #6 spike).
     prefix: 'mediapipe/wasm/',
     dir: dirname(require.resolve('@mediapipe/tasks-vision/vision_wasm_internal.wasm')),
-    files: /^vision_wasm_internal\.(js|wasm)$/,
+    files: /^vision_wasm(_module)?_internal\.(js|wasm)$/,
   },
   {
     // Downloaded by `npm run fetch-models` (gitignored).
@@ -87,11 +87,20 @@ function pages(): Record<string, string> {
   return input
 }
 
+/**
+ * Blocks MediaPipe's usage metrics (docs/privacy.md), as the pages' `<meta>` CSP does. Sent as a header too because
+ * a worker loaded from a URL does not get the page's `<meta>` policy, only the CSP header of its own script response
+ * (the #6 tracking worker). `ws:`/`wss:` for Vite's hot reload.
+ */
+const HEADERS = { 'Content-Security-Policy': "connect-src 'self' ws: wss:" }
+
 // getUserMedia requires a secure context: serve over HTTPS (self-signed certificate) and listen on
 // every interface so a phone on the same network can open the playground.
 export default defineConfig({
   plugins: [basicSsl({ name: 'ouaf-playground' }), selfHostedAssets()],
-  server: { host: true, port: 5173 },
-  preview: { host: true, port: 4173 },
+  server: { host: true, port: 5173, headers: HEADERS },
+  preview: { host: true, port: 4173, headers: HEADERS },
   build: { target: 'es2023', rolldownOptions: { input: pages() } },
+  // Module workers, as in dev (the #6 worker imports MediaPipe lazily, which a classic IIFE worker cannot split).
+  worker: { format: 'es' },
 })

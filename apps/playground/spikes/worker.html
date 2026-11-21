@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- No data leaves: blocks MediaPipe's usage metrics (POST to odml.pa.googleapis.com); ws/wss for Vite HMR.
+         The tracking worker does not get this <meta> policy: the dev/preview servers also send it as a header. -->
+    <meta http-equiv="Content-Security-Policy" content="connect-src 'self' ws: wss:" />
+    <title>Ouaf spike #6: tracking in a worker</title>
+    <style>
+      :root { font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 16px; }
+      h1 { font-size: 1.25rem; margin: 0 0 8px; }
+      dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; }
+      dt { font-weight: 600; }
+      dd { margin: 0; overflow-wrap: anywhere; }
+      nav { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 4px 0 8px; }
+      nav a[aria-current] { font-weight: 700; text-decoration: none; }
+      #stage { margin-top: 12px; }
+      #stage > * { display: block; width: 100%; max-width: 640px; background: #000; }
+      #stage > [hidden] { display: none; }
+      .view { position: relative; }
+      .view > canvas { display: block; width: 100%; }
+      .view > .anchors-overlay { position: absolute; inset: 0; height: 100%; pointer-events: none; }
+      video.mirrored { transform: scaleX(-1); }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      button { font: inherit; padding: 8px 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>Spike #6: tracking in a worker vs main thread</h1>
+    <nav id="variants" aria-label="Variants"></nav>
+    <dl id="status"></dl>
+    <div class="actions">
+      <button id="start" type="button">Start camera</button>
+      <button id="flip" type="button" disabled>Switch camera</button>
+      <button id="stop" type="button" disabled>Stop</button>
+    </div>
+    <div id="perf"></div>
+    <div id="stage">
+      <video id="video" playsinline muted hidden></video>
+    </div>
+    <script type="module" src="/src/spikes/worker/main.ts"></script>
+  </body>
+</html>
