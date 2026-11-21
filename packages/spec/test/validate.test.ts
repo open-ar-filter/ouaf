@@ -164,6 +164,16 @@ describe('actionable errors', () => {
     expect(r.errors[0]!.message).toContain('jawOpen')
   })
 
+  it('requires.blendshapes: needs face, warns when nothing reads them', () => {
+    const jaw = { type: 'text', text: 'x', size: { bind: 'face.blendshapes.jawOpen', range: [0, 1], to: [0.1, 0.6] } }
+    expect(validateManifest({ ...base, requires: { face: true, blendshapes: true }, layers: [jaw] }).warnings).toEqual([])
+    const withoutFace = validateManifest({ ...base, requires: { blendshapes: true }, layers: [{ type: 'text', text: 'x', anchor: 'screen' }] })
+    expect(codes(withoutFace.errors)).toContain('requires-face@/requires/blendshapes')
+    const unused = validateManifest({ ...base, requires: { face: true, blendshapes: true }, layers: [{ type: 'text', text: 'x', anchor: 'chin' }] })
+    expect(unused.ok).toBe(true)
+    expect(codes(unused.warnings)).toContain('unused-requirement@/requires/blendshapes')
+  })
+
   it('face used without requires.face', () => {
     const r = validateManifest({ ...base, requires: {}, layers: [{ type: 'text', text: 'x', anchor: 'chin' }] })
     expect(codes(r.errors)).toContain('requires-face@/requires')

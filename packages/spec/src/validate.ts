@@ -249,6 +249,8 @@ interface Ctx {
   warnings: Issue[]
   usedAssets: Set<string>
   usesFace: boolean
+  /** Blendshapes are read by a binding or by the script (whose default data includes them). */
+  usesBlendshapes: boolean
 }
 
 function err(ctx: Ctx, code: string, path: string, message: string, hint?: string) {
@@ -319,6 +321,7 @@ function checkBinding(ctx: Ctx, b: { param?: string; bind?: string }, valueSchem
       return
     }
     if (b.bind.startsWith('face.')) ctx.usesFace = true
+    if (b.bind.startsWith('face.blendshapes.')) ctx.usesBlendshapes = true
     const m = b as { map?: unknown; range?: unknown; to?: unknown }
     if (d.type === 'string' && m.map === undefined && expected !== 'String') {
       err(ctx, 'binding-map-required', path, `"${b.bind}" is a string: add "map" to convert it.`)
@@ -483,6 +486,16 @@ function checkRequiresAndAssets(ctx: Ctx) {
   if (!ctx.usesFace && req.face) {
     warn(ctx, 'unused-requirement', '/requires/face', '"face" is required but nothing uses it: face tracking costs performance.')
   }
+  if (req.blendshapes && !req.face) {
+    err(ctx, 'requires-face', '/requires/blendshapes', 'Blendshapes come from face tracking: "blendshapes" needs "face".', 'Add "face": true to "requires".')
+  }
+  const script = ctx.manifest.script
+  if (script && (script.uses === undefined || script.uses.includes('face.blendshapes'))) ctx.usesBlendshapes = true
+  if (req.blendshapes && !ctx.usesBlendshapes) {
+    warn(ctx, 'unused-requirement', '/requires/blendshapes',
+      '"blendshapes" is required but no binding or script reads them: the engine could not drop them on slow devices.',
+      'Remove "blendshapes" from "requires": expression events work without it.')
+  }
   const assets = (ctx.manifest.assets ?? {}) as Record<string, TAssetEntry>
   for (const [name, entry] of Object.entries(assets)) {
     const kind = assetKind(entry)
@@ -504,7 +517,7 @@ export function validateManifest(input: unknown, reg: SpecRegistry = createRegis
   const warnings: Issue[] = []
   structural(ManifestEnvelope, input, '', errors)
   if (errors.length === 0) {
-    const ctx: Ctx = { reg, manifest: input as TManifest, errors, warnings, usedAssets: new Set(), usesFace: false }
+    const ctx: Ctx = { reg, manifest: input as TManifest, errors, warnings, usedAssets: new Set(), usesFace: false, usesBlendshapes: false }
     checkParams(ctx)
     checkLayers(ctx)
     checkEvents(ctx)

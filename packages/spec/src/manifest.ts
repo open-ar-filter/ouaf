@@ -13,7 +13,12 @@ export const FORMAT_VERSION = '1'
 
 export const Requires = Type.Object(
   {
-    face: Type.Optional(Type.Boolean({ description: 'Face tracking (478 landmarks, 52 blendshapes, pose).' })),
+    face: Type.Optional(Type.Boolean({ description: 'Face tracking (478 landmarks, pose, and blendshapes when used).' })),
+    blendshapes: Type.Optional(
+      Type.Boolean({
+        description: 'The filter does not work without blendshapes: the engine never drops them and hides the filter rather than degrading it (spec 16.2). Requires "face".',
+      }),
+    ),
     hands: Type.Optional(Type.Boolean({ description: 'Hand tracking (reserved, phase 2).' })),
     segmentation: Type.Optional(Type.Boolean({ description: 'Person / background mask (reserved, phase 2).' })),
     pose: Type.Optional(Type.Boolean({ description: 'Body pose (reserved, pose plugin).' })),
