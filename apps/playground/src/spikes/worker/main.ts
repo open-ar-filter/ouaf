@@ -13,11 +13,13 @@ import {
   CameraError,
   CameraSource,
   FrameScheduler,
+  VideoFileSource,
   VERSION,
   createDistribution,
   createFaceFrame,
   createFrameSample,
   type FacingMode,
+  type VideoSource,
 } from '@ouaf/core'
 import { createPerf } from '../../perf.ts'
 import { createRenderer, type PlaygroundRenderer } from '../../render.ts'
@@ -33,6 +35,8 @@ function $<T extends HTMLElement>(id: string): T {
 
 // --- Options -----------------------------------------------------------------------------------------------------
 const params = new URLSearchParams(location.search)
+/** `?source=<clip>` plays `test-media/<clip>.mp4` instead of the camera (#77); `?autostart` starts without a tap. */
+const SOURCE = /^[\w-]+$/.test(params.get('source') ?? '') ? params.get('source') : null
 const MODE: Mode = params.get('mode') === 'main' ? 'main' : 'worker'
 const TRANSFER: Transfer = params.get('transfer') === 'bitmap' ? 'bitmap' : 'videoframe'
 const LOAD_MS = Math.min(200, Math.max(0, Number(params.get('load')) || 0))
@@ -212,7 +216,7 @@ function refreshPanel() {
 setInterval(refreshPanel, 250)
 
 // --- Pipeline ----------------------------------------------------------------------------------------------------
-let camera: CameraSource | undefined
+let camera: VideoSource | undefined
 let scheduler: FrameScheduler | undefined
 let renderer: PlaygroundRenderer | undefined
 let facingMode: FacingMode = 'user'
@@ -264,24 +268,28 @@ async function start() {
   startButton.disabled = true
   cameraRow.textContent = 'opening…'
   try {
-    camera = await CameraSource.open({ facingMode, video })
+    camera = SOURCE
+      ? await VideoFileSource.open(new URL(`../test-media/${SOURCE}.mp4`, document.baseURI).href, { video })
+      : await CameraSource.open({ facingMode, video })
   } catch (err) {
     cameraRow.textContent = err instanceof CameraError ? `${err.code}: ${err.message}` : String(err)
     startButton.disabled = false
     return
   }
-  flipButton.disabled = stopButton.disabled = false
-  const settings = camera.stream.getVideoTracks()[0]?.getSettings()
-  cameraRow.textContent = `${camera.width}×${camera.height} @ ${settings?.frameRate?.toFixed(1) ?? '?'} fps, ${camera.mirrored ? 'mirrored' : 'not mirrored'}`
+  stopButton.disabled = false
+  flipButton.disabled = !(camera instanceof CameraSource)
+  const settings = camera instanceof CameraSource ? camera.stream.getVideoTracks()[0]?.getSettings() : undefined
+  const origin = camera instanceof CameraSource ? `@ ${settings?.frameRate?.toFixed(1) ?? '?'} fps` : `file test-media/${SOURCE}.mp4`
+  cameraRow.textContent = `${camera.width}×${camera.height} ${origin}, ${camera.mirrored ? 'mirrored' : 'not mirrored'}`
 
   const tracking = await ensureVariant()
 
   renderer = createRenderer(camera, { maxFaces: MAX_FACES })
+  // Kept displayed under the canvas: phones throttle the decoding of hidden muted videos (file sources).
+  video.hidden = false
+  video.classList.toggle('backing', renderer !== undefined)
+  video.classList.toggle('mirrored', !renderer && camera.mirrored)
   if (renderer) stage.append(renderer.element)
-  else {
-    video.hidden = false
-    video.classList.toggle('mirrored', camera.mirrored)
-  }
 
   perf?.setInfo({
     delegate: tracking?.delegate,
@@ -325,6 +333,7 @@ async function start() {
 }
 
 startButton.addEventListener('click', () => void start())
+if (SOURCE !== null && params.has('autostart')) void start()
 stopButton.addEventListener('click', stop)
 flipButton.addEventListener('click', () => {
   facingMode = facingMode === 'user' ? 'environment' : 'user'

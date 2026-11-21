@@ -51,7 +51,9 @@ page) or on the main thread with the GPU delegate.
 Page: `/spikes/worker.html` (links on `/spikes/`). Options: `mode=main|worker` (default `worker`),
 `transfer=videoframe|bitmap` (worker: `new VideoFrame(video)` or `createImageBitmap(video)`, default `videoframe`),
 `load=N` (N ms of synthetic main-thread work per frame: a busy host page), plus `maxFaces` (default 2) and
-`delegate=CPU` as on the main page. The links at the top of the page switch variant and keep the other options.
+`delegate=CPU` as on the main page, and `source=<clip>&autostart` to play a test clip instead of the camera. The links
+at the top of the page switch variant and keep the other options. Run 6a–6e on `&source=pesquet-closeup&autostart&window=10`
+(same input on every device), then 6a and 6b once with the camera for the capture cost and `cameraLatencyMs`.
 
 | Run | URL | Duration |
 |---|---|---|

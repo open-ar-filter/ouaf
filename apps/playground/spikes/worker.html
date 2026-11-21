@@ -17,10 +17,11 @@
       dd { margin: 0; overflow-wrap: anywhere; }
       nav { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 4px 0 8px; }
       nav a[aria-current] { font-weight: 700; text-decoration: none; }
-      #stage { margin-top: 12px; }
+      #stage { margin-top: 12px; position: relative; }
       #stage > * { display: block; width: 100%; max-width: 640px; background: #000; }
       #stage > [hidden] { display: none; }
-      .view { position: relative; }
+      #stage > video.backing { position: absolute; top: 0; left: 0; z-index: 0; }
+      .view { position: relative; z-index: 1; }
       .view > canvas { display: block; width: 100%; }
       .view > .anchors-overlay { position: absolute; inset: 0; height: 100%; pointer-events: none; }
       video.mirrored { transform: scaleX(-1); }
