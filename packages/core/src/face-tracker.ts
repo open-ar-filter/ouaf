@@ -41,6 +41,11 @@ export interface FaceTrackerOptions {
   modelUrl: string
   /** Preferred delegate. Default: `'GPU'`, with automatic fallback to CPU. `'CPU'` skips the GPU attempt. */
   delegate?: Delegate
+  /**
+   * Compute the 52 blendshapes (a second model run on every frame). Default: true. When false, `FaceFrame.blendshapes`
+   * stays at 0; turn it off when no active filter uses expressions, to save time on slow devices.
+   */
+  blendshapes?: boolean
   /** Receives non-fatal problems (GPU fallback, unexpected blendshape layout). Default: `console.warn`. */
   onWarning?: (message: string, cause?: unknown) => void
   /**
@@ -121,7 +126,7 @@ export async function createFaceTrackerWith(options: FaceTrackerOptions, backend
         baseOptions: { modelAssetBuffer: model, delegate },
         runningMode: 'VIDEO',
         numFaces: maxFaces,
-        outputFaceBlendshapes: true,
+        outputFaceBlendshapes: options.blendshapes ?? true,
         outputFacialTransformationMatrixes: true,
         ...(options.canvas ? { canvas: options.canvas } : {}),
       },

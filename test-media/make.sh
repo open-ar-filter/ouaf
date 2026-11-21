@@ -46,6 +46,19 @@ for c in "${clips[@]}"; do
   echo "$name.mp4"
 done
 
+# Half-resolution variants (360×640), to measure whether the input resolution matters.
+small=(
+  "pesquet-closeup-360 57768  5.4  8.5 26"
+  "pesquet-talk-360    57770 50.0 58.0 26"
+)
+for c in "${small[@]}"; do
+  read -r name src start end crf <<<"$c"
+  ffmpeg -nostdin -loglevel error -ss "$start" -to "$end" -i "$work/$src.webm" -an \
+    -vf "scale=360:640,fps=30" -c:v libx264 -profile:v main -pix_fmt yuv420p -crf "$crf" -preset slow \
+    -g 30 -movflags +faststart -map_metadata -1 -fflags +bitexact -flags:v +bitexact -y "$here/$name.mp4"
+  echo "$name.mp4"
+done
+
 # Two frontal faces stacked vertically (MediaPipe's short-range detector only finds large faces):
 # top = 57770 89.1–92.2 s (cropped y 240–880), bottom = 57768 5.4–8.5 s (cropped y 400–1040).
 ffmpeg -nostdin -loglevel error \

@@ -141,6 +141,7 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
   const exportButton = el('button', { type: 'button', textContent: 'Export', disabled: true })
   const shareButton = el('button', { type: 'button', textContent: 'Share', disabled: true, hidden: !canShareFiles() })
   const message = el('div', { className: 'ouaf-perf-msg' })
+  const copyButton = el('button', { type: 'button', textContent: 'Copy', title: 'Copy the figures above as text' })
 
   const element = el(
     'section',
@@ -148,7 +149,7 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
     el('style', { textContent: STYLE }),
     el('div', { className: 'ouaf-perf-grid' }, fpsCell, frameCell, delegateCell, trackCell, renderCell, facesCell),
     infoLine,
-    el('div', { className: 'ouaf-perf-rec' }, preset, recordButton, timeLabel, exportButton, shareButton),
+    el('div', { className: 'ouaf-perf-rec' }, preset, recordButton, timeLabel, exportButton, shareButton, copyButton),
     message,
   )
 
@@ -307,6 +308,35 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
     }
   }
   document.addEventListener('visibilitychange', onVisibility)
+
+  // --- Copy ----------------------------------------------------------------------------------------------------------
+  /** The live figures as plain text, to paste into a chat or an issue. */
+  function figuresText(): string {
+    const model = device?.userAgentData?.model || device?.userAgentData?.platform || device?.platform || ''
+    return [
+      `ouaf perf · ${location.pathname}${location.search}${model ? ` · ${model}` : ''}`,
+      `fps ${fpsValue.textContent} · frame ${frameValue.textContent} · track ${trackValue.textContent} · ` +
+        `render ${renderValue.textContent} · faces ${facesValue.textContent} · ${delegateValue.textContent}`,
+      infoLine.textContent ?? '',
+    ].join('\n')
+  }
+
+  async function copyFigures() {
+    const text = figuresText()
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // Older browsers / denied permission: fall back to a selected textarea.
+      const area = el('textarea', { value: text })
+      document.body.append(area)
+      area.select()
+      document.execCommand('copy')
+      area.remove()
+    }
+    copyButton.textContent = 'Copied ✓'
+    setTimeout(() => (copyButton.textContent = 'Copy'), 1500)
+  }
+  copyButton.addEventListener('click', () => void copyFigures())
 
   // --- Overlay refresh ---------------------------------------------------------------------------------------------
   let wasRecording = false
