@@ -29,14 +29,14 @@ summarizes it for people analysing the files.
 | `summary`    | Statistics over the whole recording (see below), plus `hiddenMs` (time the page was hidden) and `droppedEvents`. |
 | `intervalMs`, `intervals` | Statistics per consecutive interval (60 000 ms by default), each with `startMs` and `durationMs` (the last one may be shorter). Use them to spot thermal throttling: fps falling or tracking time rising over the minutes. |
 | `events`     | Notable events, in order (see below). |
+| `columns`    | Names of the extra sample columns, in order (see [Extra columns](#extra-columns)). Absent when the recording has none. |
 | `samples`    | Raw per-frame data in columns (see below). |
 
 ### Statistics (`summary` and each interval)
 
 `samples` (count), `fps`, `frameMs`, `trackingMs`, `renderMs` (each `{ mean, p50, p95, p99, max }`) and `faces`
-(mean number of detected faces). Recordings with extra columns (see below) also have `extra`: one
-`{ mean, p50, p95, p99, max }` per extra column, by name, computed over the samples where the value applies (`NaN` /
-`null` values excluded). Files without extra columns have no `extra` field.
+(mean number of detected faces). With extra columns, also `columns`: per column, `{ count, sum, mean, p50, p95, p99,
+max }` over the samples that have a value (`count` of them; `sum` gives totals, e.g. dropped frames).
 
 `frameMs` is the time between consecutive samples. Deltas that span a `visibility` or `pipeline` event are
 excluded (the camera was paused or restarted, so the delta is not a frame time), and `fps` is
@@ -68,32 +68,64 @@ Each event has `t` (ms since the start) and `type`:
 | `renderMs`   | ms | time spent rendering |
 | `faces`      | count | faces detected |
 
-### Extra columns (additive)
+A 10-minute run at 30 fps is about 18 000 samples, roughly 0.6 MB of JSON (plus about 0.1 MB per extra column).
 
-A producer can record more per-frame values than the built-in columns (`SessionRecorderOptions.extraColumns`, values
-passed in `FrameSample.extra`). Each extra column is one more array of `samples`, with the same length as the others,
-rounded to 0.01, and `null` where the value did not apply to that frame. Names never reuse a built-in column. Readers
-that do not know an extra column can ignore it: version 1 files without extra columns are unchanged.
+## Extra columns
 
-Extra columns written by the playground pages:
+A producer can record additional numeric columns per sample (`SessionRecorderOptions.columns`, values from
+`FrameSample.extra`). This is an additive extension of version 1: readers that do not know a column can ignore it.
 
-| Page | Column | Unit | Meaning |
-|------|--------|------|---------|
-| `spikes/gl-share.html` (#7) | `segmentationMs` | ms | Main-thread time of `ImageSegmenter.segmentForVideo` until its callback runs (GPU delegate: submission only, the GPU work may still be queued) |
-| | `transferMs` | ms | Getting the mask out of MediaPipe: `getAsWebGLTexture` + `resetState` (`shared`), `getAsFloat32Array` readback (`cpu`, `webgpu&copy=readback`, incl. byte conversion), drawing it into MediaPipe's canvas (`webgpu`) |
-| | `uploadMs` | ms | Getting it into the renderer: texture upload (`cpu`, `initTexture`), `copyExternalImageToTexture` (`webgpu`) or `writeTexture` (`webgpu&copy=readback`); `null` for `shared` |
-| | `pipelineMs` | ms | Whole frame on the main thread: face tracking (when enabled), segmentation, transfer, upload, render |
-| | `readbacks` | count | `readPixels` / `getBufferSubData` calls during the frame, in every WebGL context of the page |
-| | `readbackBytes` | bytes | Bytes requested by those calls |
-| | `syncCalls` | count | Calls that wait on the GPU without transferring data: `clientWaitSync` with a timeout, `finish`, `getError`, `checkFramebufferStatus` |
-| | `maskReads` | count | `MPMask.getAsFloat32Array` / `getAsUint8Array` calls made by the page |
+- `columns` (top level) lists their names, in order;
+- each one is an array in `samples`, same length as `t`, rounded to 0.01, with `null` for samples without a value;
+- `summary.columns` and each interval's `columns` hold their statistics.
 
-In that page the built-in `trackingMs` is the MediaPipe inference time (segmentation, plus face tracking with
-`face=…`) and `renderMs` the three.js draw only. The page also adds its variant to `app` (`path`, `copy`, `reset`,
-`delegate`, `mask` size and storage, `adapter`, `contexts` created by the page and `pipelineContexts` created by the
-variant, `autoResizeDisabled`…) and logs the alignment check result as a `note` event.
+The producer may also add fields to `app` describing the variant (see below).
 
-A 10-minute run at 30 fps is about 18 000 samples, roughly 0.6 MB of JSON (more with extra columns).
+### Spike #6: tracking in a worker vs main thread (`/spikes/worker.html`)
+
+`app` adds `spike` (`"6-worker-vs-main"`), `mode` (`"main"` / `"worker"`), `transfer` (`"videoframe"`, `"bitmap"`,
+`"none"` on the main thread), `loadMs` (synthetic main-thread work per frame), `requestedDelegate`, `videoFrame` and
+`offscreenCanvas` (API availability), `longTasks` (whether long tasks are observable), `telemetry` (what happened to
+MediaPipe's usage-metrics request) and `warnings`. `pipeline.delegate` is the delegate actually used (in the worker in
+worker mode).
+
+`trackingMs` is the **main-thread** time spent on tracking: `FaceTracker.detect` on the main thread; in worker mode,
+capture + `postMessage` + result handling (the sum of `captureMs`, `postMs` and `receiveMs`). A sample is a camera
+frame handled by the page. Values coming from asynchronous events (a worker result, the lag probe, long tasks) belong
+to the next sample.
+
+| Column            | Unit | Meaning |
+|-------------------|------|---------|
+| `inferenceMs`     | ms   | `detect` time of the result first drawn in this sample (worker clock in worker mode); `null` when no new result. |
+| `workerMs`        | ms   | Worker only: frame message received → result posted (inference plus worker overhead). |
+| `captureMs`       | ms   | Worker only: main-thread time of `new VideoFrame(video)` or of the `createImageBitmap(video)` call. |
+| `postMs`          | ms   | Worker only: main-thread time of the `postMessage` sending the frame (`bitmap`: sent once the bitmap resolves, so it lands on the next sample). |
+| `receiveMs`       | ms   | Worker only: main-thread time handling the result (buffer view, copy into the rendered frame). |
+| `latencyMs`       | ms   | Frame callback time (`t`) of the tracked frame → its results available on the main thread. |
+| `cameraLatencyMs` | ms   | Same from the camera capture time (`requestVideoFrameCallback` `captureTime`; Chromium with a local camera, `null` elsewhere). |
+| `resultAgeMs`     | ms   | Age of the results drawn with this frame: this sample's `t` minus the `t` of the frame they were computed on (0 on the main thread). |
+| `dropped`         | 0/1  | Worker only: 1 when the frame was not sent because the worker was still busy (at most one frame in flight). |
+| `missed`          | count | Camera frames presented without a frame callback since the previous sample (`presentedFrames` gap); `null` without `requestVideoFrameCallback`. |
+| `lagMs`           | ms   | Largest event-loop lag since the previous sample: a probe every 20 ms (timer, then `MessageChannel` message) measures how late it runs. About 0.1 ms on an idle page. |
+| `longTaskMs`      | ms   | Total duration of the main-thread long tasks (> 50 ms) reported since the previous sample; `null` where unsupported (only Chromium reports them). |
+
+### Spike #7: shared WebGL context, GPU-side masks (`/spikes/gl-share.html`)
+
+`trackingMs` is the MediaPipe inference time (segmentation, plus face tracking with `face=…`) and `renderMs` the
+three.js draw only. `app` adds the variant (`path`, `copy`, `reset`, `delegate`, `mask` size and storage, `adapter`,
+`contexts` created by the page and `pipelineContexts` created by the variant, `autoResizeDisabled`…); the alignment
+check result is logged as a `note` event.
+
+| Column           | Unit  | Meaning |
+|------------------|-------|---------|
+| `segmentationMs` | ms    | Main-thread time of `ImageSegmenter.segmentForVideo` until its callback runs (GPU delegate: submission only, the GPU work may still be queued). |
+| `transferMs`     | ms    | Getting the mask out of MediaPipe: `getAsWebGLTexture` + `resetState` (`shared`), `getAsFloat32Array` readback (`cpu`, `webgpu&copy=readback`, incl. byte conversion), drawing it into MediaPipe's canvas (`webgpu`). |
+| `uploadMs`       | ms    | Getting it into the renderer: texture upload (`cpu`), `copyExternalImageToTexture` (`webgpu`) or `writeTexture` (`webgpu&copy=readback`); `null` for `shared`. |
+| `pipelineMs`     | ms    | Whole frame on the main thread: face tracking (when enabled), segmentation, transfer, upload, render. |
+| `readbacks`      | count | `readPixels` / `getBufferSubData` calls during the frame, in every WebGL context of the page. |
+| `readbackBytes`  | bytes | Bytes requested by those calls. |
+| `syncCalls`      | count | Calls that wait on the GPU without transferring data: `clientWaitSync` with a timeout, `finish`, `getError`, `checkFramebufferStatus`. |
+| `maskReads`      | count | `MPMask.getAsFloat32Array` / `getAsUint8Array` calls made by the page. |
 
 ## Example
 

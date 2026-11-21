@@ -16,10 +16,10 @@ export interface FrameSample {
   /** Faces detected in the frame. */
   faces: number
   /**
-   * Values of the recorder's extra columns (`SessionRecorderOptions.extraColumns`), in the same order; `NaN`
-   * when a value does not apply to this frame. Optional: pipelines without extra columns leave it undefined.
+   * Values of the recorder's extra columns (`SessionRecorderOptions.columns`), by column name. A missing or
+   * non-finite value is recorded as "no value" (`null` in the export). Reuse one object.
    */
-  extra?: ArrayLike<number>
+  extra?: Record<string, number>
 }
 
 export function createFrameSample(): FrameSample {

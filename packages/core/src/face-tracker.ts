@@ -8,14 +8,16 @@ import {
   type Delegate,
   type FaceFrame,
   type FaceTracker,
+  type TrackerInput,
 } from './face.ts'
 
 /**
  * MediaPipe FaceLandmarker integration (VIDEO mode).
  *
  * Assets are self-hosted: nothing is fetched from a CDN. The host serves the `wasm/` directory of
- * `@mediapipe/tasks-vision` (only `vision_wasm_internal.js` and `vision_wasm_internal.wasm` are used) and the
- * `face_landmarker.task` model, and passes their URLs.
+ * `@mediapipe/tasks-vision` (only `vision_wasm_internal.js` and `vision_wasm_internal.wasm` are used, or their
+ * `vision_wasm_module_internal.*` counterparts with `wasmLoader: 'module'`) and the `face_landmarker.task` model,
+ * and passes their URLs.
  *
  * Privacy: MediaPipe Tasks (1.2.x) unconditionally posts usage metrics (task type, delegate, latencies; no image
  * data) to `https://odml.pa.googleapis.com/v1/log` every minute, with no API to turn it off. Hosts block it with a
@@ -39,9 +41,27 @@ export interface FaceTrackerOptions {
   modelUrl: string
   /** Preferred delegate. Default: `'GPU'`, with automatic fallback to CPU. `'CPU'` skips the GPU attempt. */
   delegate?: Delegate
+  /**
+   * Compute the 52 blendshapes (a second model run on every frame). Default: true. When false, `FaceFrame.blendshapes`
+   * stays at 0; turn it off when no active filter uses expressions, to save time on slow devices.
+   */
+  blendshapes?: boolean
   /** Receives non-fatal problems (GPU fallback, unexpected blendshape layout). Default: `console.warn`. */
   onWarning?: (message: string, cause?: unknown) => void
+  /**
+   * Which MediaPipe wasm loader to use. `'classic'` (default) loads `vision_wasm_internal.js` with a `<script>` tag
+   * (page) or `importScripts` (classic worker). Module workers have no `importScripts`: use `'module'`, which loads
+   * `vision_wasm_module_internal.js` (and its `.wasm`) with `import()`; the host serves those two files too.
+   */
+  wasmLoader?: WasmLoader
+  /**
+   * Canvas MediaPipe creates its WebGL context on. Default: MediaPipe's choice (an `OffscreenCanvas` where supported,
+   * a detached `<canvas>` otherwise, which does not exist in a worker: pass an `OffscreenCanvas` there).
+   */
+  canvas?: HTMLCanvasElement | OffscreenCanvas
 }
+
+export type WasmLoader = 'classic' | 'module'
 
 /** The part of MediaPipe's `FaceLandmarker` the tracker relies on (replaced by a fake in unit tests). */
 export interface Landmarker {
@@ -53,7 +73,7 @@ export interface Landmarker {
 export interface LandmarkerBackend {
   /** Downloads the model once, so a CPU fallback does not download it again. */
   loadModel(url: string): Promise<Uint8Array>
-  createLandmarker(wasmBaseUrl: string, options: FaceLandmarkerOptions): Promise<Landmarker>
+  createLandmarker(wasmBaseUrl: string, options: FaceLandmarkerOptions, loader: WasmLoader): Promise<Landmarker>
   /** Small blank frame used for the warm-up inference that validates the delegate. */
   warmupFrame(): TexImageSource
 }
@@ -76,10 +96,10 @@ const mediapipeBackend: LandmarkerBackend = {
     }
     return new Uint8Array(await res.arrayBuffer())
   },
-  async createLandmarker(wasmBaseUrl, options) {
+  async createLandmarker(wasmBaseUrl, options, loader) {
     // Loaded on demand: the MediaPipe bundle is only fetched when face tracking is requested.
     const { FaceLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision')
-    const fileset = await FilesetResolver.forVisionTasks(wasmBaseUrl.replace(/\/+$/, ''))
+    const fileset = await FilesetResolver.forVisionTasks(wasmBaseUrl.replace(/\/+$/, ''), loader === 'module')
     return FaceLandmarker.createFromOptions(fileset, options)
   },
   warmupFrame() {
@@ -100,13 +120,18 @@ export async function createFaceTrackerWith(options: FaceTrackerOptions, backend
   const model = await backend.loadModel(options.modelUrl)
 
   const open = async (delegate: Delegate): Promise<FaceTracker> => {
-    const landmarker = await backend.createLandmarker(options.wasmBaseUrl, {
-      baseOptions: { modelAssetBuffer: model, delegate },
-      runningMode: 'VIDEO',
-      numFaces: maxFaces,
-      outputFaceBlendshapes: true,
-      outputFacialTransformationMatrixes: true,
-    })
+    const landmarker = await backend.createLandmarker(
+      options.wasmBaseUrl,
+      {
+        baseOptions: { modelAssetBuffer: model, delegate },
+        runningMode: 'VIDEO',
+        numFaces: maxFaces,
+        outputFaceBlendshapes: options.blendshapes ?? true,
+        outputFacialTransformationMatrixes: true,
+        ...(options.canvas ? { canvas: options.canvas } : {}),
+      },
+      options.wasmLoader ?? 'classic',
+    )
     try {
       // A GPU landmarker can be created and still fail on its first inference (missing WebGL features, driver
       // bugs): validate it now, while falling back is still possible. Also moves shader compilation out of the
@@ -159,16 +184,25 @@ class MediaPipeFaceTracker implements FaceTracker {
    * Copies MediaPipe's results into `out` without allocating on our side (MediaPipe itself allocates its result
    * objects on every call; its FaceLandmarker has no callback variant).
    *
-   * - A disposed tracker, or a video without a frame yet, yields `count = 0`.
+   * - A disposed tracker, or a video without a frame yet, yields `count = 0`. The frame size is read from
+   *   `videoWidth`/`videoHeight` (video), `displayWidth`/`displayHeight` (`VideoFrame`) or `width`/`height`.
    * - MediaPipe throws on non-increasing timestamps: when `timestampMs` does not increase, every timestamp from then
    *   on is shifted so MediaPipe sees `previous + 1 ms` and the following intervals are preserved.
    * - `count` is set to 0 before inference, so an exception leaves a consistent (empty) frame.
    */
-  detect(video: HTMLVideoElement, timestampMs: number, mediaTime: number, out: FaceFrame): void {
+  detect(source: TrackerInput, timestampMs: number, mediaTime: number, out: FaceFrame): void {
     out.count = 0
     out.mediaTime = mediaTime
-    out.width = video.videoWidth
-    out.height = video.videoHeight
+    if ('videoWidth' in source) {
+      out.width = source.videoWidth
+      out.height = source.videoHeight
+    } else if ('displayWidth' in source) {
+      out.width = source.displayWidth
+      out.height = source.displayHeight
+    } else {
+      out.width = source.width
+      out.height = source.height
+    }
     const landmarker = this.#landmarker
     if (!landmarker || out.width === 0 || out.height === 0) return
     if (!Number.isFinite(timestampMs)) throw new RangeError(`timestampMs must be a finite number, got ${timestampMs}`)
@@ -180,7 +214,7 @@ class MediaPipeFaceTracker implements FaceTracker {
     }
     this.#lastTimestamp = ts
 
-    const result = landmarker.detectForVideo(video, ts)
+    const result = landmarker.detectForVideo(source, ts)
     const faces = result.faceLandmarks
     const blendshapes = result.faceBlendshapes
     const matrices = result.facialTransformationMatrixes

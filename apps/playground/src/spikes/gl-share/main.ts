@@ -77,21 +77,21 @@ const contextsRow = row('Contexts', '—')
 const checkRow = row('Alignment check', 'not run (press “Check alignment” with a person in view)')
 const errorRow = row('Status', window.isSecureContext ? 'idle' : 'not a secure context: open the https:// URL')
 
-/** Extra recorder columns, in `FrameSample.extra` order (docs/perf/session-format.md). */
+/** Extra recorder columns, recorded from `FrameSample.extra` by name (docs/perf/session-format.md). */
 const COLUMNS = ['segmentationMs', 'transferMs', 'uploadMs', 'pipelineMs', 'readbacks', 'readbackBytes', 'syncCalls', 'maskReads'] as const
-const col = (name: (typeof COLUMNS)[number]) => COLUMNS.indexOf(name)
+type Column = (typeof COLUMNS)[number]
 
 let pipeline: MaskPipeline | undefined
 let pipelineContexts = ''
 const perf = createPerf({
-  extraColumns: COLUMNS,
+  columns: COLUMNS,
   live: [
-    { column: col('segmentationMs'), label: 'seg', kind: 'ms' },
-    { column: col('transferMs'), label: 'xfer', kind: 'ms' },
-    { column: col('uploadMs'), label: 'upload', kind: 'ms' },
-    { column: col('readbacks'), label: 'rb/fr', kind: 'count' },
-    { column: col('maskReads'), label: 'mask rd/fr', kind: 'count' },
-    { column: col('syncCalls'), label: 'sync/fr', kind: 'count' },
+    { column: 'segmentationMs', label: 'seg', kind: 'ms' },
+    { column: 'transferMs', label: 'xfer', kind: 'ms' },
+    { column: 'uploadMs', label: 'upload', kind: 'ms' },
+    { column: 'readbacks', label: 'rb/fr', kind: 'count' },
+    { column: 'maskReads', label: 'mask rd/fr', kind: 'count' },
+    { column: 'syncCalls', label: 'sync/fr', kind: 'count' },
   ],
   app: () => ({
     spike: 'gl-share (#7)',
@@ -105,7 +105,8 @@ if (perf) $<HTMLDivElement>('perf').append(perf.element)
 let camera: CameraSource | undefined
 let scheduler: FrameScheduler | undefined
 const sample = createFrameSample()
-const extra = new Float64Array(COLUMNS.length)
+// Reused every frame (no allocation): one property per extra column.
+const extra = Object.fromEntries(COLUMNS.map((c) => [c, NaN])) as Record<Column, number>
 sample.extra = extra
 const timings: FrameTimings = { trackingMs: NaN, faces: 0, segmentationMs: NaN, transferMs: NaN, uploadMs: NaN, renderMs: NaN }
 
@@ -183,14 +184,14 @@ async function start() {
     sample.trackingMs = (Number.isNaN(timings.segmentationMs) ? 0 : timings.segmentationMs) + (Number.isNaN(timings.trackingMs) ? 0 : timings.trackingMs)
     sample.renderMs = Number.isNaN(timings.renderMs) ? 0 : timings.renderMs
     sample.faces = timings.faces
-    extra[col('segmentationMs')] = timings.segmentationMs
-    extra[col('transferMs')] = timings.transferMs
-    extra[col('uploadMs')] = timings.uploadMs
-    extra[col('pipelineMs')] = pipelineMs
-    extra[col('readbacks')] = c.readbacks - readbacks
-    extra[col('readbackBytes')] = c.readbackBytes - readbackBytes
-    extra[col('syncCalls')] = c.syncCalls - syncCalls
-    extra[col('maskReads')] = c.maskReads - maskReads
+    extra.segmentationMs = timings.segmentationMs
+    extra.transferMs = timings.transferMs
+    extra.uploadMs = timings.uploadMs
+    extra.pipelineMs = pipelineMs
+    extra.readbacks = c.readbacks - readbacks
+    extra.readbackBytes = c.readbackBytes - readbackBytes
+    extra.syncCalls = c.syncCalls - syncCalls
+    extra.maskReads = c.maskReads - maskReads
     perf?.record(sample)
 
     if (frame.now - shownAt > 500) {

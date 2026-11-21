@@ -35,6 +35,11 @@ export interface PerfSession {
   /** Statistics per consecutive interval (per minute by default), to see thermal throttling over time. */
   intervals: SessionInterval[]
   events: SessionEvent[]
+  /**
+   * Names of the extra sample columns (`SessionRecorderOptions.columns`), in order; absent when there are none.
+   * Each one is a column of `samples` and has statistics in `summary.columns` and in each interval.
+   */
+  columns?: string[]
   samples: SessionSamples
 }
 
@@ -67,11 +72,16 @@ export interface SessionStats {
   renderMs: SessionDistribution
   /** Mean number of detected faces. */
   faces: number | null
-  /**
-   * Distribution of each extra column (`SessionRecorderOptions.extraColumns`), `NaN` values excluded. Only
-   * present when the recorder has extra columns.
-   */
-  extra?: Record<string, SessionDistribution>
+  /** Statistics of each extra column over its values (samples without a value are skipped); only with columns. */
+  columns?: Record<string, SessionColumnStats>
+}
+
+/** Statistics of an extra sample column. */
+export interface SessionColumnStats extends SessionDistribution {
+  /** Samples that have a value. */
+  count: number
+  /** Sum of the values (e.g. the number of dropped frames for a 0/1 column). */
+  sum: number
 }
 
 export interface SessionSummary extends SessionStats {
@@ -88,8 +98,12 @@ export interface SessionInterval extends SessionStats {
   durationMs: number
 }
 
-/** Column-oriented raw samples, one entry per processed frame, in recording order. */
+/**
+ * Column-oriented raw samples, one entry per processed frame, in recording order. Extra columns
+ * (`PerfSession.columns`) hold `null` for samples without a value.
+ */
 export interface SessionSamples {
+  [column: string]: (number | null)[]
   /** `FrameSample.now` relative to the start of the recording (ms, 0.01 ms precision). */
   t: number[]
   /** `FrameSample.mediaTime` (s, 0.00001 s precision). */
@@ -98,15 +112,7 @@ export interface SessionSamples {
   trackingMs: number[]
   renderMs: number[]
   faces: number[]
-  /**
-   * Extra columns (`SessionRecorderOptions.extraColumns`), by name, 0.01 precision; `NaN` (`null` in JSON) when
-   * the value did not apply to the frame.
-   */
-  [column: string]: number[]
 }
-
-/** Names of the built-in sample columns, which extra columns cannot reuse. */
-export const SESSION_SAMPLE_COLUMNS = ['t', 'mediaTime', 'trackingMs', 'renderMs', 'faces'] as const
 
 /** Notable things that happened during the recording; `t` is relative to the start (ms). */
 export type SessionEvent =
@@ -128,6 +134,8 @@ export type SessionEventInput = DistributiveOmit<SessionEvent, 't'>
 // Recorder
 // ---------------------------------------------------------------------------------------------------------------
 
+const BUILTIN_COLUMNS: readonly string[] = ['t', 'mediaTime', 'trackingMs', 'renderMs', 'faces']
+
 /** 10 minutes at 120 fps, 20 minutes at 60 fps (≈ 1.8 MB of buffers). */
 export const DEFAULT_SESSION_CAPACITY = 72_000
 const DEFAULT_MAX_EVENTS = 10_000
@@ -139,16 +147,15 @@ export interface SessionRecorderOptions {
   maxEvents?: number
   /** Length of the per-interval statistics (ms). Default: 60 000 (per minute). */
   intervalMs?: number
+  /**
+   * Extra numeric sample columns, recorded from `FrameSample.extra` (e.g. `['inferenceMs', 'latencyMs']`).
+   * Names must be unique identifiers and differ from the built-in columns. Default: none.
+   */
+  columns?: readonly string[]
   /** Monotonic clock, same as `FrameSample.now`. Default: `performance.now()`. */
   clock?: () => number
   /** Wall clock (ms since the epoch). Default: `Date.now()`. */
   wallClock?: () => number
-  /**
-   * Extra per-frame columns recorded from `FrameSample.extra` (same order), e.g. `['segmentationMs']`, for
-   * pipelines that measure more than tracking and rendering. Exported as additional `samples` columns and
-   * `extra` statistics. Names must be unique and differ from the built-in columns. Default: none.
-   */
-  extraColumns?: readonly string[]
 }
 
 export interface SessionStartOptions {
@@ -169,7 +176,8 @@ export class SessionRecorder implements FrameSampleSink {
   readonly capacity: number
   readonly maxEvents: number
   readonly intervalMs: number
-  readonly extraColumns: readonly string[]
+  /** Extra sample columns, in order. */
+  readonly columns: readonly string[]
   readonly #clock: () => number
   readonly #wallClock: () => number
   readonly #t: Float64Array
@@ -177,6 +185,7 @@ export class SessionRecorder implements FrameSampleSink {
   readonly #trackingMs: Float32Array
   readonly #renderMs: Float32Array
   readonly #faces: Uint8Array
+  /** One buffer per extra column; NaN = no value. */
   readonly #extra: Float32Array[]
   #count = 0
   #state: SessionRecorderState = 'idle'
@@ -205,15 +214,13 @@ export class SessionRecorder implements FrameSampleSink {
     this.#trackingMs = new Float32Array(capacity)
     this.#renderMs = new Float32Array(capacity)
     this.#faces = new Uint8Array(capacity)
-    const extra = [...(options.extraColumns ?? [])]
-    const builtIn: readonly string[] = SESSION_SAMPLE_COLUMNS
-    for (const [i, name] of extra.entries()) {
-      if (name === '' || builtIn.includes(name) || extra.indexOf(name) !== i) {
-        throw new RangeError(`Invalid extra column name ${JSON.stringify(name)}: empty, duplicated or built-in`)
-      }
+    const columns = options.columns ?? []
+    for (const name of columns) {
+      if (!/^[A-Za-z_]\w*$/.test(name) || BUILTIN_COLUMNS.includes(name)) throw new RangeError(`Invalid extra column name: ${name}`)
     }
-    this.extraColumns = extra
-    this.#extra = extra.map(() => new Float32Array(capacity))
+    if (new Set(columns).size !== columns.length) throw new RangeError('Extra column names must be unique')
+    this.columns = [...columns]
+    this.#extra = columns.map(() => new Float32Array(capacity))
   }
 
   get state(): SessionRecorderState {
@@ -310,7 +317,10 @@ export class SessionRecorder implements FrameSampleSink {
     this.#renderMs[i] = sample.renderMs
     this.#faces[i] = sample.faces
     const extra = sample.extra
-    for (let c = 0; c < this.#extra.length; c++) (this.#extra[c] as Float32Array)[i] = extra?.[c] ?? NaN
+    for (let c = 0; c < this.#extra.length; c++) {
+      const v = extra?.[this.columns[c] as string]
+      ;(this.#extra[c] as Float32Array)[i] = typeof v === 'number' && Number.isFinite(v) ? v : NaN
+    }
     this.#count = i + 1
   }
 
@@ -372,18 +382,20 @@ export class SessionRecorder implements FrameSampleSink {
         renderMs: render,
         faces: nullable(to > from ? faces / (to - from) : NaN, 1000),
       }
-      if (this.#extra.length > 0) {
-        const extra: Record<string, SessionDistribution> = {}
-        for (const [c, name] of this.extraColumns.entries()) {
-          const column = this.#extra[c] as Float32Array
+      if (this.columns.length > 0) {
+        stats.columns = {}
+        for (let c = 0; c < this.columns.length; c++) {
+          const col = this.#extra[c] as Float32Array
           let k = 0
+          let total = 0
           for (let i = from; i < to; i++) {
-            const v = column[i] as number
-            if (!Number.isNaN(v)) scratch[k++] = v
+            const v = col[i] as number
+            if (Number.isNaN(v)) continue
+            scratch[k++] = v
+            total += v
           }
-          extra[name] = distribution(scratch, k)
+          stats.columns[this.columns[c] as string] = { count: k, sum: round(total, 1000), ...distribution(scratch, k) }
         }
-        stats.extra = extra
       }
       return stats
     }
@@ -406,11 +418,11 @@ export class SessionRecorder implements FrameSampleSink {
       samples.renderMs.push(round(this.#renderMs[i] as number, 100))
       samples.faces.push(this.#faces[i] as number)
     }
-    for (const [c, name] of this.extraColumns.entries()) {
-      const column = this.#extra[c] as Float32Array
-      const values: number[] = []
-      for (let i = 0; i < n; i++) values.push(round(column[i] as number, 100))
-      samples[name] = values
+    for (let c = 0; c < this.columns.length; c++) {
+      const col = this.#extra[c] as Float32Array
+      const values: (number | null)[] = []
+      for (let i = 0; i < n; i++) values.push(nullable(col[i] as number, 100))
+      samples[this.columns[c] as string] = values
     }
 
     return {
@@ -430,6 +442,7 @@ export class SessionRecorder implements FrameSampleSink {
       intervalMs: this.intervalMs,
       intervals,
       events,
+      ...(this.columns.length > 0 ? { columns: [...this.columns] } : {}),
       samples,
     }
   }

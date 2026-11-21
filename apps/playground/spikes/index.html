@@ -15,6 +15,14 @@
     <h1>Phase 0 spikes</h1>
     <p>Each page records with the same performance panel; the exported file name includes the page and its URL options.</p>
     <ul>
+      <li>
+        Worker vs main thread (#6):
+        <a href="worker.html?mode=main">main thread</a> ·
+        <a href="worker.html?mode=worker&amp;transfer=videoframe">worker, VideoFrame</a> ·
+        <a href="worker.html?mode=worker&amp;transfer=bitmap">worker, ImageBitmap</a> —
+        busy host: <a href="worker.html?mode=main&amp;load=15">main + 15 ms load</a> ·
+        <a href="worker.html?mode=worker&amp;load=15">worker + 15 ms load</a>
+      </li>
       <li><a href="../?maxFaces=1">Multi-face cost (#8): maxFaces=1</a> · <a href="../?maxFaces=2">2</a> · <a href="../?maxFaces=4">4</a></li>
       <li><a href="gl-share.html?path=shared">Shared WebGL context, GPU-side masks (#7): shared</a> · <a href="gl-share.html?path=cpu">cpu</a> · <a href="gl-share.html?path=webgpu">webgpu</a></li>
     </ul>

@@ -211,55 +211,54 @@ describe('SessionRecorder', () => {
     expect(s.rec.export().events).toEqual([])
   })
 
-  it('holds 10 minutes at 60 fps by default', () => {
-    expect(new SessionRecorder().capacity).toBeGreaterThanOrEqual(10 * 60 * 60)
+  it('records extra columns, with null for missing values, and summarizes them', () => {
+    const s = setup({ columns: ['inferenceMs', 'dropped'], intervalMs: 50 })
+    const sample = createFrameSample()
+    s.rec.start()
+    const values = [
+      { inferenceMs: 8.123, dropped: 0 },
+      { dropped: 1 }, // no new result this frame
+      { inferenceMs: 12, dropped: 0 },
+      { inferenceMs: NaN, dropped: 1 },
+    ]
+    for (const extra of values) {
+      s.advance(20)
+      sample.now = s.now
+      sample.extra = extra as Record<string, number>
+      s.rec.record(sample)
+    }
+    s.rec.stop()
+    const doc = s.rec.export()
+    expect(doc.columns).toEqual(['inferenceMs', 'dropped'])
+    expect(doc.samples.inferenceMs).toEqual([8.12, null, 12, null])
+    expect(doc.samples.dropped).toEqual([0, 1, 0, 1])
+    expect(doc.summary.columns?.inferenceMs).toMatchObject({ count: 2, max: 12 })
+    expect(doc.summary.columns?.inferenceMs?.mean).toBeCloseTo(10.06, 2)
+    expect(doc.summary.columns?.dropped).toMatchObject({ count: 4, sum: 2, mean: 0.5 })
+    // Per interval too: samples at 20 and 40 ms, then 60 and 80 ms.
+    expect(doc.intervals.map((i) => i.columns?.dropped?.sum)).toEqual([1, 1])
+    expect(doc.intervals.map((i) => i.columns?.inferenceMs?.count)).toEqual([1, 1])
+    expect(JSON.parse(stringifySession(doc))).toEqual(doc)
   })
 
-  it('has no extra columns or statistics by default', () => {
+  it('has no extra column fields without extra columns', () => {
     const s = setup()
     s.rec.start()
     s.frame(10)
-    s.rec.stop()
     const doc = s.rec.export()
+    expect('columns' in doc).toBe(false)
+    expect('columns' in doc.summary).toBe(false)
     expect(Object.keys(doc.samples)).toEqual(['t', 'mediaTime', 'trackingMs', 'renderMs', 'faces'])
-    expect(doc.summary.extra).toBeUndefined()
-    expect(doc.intervals[0]?.extra).toBeUndefined()
   })
 
-  it('records extra columns, with NaN for missing values excluded from their statistics', () => {
-    const s = setup({ extraColumns: ['segmentationMs', 'readPixels'], intervalMs: 25 })
-    const sample = createFrameSample()
-    const extra = new Float64Array(2)
-    sample.extra = extra
-    s.rec.start()
-    const at = (stepMs: number, seg: number, reads: number) => {
-      s.advance(stepMs)
-      sample.now = s.now
-      extra[0] = seg
-      extra[1] = reads
-      s.rec.record(sample)
-    }
-    at(10, 4.567, 0)
-    at(10, NaN, 2)
-    at(10, 8, NaN)
-    s.rec.record({ ...sample, now: s.now + 10, extra: undefined }) // no extra values at all
-    s.rec.stop()
-    const doc = s.rec.export()
-    expect(doc.samples.segmentationMs).toEqual([4.57, NaN, 8, NaN])
-    expect(doc.samples.readPixels).toEqual([0, 2, NaN, NaN])
-    expect(doc.summary.extra?.segmentationMs).toEqual({ mean: 6.283, p50: 6.283, p95: 7.828, p99: 7.966, max: 8 })
-    expect(doc.summary.extra?.readPixels?.mean).toBe(1)
-    expect(doc.intervals[0]?.extra?.segmentationMs?.max).toBe(4.567) // t = 10 and 20 ms
-    expect(doc.intervals[1]?.extra?.segmentationMs?.max).toBe(8) // t = 30 and 40 ms
-    expect(doc.intervals[1]?.extra?.readPixels?.mean).toBeNull()
-    // NaN is exported as null.
-    expect(JSON.parse(stringifySession(doc)).samples.segmentationMs).toEqual([4.57, null, 8, null])
+  it('rejects invalid or duplicate extra column names', () => {
+    expect(() => new SessionRecorder({ columns: ['faces'] })).toThrow(RangeError)
+    expect(() => new SessionRecorder({ columns: ['a b'] })).toThrow(RangeError)
+    expect(() => new SessionRecorder({ columns: ['x', 'x'] })).toThrow(RangeError)
   })
 
-  it('rejects invalid extra column names', () => {
-    expect(() => new SessionRecorder({ extraColumns: ['renderMs'] })).toThrow(RangeError)
-    expect(() => new SessionRecorder({ extraColumns: ['a', 'a'] })).toThrow(RangeError)
-    expect(() => new SessionRecorder({ extraColumns: [''] })).toThrow(RangeError)
+  it('holds 10 minutes at 60 fps by default', () => {
+    expect(new SessionRecorder().capacity).toBeGreaterThanOrEqual(10 * 60 * 60)
   })
 })
 

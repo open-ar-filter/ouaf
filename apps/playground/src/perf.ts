@@ -16,20 +16,20 @@ export interface PlaygroundPerf extends FrameSampleSink {
   /** Element holding the overlay (fps, timings, recorder controls). */
   readonly element: HTMLElement
   setInfo(info: PipelineInfo): void
-  /** Logs a `note` event in the current recording (ignored when not recording). */
+  /** Logs a `note` event in the recording (ignored when not recording). */
   note(message: string): void
   dispose(): void
 }
 
 export interface PerfOptions {
-  /** Extra per-frame columns recorded from `FrameSample.extra` (`SessionRecorderOptions.extraColumns`). */
-  extraColumns?: readonly string[]
+  /** Extra per-frame columns recorded from `FrameSample.extra` (see `SessionRecorderOptions.columns`). */
+  columns?: readonly string[]
   /**
-   * Extra columns also shown live in the overlay, by index in `extraColumns`: `ms` columns as p50/p95, `count`
-   * columns as the mean per frame (NaN values skipped). Default: none.
+   * Extra columns also shown live in the overlay, by name: `ms` columns as p50/p95, `count` columns as the mean per
+   * frame (missing / NaN values skipped). Default: none.
    */
-  live?: readonly { column: number; label: string; kind: 'ms' | 'count' }[]
-  /** Extra `app` fields of the export (e.g. spike variant details), read when exporting. */
+  live?: readonly { column: string; label: string; kind: 'ms' | 'count' }[]
+  /** Extra `app` fields of the export (e.g. the resolved spike variant), read at export time. */
   app?: () => Record<string, string | number | boolean>
 }
 
@@ -115,7 +115,7 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
   const windowS = Math.min(60, Math.max(1, Number(new URLSearchParams(location.search).get('window')) || 2))
   const stats = new RollingStats({ windowMs: windowS * 1000, capacity: Math.max(256, windowS * 130) })
   const snap = createRollingSnapshot()
-  const recorder = new SessionRecorder(options.extraColumns ? { extraColumns: options.extraColumns } : {})
+  const recorder = new SessionRecorder(options.columns ? { columns: options.columns } : {})
   let info: PipelineInfo | undefined
   let device: DeviceInfo | null = null
   let exported = true
@@ -138,7 +138,7 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
   const [renderCell, renderValue] = cell('render')
   const [facesCell, facesValue] = cell('faces')
   const live = (options.live ?? []).map((c) => ({ ...c, cell: cell(c.label) }))
-  const extraWindow = live.length > 0 ? createExtraWindow(options.extraColumns?.length ?? 0) : undefined
+  const extraWindow = live.length > 0 ? createExtraWindow(live.map((c) => c.column), windowS * 1000) : undefined
   const infoLine = el('div', { className: 'ouaf-perf-info', textContent: 'p50/p95 in ms over the last 2 s' })
 
   const preset = el('select', { title: 'Recording duration' }, ...PRESETS.map((p, i) => el('option', { value: String(i), textContent: p.label })))
@@ -148,6 +148,7 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
   const exportButton = el('button', { type: 'button', textContent: 'Export', disabled: true })
   const shareButton = el('button', { type: 'button', textContent: 'Share', disabled: true, hidden: !canShareFiles() })
   const message = el('div', { className: 'ouaf-perf-msg' })
+  const copyButton = el('button', { type: 'button', textContent: 'Copy', title: 'Copy the figures above as text' })
 
   const element = el(
     'section',
@@ -155,7 +156,7 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
     el('style', { textContent: STYLE }),
     el('div', { className: 'ouaf-perf-grid' }, fpsCell, frameCell, delegateCell, trackCell, renderCell, facesCell, ...live.map((c) => c.cell[0])),
     infoLine,
-    el('div', { className: 'ouaf-perf-rec' }, preset, recordButton, timeLabel, exportButton, shareButton),
+    el('div', { className: 'ouaf-perf-rec' }, preset, recordButton, timeLabel, exportButton, shareButton, copyButton),
     message,
   )
 
@@ -315,6 +316,35 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
   }
   document.addEventListener('visibilitychange', onVisibility)
 
+  // --- Copy ----------------------------------------------------------------------------------------------------------
+  /** The live figures as plain text, to paste into a chat or an issue. */
+  function figuresText(): string {
+    const model = device?.userAgentData?.model || device?.userAgentData?.platform || device?.platform || ''
+    return [
+      `ouaf perf · ${location.pathname}${location.search}${model ? ` · ${model}` : ''}`,
+      `fps ${fpsValue.textContent} · frame ${frameValue.textContent} · track ${trackValue.textContent} · ` +
+        `render ${renderValue.textContent} · faces ${facesValue.textContent} · ${delegateValue.textContent}`,
+      infoLine.textContent ?? '',
+    ].join('\n')
+  }
+
+  async function copyFigures() {
+    const text = figuresText()
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // Older browsers / denied permission: fall back to a selected textarea.
+      const area = el('textarea', { value: text })
+      document.body.append(area)
+      area.select()
+      document.execCommand('copy')
+      area.remove()
+    }
+    copyButton.textContent = 'Copied ✓'
+    setTimeout(() => (copyButton.textContent = 'Copy'), 1500)
+  }
+  copyButton.addEventListener('click', () => void copyFigures())
+
   // --- Overlay refresh ---------------------------------------------------------------------------------------------
   let wasRecording = false
   function refresh() {
@@ -331,11 +361,11 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
     facesValue.textContent = fmt(snap.faces, 1)
     delegateValue.textContent = info?.delegate ?? '—'
     if (extraWindow) {
-      const since = performance.now() - LIVE_WINDOW_MS
-      for (const c of live) {
-        const v = extraWindow.stats(c.column, since)
+      const since = performance.now() - windowS * 1000
+      live.forEach((c, i) => {
+        const v = extraWindow.stats(i, since)
         c.cell[1].textContent = c.kind === 'ms' ? `${fmt(v.p50)}/${fmt(v.p95)}` : fmt(v.mean, 2)
-      }
+      })
     }
 
     const recording = recorder.recording
@@ -356,8 +386,11 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
     element,
     record(sample: Readonly<FrameSample>) {
       stats.record(sample)
-      recorder.record(sample)
       extraWindow?.record(sample)
+      recorder.record(sample)
+    },
+    note(message: string) {
+      recorder.event({ type: 'note', message })
     },
     setInfo(next: PipelineInfo) {
       info = { ...next }
@@ -366,9 +399,6 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
       infoLine.textContent =
         `video ${next.videoWidth}×${next.videoHeight} → render ${next.renderWidth}×${next.renderHeight}, ` +
         `max ${next.maxFaces} faces · p50/p95 ms over ${windowS} s`
-    },
-    note(message: string) {
-      recorder.event({ type: 'note', message })
     },
     dispose() {
       clearInterval(timer)
@@ -383,30 +413,30 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
   }
 }
 
-/** Window of the live statistics of the extra columns (same as `RollingStats`). */
-const LIVE_WINDOW_MS = 2000
-/** Samples kept for them: 2 s at up to 120 fps. */
-const LIVE_CAPACITY = 256
-
-/** Ring buffer of the last extra-column values, for the live overlay (allocation-free in the steady state). */
-function createExtraWindow(columns: number) {
-  const t = new Float64Array(LIVE_CAPACITY).fill(-Infinity)
-  const values = Array.from({ length: columns }, () => new Float64Array(LIVE_CAPACITY))
-  const scratch = new Float64Array(LIVE_CAPACITY)
+/**
+ * Ring buffer of the last values of some extra columns (`FrameSample.extra`), for the live overlay; sized for
+ * `windowMs` at up to 120 fps, allocation-free in the steady state.
+ */
+function createExtraWindow(columns: readonly string[], windowMs: number) {
+  const capacity = Math.max(256, Math.ceil((windowMs / 1000) * 120))
+  const t = new Float64Array(capacity).fill(-Infinity)
+  const values = columns.map(() => new Float64Array(capacity))
+  const scratch = new Float64Array(capacity)
   let next = 0
   const result = { p50: NaN, p95: NaN, mean: NaN }
   return {
     record(sample: Readonly<FrameSample>) {
       t[next] = sample.now
-      for (let c = 0; c < columns; c++) (values[c] as Float64Array)[next] = sample.extra?.[c] ?? NaN
-      next = (next + 1) % LIVE_CAPACITY
+      for (let c = 0; c < columns.length; c++) (values[c] as Float64Array)[next] = sample.extra?.[columns[c]!] ?? NaN
+      next = (next + 1) % capacity
     },
-    stats(column: number, since: number) {
-      const v = values[column]
+    /** Statistics of the `index`-th column over the samples since `since` (ms). */
+    stats(index: number, since: number) {
+      const v = values[index]
       let n = 0
       let sum = 0
       if (v) {
-        for (let i = 0; i < LIVE_CAPACITY; i++) {
+        for (let i = 0; i < capacity; i++) {
           const x = v[i] as number
           if ((t[i] as number) >= since && !Number.isNaN(x)) {
             scratch[n++] = x

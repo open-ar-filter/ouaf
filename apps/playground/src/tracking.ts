@@ -21,7 +21,7 @@ function facesRow(): HTMLElement {
 }
 
 /** `?delegate=CPU` forces the CPU delegate (to compare with GPU); default: GPU with automatic CPU fallback. */
-function requestedDelegate(): Delegate {
+export function requestedDelegate(): Delegate {
   return new URLSearchParams(location.search).get('delegate')?.toUpperCase() === 'CPU' ? 'CPU' : 'GPU'
 }
 
@@ -38,6 +38,8 @@ export async function createTracker({ maxFaces }: { maxFaces: number }): Promise
     tracker = await createFaceTracker({
       maxFaces,
       delegate: requestedDelegate(),
+      // `?blendshapes=0` skips the blendshapes model (measures its cost; `jawOpen` then reads 0).
+      blendshapes: new URLSearchParams(location.search).get('blendshapes') !== '0',
       wasmBaseUrl: new URL(WASM_BASE_URL, document.baseURI).href,
       modelUrl: new URL(MODEL_URL, document.baseURI).href,
     })
