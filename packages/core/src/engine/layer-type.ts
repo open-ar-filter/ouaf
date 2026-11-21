@@ -20,6 +20,7 @@ import type { Camera, Material, Object3D, Texture, WebGLRenderTarget, WebGLRende
 import type { FaceFrame } from '../face.ts'
 import type { AnchorProvider } from './anchor-provider.ts'
 import type { LoadedAssets } from './assets.ts'
+import type { BindingEnv } from '../bindings/index.ts'
 import type { ParamReader, ParamValue } from '../params/index.ts'
 
 /** A layer declaration as written in the manifest (already validated against the layer type's schema). */
@@ -78,6 +79,12 @@ export interface LayerContext {
    * value every frame with `numberAt` / `numbers` (transitions); `get` gives the committed value (strings, selects).
    */
   readonly params: ParamReader & { get(name: string): ParamValue }
+  /**
+   * What bindable properties compile against (spec §8): compile each one once in `create` with `compileBinding` /
+   * `compileNumberBinding`, then evaluate it per face every frame (`NumberBinding.write` does not allocate). The engine
+   * updates the tracking data before every `update`.
+   */
+  readonly bindings: BindingEnv
   /** Maximum number of faces of the engine: size per-face resources for it. */
   readonly maxFaces: number
   /** Reports a non-fatal problem to the host (`engine.on('warning')`). */

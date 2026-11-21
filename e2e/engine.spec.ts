@@ -141,3 +141,23 @@ test('params animate over their transition and presets apply', async ({ page }) 
   expect(during.b).toBeLessThan(after.b - 3)
   expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.params)).toEqual({ tint: 0 })
 })
+
+test('bindings drive layer properties from tracking data', async ({ page }) => {
+  // No filter yet, so no tracking: wait for the first stats only.
+  await page.goto('/engine.html?source=pesquet-closeup&autostart')
+  await page.waitForFunction(() => window.ouaf?.stats !== undefined, undefined, { timeout: 60_000 })
+  // faces.count mapped to [0, 1]: full yellow tint while a face is tracked, none without (default 0).
+  await page.evaluate(async () => {
+    const { engine, memorySource } = window.ouaf!
+    await engine.addFilter(
+      memorySource({
+        manifest: {
+          ouaf: '1', id: 'bound', name: 'Bound', version: '1.0.0', license: 'CC0-1.0',
+          requires: { face: true, plugins: ['playground@^1'] },
+          layers: [{ type: 'playground:tint', color: '#ffff00', amount: { bind: 'faces.count', range: [0, 1], to: [0, 1], default: 0 } }],
+        },
+      }),
+    )
+  })
+  await expect.poll(async () => (await sample(page)).b, { timeout: 30_000 }).toBeLessThan(5)
+})

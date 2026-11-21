@@ -7,6 +7,7 @@ import { Emitter } from './emitter.ts'
 import { IncompatibleEngineError, InvalidManifestError, MissingPluginError, OuafError, withParamErrors } from './errors.ts'
 import { preloadAssets, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
 import type { LayerContext, LayerDecl, LayerInstance, LayerTypeImpl, ObjectsView } from './layer-type.ts'
+import type { BindingDataSource, ParamsReader } from '../bindings/index.ts'
 import { ParamStore, type ParamChange, type ParamValue, type SelectOptions, type SetParamOptions } from '../params/index.ts'
 import { parsePluginRequirement } from './plugin.ts'
 import type { WebGLRenderer } from 'three'
@@ -65,6 +66,8 @@ export interface FilterLoadEnv {
   renderer: WebGLRenderer
   view: ObjectsView
   maxFaces: number
+  /** Tracking data for bindings, updated by the engine every frame. */
+  bindingData: BindingDataSource
   warn(message: string): void
 }
 
@@ -200,6 +203,7 @@ export async function loadFilter(
     view: env.view,
     assets,
     params,
+    bindings: { data: env.bindingData, params: bindingParams(params) },
     maxFaces: env.maxFaces,
     warn: (message) => env.warn(`Filter "${manifest.id}": ${message}`),
   }
@@ -216,6 +220,24 @@ export async function loadFilter(
     throw error
   }
   return new FilterInstance({ key, manifest, source: source.label, params, layers, assets, warnings, onListenerError: (e) => env.warn(String(e)) })
+}
+
+/**
+ * Params as bindings read them (`{ "param": "name" }`): numbers and booleans from the animated components (a number
+ * binding follows a running `transition`), everything else as committed.
+ */
+export function bindingParams(store: ParamStore): ParamsReader {
+  return {
+    type(name) {
+      const i = store.indexOf(name)
+      return i < 0 ? undefined : store.defAt(i).type
+    },
+    get(name) {
+      const i = store.indexOf(name)
+      if (i < 0) return undefined
+      return store.defAt(i).type === 'number' ? store.numberAt(i) : store.valueAt(i)
+    },
+  }
 }
 
 /** `requires.plugins` against the installed plugins, before validation, for a precise error (spec §4.1). */

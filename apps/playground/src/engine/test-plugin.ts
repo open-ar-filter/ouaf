@@ -6,11 +6,10 @@
  * - `playground:dot` (object): a flat colored disc at a face anchor (or the screen centre), `size` in anchor units.
  */
 import type { LayerContext, LayerDecl, ObjectLayer, OuafPlugin, PassLayer } from '@ouaf/core'
-import { FULLSCREEN_VERTEX } from '@ouaf/core'
+import { FULLSCREEN_VERTEX, compileNumberBinding } from '@ouaf/core'
+import { Bindable } from '@ouaf/spec'
 import { Type } from 'typebox'
 import { CircleGeometry, Color, GLSL3, Group, Matrix4, Mesh, MeshBasicMaterial, RawShaderMaterial, Vector4 } from 'three'
-
-const Bindable = (schema: ReturnType<typeof Type.Number>) => Type.Union([schema, Type.Object({ param: Type.String() }, { additionalProperties: false })])
 
 const TintSchema = Type.Object(
   {
@@ -45,15 +44,17 @@ void main() {
 }
 `
 
+/**
+ * `amount` is bindable (spec §8): a number, `{ "param": … }` or `{ "bind": … }`, compiled once and evaluated every
+ * frame without allocating. A full-screen pass reads the first face.
+ */
 function readAmount(decl: LayerDecl, ctx: LayerContext): () => number {
-  const amount = decl.amount
-  if (typeof amount === 'number') return () => amount
-  if (amount && typeof amount === 'object' && 'param' in amount) {
-    // Resolved once; read by index every frame: the animated value, so `transition` is visible.
-    const index = ctx.params.indexOf(String((amount as { param: string }).param))
-    return () => ctx.params.numberAt(index)
+  const binding = compileNumberBinding(decl.amount ?? 1, { fallback: 1, path: 'amount' }, ctx.bindings)
+  const out = new Float64Array(1)
+  return () => {
+    binding.write(0, out, 0)
+    return out[0]!
   }
-  return () => 1
 }
 
 function createTint(decl: LayerDecl, ctx: LayerContext): PassLayer {

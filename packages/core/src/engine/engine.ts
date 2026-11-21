@@ -23,8 +23,9 @@ import { builtinPlugins } from './builtin.ts'
 import { Compositor, type StagePasses } from './compositor.ts'
 import { Emitter } from './emitter.ts'
 import { IncompatibleSourceError, OuafError, disposedError } from './errors.ts'
-import { FilterInstance, createHandle, loadFilter, type FilterHandle, type FilterLoadEnv } from './filter.ts'
+import { FilterInstance, bindingParams, createHandle, loadFilter, type FilterHandle, type FilterLoadEnv } from './filter.ts'
 import type { FrameContext, LayerContext, LayerInstance, LayerTypeImpl, ObjectLayer, PassLayer } from './layer-type.ts'
+import { FaceBindingData } from '../bindings/index.ts'
 import { ParamStore } from '../params/index.ts'
 import type {
   EventSourceImpl,
@@ -131,6 +132,7 @@ export class Engine {
   #events = new Emitter<EngineEvents>((error) => this.#warn(`An event listener threw: ${String(error)}`))
   #compositor: Compositor
   #anchors: ProvisionalAnchors
+  #bindingData = new FaceBindingData(createFaceFrame(1))
   #tracking: TrackingHub
   #fetch: typeof fetch
   #plugins = new Map<string, OuafPlugin>()
@@ -367,6 +369,11 @@ export class Engine {
 
     const faces = this.#tracking.faces
     this.#anchors.setFrame(faces, compositor.mirrored)
+    const data = this.#bindingData
+    data.faces = faces
+    data.time = info.mediaTime
+    data.mirrored = compositor.mirrored
+    data.videoToClip = compositor.videoToClip
     const frame = this.#frame
     frame.dt = this.#lastNow < 0 ? 0 : info.now - this.#lastNow
     frame.now = info.now
@@ -427,6 +434,7 @@ export class Engine {
       renderer: this.#compositor.renderer,
       view: this.#compositor,
       maxFaces: this.maxFaces,
+      bindingData: this.#bindingData,
       warn: (message) => this.#warn(message),
     }
   }
@@ -508,12 +516,14 @@ export class Engine {
       has: () => false,
       dispose: () => {},
     }
+    const params = new ParamStore(undefined)
     const ctx: LayerContext = {
       filterId: `pass:${impl.id}`,
       renderer: this.#compositor.renderer,
       view: this.#compositor,
       assets: empty,
-      params: new ParamStore(undefined),
+      params,
+      bindings: { data: this.#bindingData, params: bindingParams(params) },
       maxFaces: this.maxFaces,
       warn: (message) => this.#warn(`Render pass "${impl.id}": ${message}`),
     }
