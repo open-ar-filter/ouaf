@@ -21,3 +21,4 @@ export { validateManifest, formatIssues, type Issue } from '@ouaf/spec'
 // Engine (#11, #12, #17)
 export * from './engine/index.ts'
 export * from './params/index.ts'
+export * from './bindings/index.ts'
