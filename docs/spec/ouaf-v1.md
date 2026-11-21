@@ -190,7 +190,16 @@ Normative behavior:
 - `model.occlusion: "head"`: the part of the object hidden by the head is not drawn (hat, glasses temples).
 - `model.fit`: the object is rescaled so its bounding box has the requested width or height.
 - `model.src: { shape }`: primitives `box`, `sphere`, `torus`, `ring`, `cone`, `cylinder`, `plane`, of size 1, usable without any file.
-- `warp` deforms the image **and** whatever was painted on the face before it (section 7).
+- `warp` deforms the image **and** whatever was painted on the face before it (section 7). Each anchor of each
+  selected face is the center of a disc of `radius` face units (screen heights with `anchor: "screen"`), so the
+  deformation keeps its size relative to the face at any distance; discs stay round on screen. The effect is
+  strongest at the center and fades smoothly to none at the radius. `strength` goes from -1 to 1, a negative value
+  inverting the effect, 0 none: `bulge` magnifies the disc (negative: shrinks it), `pinch` is the opposite of
+  `bulge`, `swirl` turns it counter-clockwise as seen on screen (negative: clockwise), `stretch` drags it along
+  `direction` (negative: against it). `direction` is in the anchor frame (5.1: as seen on screen, turning with the
+  head); only its orientation counts; default `[0, 1]` (up). `opacity` scales the strength. The deformation SHOULD
+  never fold the image over itself. In the reference implementation, at strength 1, `bulge` magnifies the center 4×,
+  `swirl` turns it half a turn and `stretch` moves it by 0.6 radius.
 - `color` works on the sRGB-encoded values of the image (what `.cube` LUTs for photo and video expect), in this
   order, on each channel c in 0–1: `lut` (input mapped from `DOMAIN_MIN`–`DOMAIN_MAX`; `LUT_3D_SIZE` or
   `LUT_1D_SIZE`); `brightness` b: c^(2^−b), black and white unchanged; `contrast` k: (c − ½)(1 + k) + ½;

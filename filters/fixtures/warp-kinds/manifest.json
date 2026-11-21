@@ -1,0 +1,33 @@
+{
+  "ouaf": "1",
+  "id": "warp-kinds",
+  "name": "Warp kinds (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Warp kinds, strengths on sliders: bulge on both eyes, pinched nose, swirl on the forehead, chin stretched down, mouth growing as it opens (jawOpen binding).",
+  "requires": { "face": true },
+  "params": {
+    "eyes": { "type": "number", "default": 0.5, "min": -1, "max": 1, "transition": 300, "label": { "en": "Bulge (eyes)", "fr": "Gonflement (yeux)" } },
+    "nose": { "type": "number", "default": 0.5, "min": -1, "max": 1, "transition": 300, "label": { "en": "Pinch (nose)", "fr": "Pincement (nez)" } },
+    "swirl": { "type": "number", "default": 0, "min": -1, "max": 1, "transition": 300, "label": { "en": "Swirl (forehead)", "fr": "Tourbillon (front)" } },
+    "chin": { "type": "number", "default": 0.6, "min": -1, "max": 1, "transition": 300, "label": { "en": "Stretch (chin)", "fr": "Étirement (menton)" } },
+    "radius": { "type": "number", "default": 0.45, "min": 0.1, "max": 1.5, "label": { "en": "Eye radius", "fr": "Rayon des yeux" } }
+  },
+  "presets": {
+    "none": { "eyes": 0, "nose": 0, "swirl": 0, "chin": 0 },
+    "alien": { "eyes": 1, "nose": 0.8, "swirl": 0, "chin": 1 }
+  },
+  "layers": [
+    { "type": "warp", "kind": "bulge", "anchor": ["leftEye", "rightEye"], "radius": { "param": "radius" }, "strength": { "param": "eyes" } },
+    { "type": "warp", "kind": "pinch", "anchor": "noseTip", "radius": 0.5, "strength": { "param": "nose" } },
+    { "type": "warp", "kind": "swirl", "anchor": "forehead", "radius": 0.9, "strength": { "param": "swirl" } },
+    { "type": "warp", "kind": "stretch", "anchor": "chin", "radius": 0.9, "direction": [0, -1], "strength": { "param": "chin" } },
+    {
+      "type": "warp",
+      "kind": "bulge",
+      "anchor": "mouth",
+      "radius": 0.6,
+      "strength": { "bind": "face.blendshapes.jawOpen", "range": [0.05, 0.5], "to": [0, 0.7], "default": 0 }
+    }
+  ]
+}
