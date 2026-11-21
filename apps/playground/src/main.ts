@@ -43,7 +43,10 @@ const trackRow = row('Track settings', '—')
 const schedulerRow = row('Scheduler', '—')
 const fpsRow = row('Processed frames', '—')
 
-const MAX_FACES = 2
+const params = new URLSearchParams(location.search)
+/** `?maxFaces=N` (1–8, default 2) — multi-face cost spike (#8). */
+const MAX_FACES = Math.min(8, Math.max(1, Math.trunc(Number(params.get('maxFaces'))) || 2))
+row('maxFaces', String(MAX_FACES))
 
 let camera: CameraSource | undefined
 let scheduler: FrameScheduler | undefined
