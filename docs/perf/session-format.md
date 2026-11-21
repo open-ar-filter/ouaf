@@ -79,14 +79,19 @@ Extra columns written by the playground pages:
 
 | Page | Column | Unit | Meaning |
 |------|--------|------|---------|
-| `spikes/gl-share.html` (#7) | `segmentationMs` | ms | Main-thread time of `ImageSegmenter.segmentForVideo` until its callback runs (GPU work may still be queued) |
-| | `transferMs` | ms | Getting the mask into the renderer: `getAsWebGLTexture` + `resetState` (`shared`), `getAsFloat32Array` readback (`cpu`), blit + `copyExternalImageToTexture` or readback + `writeTexture` (`webgpu`) |
-| | `uploadMs` | ms | `cpu` path: texture upload of the read-back mask (`initTexture`); `null` elsewhere |
-| | `readbacks` | count | Synchronous GPU→CPU readbacks during the frame: `readPixels`, `getBufferSubData`, `clientWaitSync` calls (all WebGL contexts of the page) plus `MPMask.getAsFloat32Array` / `getAsUint8Array` calls |
-| | `readbackBytes` | bytes | Bytes requested by those `readPixels` / `getBufferSubData` calls |
+| `spikes/gl-share.html` (#7) | `segmentationMs` | ms | Main-thread time of `ImageSegmenter.segmentForVideo` until its callback runs (GPU delegate: submission only, the GPU work may still be queued) |
+| | `transferMs` | ms | Getting the mask out of MediaPipe: `getAsWebGLTexture` + `resetState` (`shared`), `getAsFloat32Array` readback (`cpu`, `webgpu&copy=readback`, incl. byte conversion), drawing it into MediaPipe's canvas (`webgpu`) |
+| | `uploadMs` | ms | Getting it into the renderer: texture upload (`cpu`, `initTexture`), `copyExternalImageToTexture` (`webgpu`) or `writeTexture` (`webgpu&copy=readback`); `null` for `shared` |
+| | `pipelineMs` | ms | Whole frame on the main thread: face tracking (when enabled), segmentation, transfer, upload, render |
+| | `readbacks` | count | `readPixels` / `getBufferSubData` calls during the frame, in every WebGL context of the page |
+| | `readbackBytes` | bytes | Bytes requested by those calls |
+| | `syncCalls` | count | Calls that wait on the GPU without transferring data: `clientWaitSync` with a timeout, `finish`, `getError`, `checkFramebufferStatus` |
+| | `maskReads` | count | `MPMask.getAsFloat32Array` / `getAsUint8Array` calls made by the page |
 
-The spike page also adds its variant to `app` (`path`, `copy`, `reset`, `delegate`, mask size and format, context
-count…).
+In that page the built-in `trackingMs` is the MediaPipe inference time (segmentation, plus face tracking with
+`face=…`) and `renderMs` the three.js draw only. The page also adds its variant to `app` (`path`, `copy`, `reset`,
+`delegate`, `mask` size and storage, `adapter`, `contexts` created by the page and `pipelineContexts` created by the
+variant, `autoResizeDisabled`…) and logs the alignment check result as a `note` event.
 
 A 10-minute run at 30 fps is about 18 000 samples, roughly 0.6 MB of JSON (more with extra columns).
 
