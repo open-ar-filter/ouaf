@@ -114,7 +114,7 @@ by more than about one frame.
 ## #7 — Shared WebGL context (GPU-side masks)
 
 Goal: confirm (or not) that a MediaPipe segmentation mask can feed the WebGL2 renderer without any CPU readback when
-both share one context, and what the WebGPU alternative costs (#7 decision).
+both share one context, and what the WebGPU alternative costs (#7 decision). Decision: [`gl-share.md`](gl-share.md).
 
 Page: `/spikes/gl-share.html`. Camera → ImageSegmenter (selfie segmenter, VIDEO mode, confidence mask) → three.js
 render that blurs and tints the background behind the person. The panel shows, besides the usual cells, `seg`,
