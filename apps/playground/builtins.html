@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta http-equiv="Content-Security-Policy" content="connect-src 'self' ws: wss:" />
+    <title>Ouaf built-ins</title>
+    <style>
+      :root { font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 16px; max-width: 960px; }
+      section { margin: 24px 0; }
+      textarea, input[type='text'] { font: inherit; width: 100%; box-sizing: border-box; padding: 6px; }
+      select, button { font: inherit; padding: 6px 12px; }
+      .font-row { display: grid; grid-template-columns: 12em 1fr; gap: 12px; align-items: baseline; padding: 6px 0;
+        border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
+      .font-row .name { font-size: 12px; opacity: 0.7; }
+      .font-row .sample { font-size: 28px; overflow-wrap: anywhere; }
+      .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 8px 0; }
+      canvas { display: block; max-width: 100%; }
+      #lut-canvas { width: 100%; max-width: 640px; background: #000; touch-action: none; }
+      video { position: fixed; top: 0; left: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+      .lut-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+      .lut-buttons button[aria-pressed='true'] { outline: 2px solid currentColor; }
+    </style>
+  </head>
+  <body>
+    <h1>Ouaf built-ins</h1>
+    <p>Built-in resources of <code>@ouaf/builtins</code> (#65), loaded lazily from <code>/builtins/</code>.</p>
+
+    <section>
+      <h2>Fonts</h2>
+      <input id="font-text" type="text" />
+      <div id="fonts"></div>
+    </section>
+
+    <section>
+      <h2>LUTs</h2>
+      <div class="controls">
+        <label>Source <select id="lut-source"></select></label>
+        <button id="camera" type="button">Camera</button>
+      </div>
+      <div class="lut-buttons" id="luts"></div>
+      <p>Drag on the image to move the split (left: original, right: graded).</p>
+      <canvas id="lut-canvas"></canvas>
+      <video id="video" muted playsinline loop></video>
+    </section>
+
+    <script type="module" src="/src/builtins/main.ts"></script>
+  </body>
+</html>

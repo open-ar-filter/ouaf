@@ -32,6 +32,12 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
     dir: resolve(here, '../../test-media'),
     files: /^[\w-]+\.mp4$/,
   },
+  // Built-in resources (#65), lazy-loaded by URL: `assetsBaseUrl` is `<base>builtins/` (see @ouaf/builtins).
+  ...['fonts', 'luts'].map((dir) => ({
+    prefix: `builtins/${dir}/`,
+    dir: resolve(here, '../../packages/builtins/assets', dir),
+    files: /^[\w-]+\.(woff2|cube)$/,
+  })),
   {
     // Filter folders (demos #37, test fixtures), committed at the repository root: `/filters/<id>/manifest.json`.
     prefix: 'filters/',
@@ -65,6 +71,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.glb': 'model/gltf-binary',
   '.gltf': 'model/gltf+json',
   '.woff2': 'font/woff2',
+  '.cube': 'text/plain; charset=utf-8',
 }
 
 function listFiles(dir: string, files: RegExp, nested = false): string[] {
@@ -137,9 +144,13 @@ function selfHostedAssets(): Plugin {
   }
 }
 
-/** Extra pages: the engine page, and every `spikes/*.html` as a separate entry (one page per phase 0 spike). */
+/** Extra pages: the engine and built-ins pages, and every `spikes/*.html` as a separate entry (one page per phase 0 spike). */
 function pages(): Record<string, string> {
-  const input: Record<string, string> = { main: resolve(here, 'index.html'), engine: resolve(here, 'engine.html') }
+  const input: Record<string, string> = {
+    main: resolve(here, 'index.html'),
+    engine: resolve(here, 'engine.html'),
+    builtins: resolve(here, 'builtins.html'),
+  }
   const dir = resolve(here, 'spikes')
   for (const name of listFiles(dir, /\.html$/)) input[`spikes/${name.replace(/\.html$/, '')}`] = join(dir, name)
   return input
