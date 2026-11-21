@@ -8,3 +8,4 @@ dist/
 /test-media/.work/
 /test-results/
 /playwright-report/
+/packages/builtins/.work/
