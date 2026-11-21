@@ -12,6 +12,7 @@
  * One frame (spec §7, §9): new camera frame → submit it to tracking (eager, shared by the stack) → apply the queued
  * param changes of every filter → update every layer with the latest tracking result → render the stages.
  */
+import { resolveBuiltin } from '@ouaf/builtins'
 import { createRegistry, extendRegistry, type SpecRegistry, type Stage } from '@ouaf/spec'
 import { createFaceFrame, type FaceFrame } from '../face.ts'
 import { FrameScheduler, type VideoFrameInfo } from '../scheduler.ts'
@@ -50,8 +51,9 @@ export interface EngineOptions {
   /** Canvas the engine renders into (it creates a WebGL2 context on it). Size it with CSS. */
   canvas: HTMLCanvasElement | OffscreenCanvas
   /**
-   * Base URL of the engine's self-hosted files: tracking models and wasm, built-in fonts and LUTs. Nothing is fetched
-   * from anywhere else (docs/privacy.md). Relative URLs resolve against the page.
+   * Base URL of the engine's self-hosted files: tracking models and wasm, built-in fonts and LUTs (the `assets/`
+   * folder of `@ouaf/builtins`, served under `<assetsBaseUrl>builtins/`). Nothing is fetched from anywhere else
+   * (docs/privacy.md). Relative URLs resolve against the page.
    */
   assetsBaseUrl: string
   /** Maximum number of tracked faces (spec §5.4). Default: 1. */
@@ -494,7 +496,7 @@ export class Engine {
       registry: this.registry,
       layerTypes: this.#layerTypes,
       loaders: this.#loaders,
-      builtinUrl: (name) => new URL(`builtin/${name}`, this.assetsBaseUrl).href,
+      builtinUrl: (name) => resolveBuiltin(`builtin:${name}`, new URL('builtins/', this.assetsBaseUrl)).href,
       fetchImpl: this.#fetch,
       renderer: this.#compositor.renderer,
       view: this.#compositor,

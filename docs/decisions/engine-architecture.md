@@ -65,7 +65,8 @@ tracker; each v1 layer type is added there as its own plugin. Built-in plugins a
 (asset name, `assets/…` path, `builtin:…`; remote URLs refused) and preloads them all with the loader registered for
 their kind **before** the filter is activated (spec §10.4). The layer gets them with `ctx.assets.get(ref)`. Loaders
 are registered per kind by the plugin that owns the format (images and videos: sticker; glTF: model; `.cube`: color;
-fonts: text). The core loads `data` (JSON) and `shader` (text).
+fonts: text). The core loads `data` (JSON) and `shader` (text). Built-in resources (`builtin:lut/noir`) are fetched
+from `<assetsBaseUrl>builtins/`, where the host serves the `assets/` folder of `@ouaf/builtins` (`resolveBuiltin`).
 
 `ctx` (`LayerContext`) gives the WebGL renderer, the objects camera, the preloaded assets, the params (read-only:
 resolve a parameter once with `ctx.params.indexOf`, read its animated value each frame with `numberAt`) and `maxFaces`. `frame` (`FrameContext`, valid during the call only) gives `time`, `now`, `dt`, the latest `faces`
@@ -108,7 +109,6 @@ the age of a worker tracker's results. Layers and bindings read these predicted 
 | Face tracker | MediaPipe tasks-vision, main thread | LiteRT.js pipeline in a worker (face-runtime.md, tracking-worker.md) |
 | Scripts, `send`, `filter:<name>` | warning, no-op | #26 sandbox |
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
-| Built-in resources (`builtin:`) | `<assetsBaseUrl>/builtin/<name>` | #65 layout |
 
 ## Testing a layer type
 
