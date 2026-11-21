@@ -8,6 +8,7 @@ import { IncompatibleEngineError, InvalidManifestError, MissingPluginError, Ouaf
 import { preloadAssets, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
 import type { LayerContext, LayerDecl, LayerInstance, LayerTypeImpl, ObjectsView } from './layer-type.ts'
 import type { BindingDataSource, ParamsReader } from '../bindings/index.ts'
+import { ExpressionEventDetector, type EventSide, type ExpressionEventName } from '../expressions/index.ts'
 import { ParamStore, type ParamChange, type ParamValue, type SelectOptions, type SetParamOptions } from '../params/index.ts'
 import { parsePluginRequirement } from './plugin.ts'
 import type { WebGLRenderer } from 'three'
@@ -16,6 +17,20 @@ import type { WebGLRenderer } from 'three'
 export interface FilterEvents extends Record<string, unknown> {
   /** A parameter changed (applied at the start of a frame, spec §9). */
   paramChange: ParamChange
+  /**
+   * A derived face event delivered to the filter (spec §13: `blink`, `wink`, `smile`, `mouthOpen`, `nod`,
+   * `faceEnter`…), with the filter's own `events` tuning. Scripts receive the same events (#26); hosts may observe
+   * them, e.g. to react in their own UI.
+   */
+  expression: ExpressionEventPayload
+}
+
+export interface ExpressionEventPayload {
+  name: ExpressionEventName
+  /** Stable id of the face (spec §5.4). */
+  faceId: number
+  /** `wink` only: the person's side of the closed eye. */
+  side: EventSide | null
 }
 
 export interface FilterHandle {
@@ -89,6 +104,8 @@ export class FilterInstance {
   readonly needsFace: boolean
   readonly needsBlendshapes: boolean
   readonly events: Emitter<FilterEvents>
+  /** Expression detectors with the filter's tuning (spec §13); only for face filters. */
+  readonly expressions: ExpressionEventDetector | undefined
   enabled = true
   disposed = false
 
@@ -101,6 +118,7 @@ export class FilterInstance {
     assets: PreloadedAssets
     warnings: string[]
     onListenerError: (error: unknown) => void
+    maxFaces: number
   }) {
     this.key = init.key
     this.manifest = init.manifest
@@ -112,6 +130,7 @@ export class FilterInstance {
     this.needsFace = !!init.manifest.requires.face
     this.needsBlendshapes = this.needsFace && (!!init.manifest.requires.blendshapes || usesBlendshapes(init.manifest))
     this.events = new Emitter(init.onListenerError)
+    this.expressions = this.needsFace ? new ExpressionEventDetector({ maxFaces: init.maxFaces, events: init.manifest.events }) : undefined
     // Changes are committed by `params.beginFrame`, at the start of a frame (spec §9).
     this.params.onChange((change) => this.events.emit('paramChange', change))
   }
@@ -219,7 +238,7 @@ export async function loadFilter(
     params.dispose()
     throw error
   }
-  return new FilterInstance({ key, manifest, source: source.label, params, layers, assets, warnings, onListenerError: (e) => env.warn(String(e)) })
+  return new FilterInstance({ key, manifest, source: source.label, params, layers, assets, warnings, maxFaces: env.maxFaces, onListenerError: (e) => env.warn(String(e)) })
 }
 
 /**

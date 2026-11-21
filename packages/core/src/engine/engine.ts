@@ -18,6 +18,7 @@ import { FrameScheduler, type VideoFrameInfo } from '../scheduler.ts'
 import type { VideoSource } from '../video-source.ts'
 import type { FitMode } from '../viewport.ts'
 import { FaceIdentityTracker, FaceSmoother } from '../anchoring/index.ts'
+import { createSignals, readExpressionSignals } from '../expressions/index.ts'
 import { FaceAnchors } from './anchor-provider.ts'
 import { CORE_LOADERS, memorySource, urlSource, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
 import { builtinPlugins } from './builtin.ts'
@@ -140,6 +141,8 @@ export class Engine {
   #smoothed: FaceFrame
   #drawn: FaceFrame
   #seenResults = 0
+  /** Expression signals of the latest result, shared by every filter's detector (spec §13). */
+  #signals: Float32Array
   #bindingData = new FaceBindingData(createFaceFrame(1))
   #tracking: TrackingHub
   #fetch: typeof fetch
@@ -180,6 +183,7 @@ export class Engine {
     this.#smoother = new FaceSmoother(this.#identity)
     this.#smoothed = createFaceFrame(maxFaces)
     this.#drawn = createFaceFrame(maxFaces)
+    this.#signals = createSignals(maxFaces)
     for (const loader of CORE_LOADERS) for (const kind of loader.kinds) this.#loaders.set(kind, loader)
 
     for (const plugin of options.builtins === false ? [] : builtinPlugins()) this.use(plugin)
@@ -427,9 +431,34 @@ export class Engine {
       this.#seenResults = tracking.results
       this.#identity.update(raw, raw.mediaTime)
       this.#smoother.update(raw, raw.mediaTime, this.#smoothed)
+      this.#detectExpressions(raw.mediaTime * 1000)
     }
     this.#smoother.predict(this.#smoothed, time, this.#drawn)
     return this.#drawn
+  }
+
+  /**
+   * Runs every enabled face filter's expression detectors on the new result and delivers the events (spec §13).
+   * `faceEnter` / `faceLeave` come from face identity, which applies the grace delay (spec §5.4).
+   */
+  #detectExpressions(timeMs: number): void {
+    const faces = this.#smoothed
+    const identity = this.#identity
+    readExpressionSignals(faces, this.#signals)
+    for (let i = 0; i < this.#stack.length; i++) {
+      const filter = this.#stack[i]!
+      const detector = filter.expressions
+      if (!detector || !filter.enabled) continue
+      const out = detector.update(timeMs, identity.count, identity.ids, this.#signals)
+      if (!filter.events.has('expression')) continue
+      for (let e = 0; e < out.count; e++) {
+        const ev = out.items[e]!
+        if (ev.name === 'faceEnter' || ev.name === 'faceLeave') continue
+        filter.events.emit('expression', { name: ev.name, faceId: ev.faceId, side: ev.side })
+      }
+      for (let e = 0; e < identity.enteredCount; e++) filter.events.emit('expression', { name: 'faceEnter', faceId: identity.entered[e]!, side: null })
+      for (let e = 0; e < identity.leftCount; e++) filter.events.emit('expression', { name: 'faceLeave', faceId: identity.left[e]!, side: null })
+    }
   }
 
   #recordStats(now: number, ms: number, faces: number): void {

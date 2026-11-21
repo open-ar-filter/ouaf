@@ -29,7 +29,8 @@ A failed `addFilter`/`setFilters` leaves the stack unchanged. Compatibility (spe
 camera frame (FrameScheduler, requestVideoFrameCallback)
  → tracking.submit(video)        eager, one frame in flight, shared by the stack (spec §7)
  → params.beginFrame(mediaTime)   per filter: transitions advance, queued changes commit, paramChange fires
- → identity + smoothing        on each new tracking result (media time of the analysed frame)
+ → identity + smoothing        on each new tracking result (time of the analysed frame)
+ → expression detectors        per face filter, with its `events` tuning → handle.on('expression') (spec §13)
  → prediction to the displayed frame, anchors.setFrame(predicted faces, ids, mirrored)
  → layer.update(frame)           every layer of every enabled filter, then plugin render passes
  → compositor.render(stages)

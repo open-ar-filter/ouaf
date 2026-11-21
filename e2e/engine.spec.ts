@@ -164,3 +164,11 @@ test('bindings drive layer properties from tracking data', async ({ page }) => {
   })
   await expect.poll(async () => (await sample(page)).b, { timeout: 30_000 }).toBeLessThan(5)
 })
+
+test('expression events reach the filter handle', async ({ page }) => {
+  await page.goto(`/engine.html?source=pesquet-talk&autostart&filter=${FIXTURE}`)
+  // faceEnter comes from face identity as soon as the face is tracked.
+  await expect.poll(() => page.evaluate(() => window.ouaf?.events.map((e) => e.name) ?? []), POLL).toContain('faceEnter')
+  const first = await page.evaluate(() => window.ouaf!.events.find((e) => e.name === 'faceEnter'))
+  expect(first).toEqual({ name: 'faceEnter', faceId: 1, side: null })
+})

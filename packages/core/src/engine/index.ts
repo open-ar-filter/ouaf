@@ -1,6 +1,6 @@
 export { Engine, createEngine, ENGINE_VERSION } from './engine.ts'
 export type { EngineEvents, EngineOptions, EngineStats, EngineWarning, FilterEvent, FilterInput, FilterSpec, PerformanceEvent, SourceInput } from './engine.ts'
-export type { FilterEvents, FilterHandle } from './filter.ts'
+export type { ExpressionEventPayload, FilterEvents, FilterHandle } from './filter.ts'
 export * from './errors.ts'
 export * from './plugin.ts'
 export * from './layer-type.ts'
