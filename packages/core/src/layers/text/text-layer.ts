@@ -1,0 +1,245 @@
+/**
+ * The `text` layer type (spec §6.3): text drawn with Canvas 2D into a texture, on a plane attached to an anchor
+ * (spec §5, §6.2).
+ *
+ * - The texture is redrawn only when the text, its color or its wrap width change (`TextRaster`); the transform
+ *   (`offset`, `rotation`, `size`), `opacity` and `visible` are applied on the GPU side every frame.
+ * - One plane per selected face (`faces`). When neither `text` nor `color` (nor `size`, with `maxWidth`) reads face
+ *   data, every face shares one texture; otherwise each face slot has its own.
+ * - `size` is the font size (em) in anchor units; the anchor point is on the alignment edge of the text block
+ *   (left edge for `align: "left"`, centre, right edge), at its vertical middle.
+ * - `orient: "screen"`: the plane stays parallel to the screen, upright, at the anchor's position and scale.
+ */
+import { NO_FACE, compileBinding, compileNumberBinding, type CompiledBinding, type NumberBinding } from '../../bindings/index.ts'
+import type { FrameContext, LayerContext, LayerDecl, ObjectLayer } from '../../engine/layer-type.ts'
+import type { AnchorFollow } from '../../anchors.ts'
+import {
+  CanvasTexture,
+  Euler,
+  Group,
+  MathUtils,
+  Matrix4,
+  Mesh,
+  MeshBasicMaterial,
+  PlaneGeometry,
+  Quaternion,
+  SRGBColorSpace,
+  Vector3,
+} from 'three'
+import { selectFaces, type FacesSelector } from './faces.ts'
+import type { LoadedFont } from './font-loader.ts'
+import type { TextAlign } from './layout.ts'
+import { TextRaster, type SurfaceFactory, type TextContext, type TextStyle } from './raster.ts'
+
+export const DEFAULT_FONT = 'builtin:font/sans-bold'
+/** Shadow defaults, relative to the font size (the schema leaves them open). */
+export const DEFAULT_SHADOW_BLUR = 0.1
+export const DEFAULT_SHADOW_OFFSET: readonly [number, number] = [0.04, -0.04]
+
+/** The font reference of a text layer declaration. */
+export function textFontRef(decl: LayerDecl): string {
+  return typeof decl.font === 'string' ? decl.font : DEFAULT_FONT
+}
+
+/** A canvas element in a page, an `OffscreenCanvas` in a worker (the font set of each is where the font loader adds the face). */
+export const defaultSurface: SurfaceFactory = () => {
+  const canvas: HTMLCanvasElement | OffscreenCanvas =
+    typeof document !== 'undefined' ? document.createElement('canvas') : new OffscreenCanvas(1, 1)
+  canvas.width = 1
+  canvas.height = 1
+  const ctx = canvas.getContext('2d') as TextContext | null
+  if (!ctx) throw new Error('text layer: no 2D canvas context available.')
+  return { canvas, ctx }
+}
+
+/** The style of a validated declaration (everything that is not bindable). */
+export function textStyle(decl: LayerDecl, font: Pick<LoadedFont, 'family' | 'weight' | 'style'>): TextStyle {
+  const outline = decl.outline as { width: number; color: string } | undefined
+  const shadow = decl.shadow as { color: string; blur?: number; offset?: [number, number] } | undefined
+  return {
+    family: font.family,
+    weight: font.weight,
+    style: font.style,
+    align: (decl.align as TextAlign | undefined) ?? 'center',
+    lineHeight: typeof decl.lineHeight === 'number' ? decl.lineHeight : 1.2,
+    outline: outline && outline.width > 0 ? { width: outline.width, color: outline.color } : undefined,
+    shadow: shadow && { color: shadow.color, blur: shadow.blur ?? DEFAULT_SHADOW_BLUR, offset: shadow.offset ?? DEFAULT_SHADOW_OFFSET },
+  }
+}
+
+export interface TextLayerOptions {
+  /** Canvas factory (tests); default `defaultSurface`. */
+  surface?: SurfaceFactory
+}
+
+interface Slot {
+  raster: TextRaster
+  texture: CanvasTexture<OffscreenCanvas>
+}
+
+export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: TextLayerOptions = {}): ObjectLayer {
+  const font = ctx.assets.get<LoadedFont>(textFontRef(decl))
+  const style = textStyle(decl, font)
+  const env = ctx.bindings
+  const at = (p: string) => (decl.id ? `${decl.id}.${p}` : p)
+
+  const text: CompiledBinding<string> = compileBinding(decl.text, { type: 'string', fallback: '', path: at('text') }, env)
+  const color: CompiledBinding<string> = compileBinding(decl.color ?? '#ffffff', { type: 'color', fallback: '#ffffff', path: at('color') }, env)
+  const size: NumberBinding = compileNumberBinding(decl.size ?? 0.3, { fallback: 0.3, path: at('size') }, env)
+  const opacity: NumberBinding = compileNumberBinding(decl.opacity ?? 1, { fallback: 1, path: at('opacity') }, env)
+  const visible: CompiledBinding<boolean> = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: at('visible') }, env)
+  const zero = [0, 0, 0] as const
+  const offset = compileBinding(decl.offset ?? zero, { type: 'vec3', fallback: zero, path: at('offset') }, env)
+  const rotation = compileBinding(decl.rotation ?? zero, { type: 'vec3', fallback: zero, path: at('rotation') }, env)
+
+  const anchor = typeof decl.anchor === 'string' ? decl.anchor : 'head'
+  const onScreen = anchor === 'screen'
+  const follow = (decl.follow as AnchorFollow | 'auto' | undefined) ?? 'auto'
+  const faces = (decl.faces as FacesSelector | undefined) ?? 'all'
+  const orientScreen = decl.orient === 'screen'
+  const overlay = decl.overlay === true
+  const maxWidth = typeof decl.maxWidth === 'number' ? decl.maxWidth : undefined
+
+  // Instances: one for the screen, else as many as the selector can pick.
+  const instances = onScreen ? 1 : faces === 'all' ? ctx.maxFaces : faces === 'first' || faces === 'largest' ? 1 : Math.min(faces, ctx.maxFaces)
+  // One texture per instance only when the drawn content can differ between faces.
+  const perFace = text.perFace || color.perFace || (maxWidth !== undefined && size.perFace)
+  const createSurface = options.surface ?? defaultSurface
+  const slots: Slot[] = []
+  for (let i = 0; i < (perFace ? instances : 1); i++) {
+    const raster = new TextRaster(style, createSurface)
+    const texture = new CanvasTexture(raster.surface.canvas as OffscreenCanvas)
+    texture.colorSpace = SRGBColorSpace
+    slots.push({ raster, texture })
+  }
+
+  const root = new Group()
+  const geometry = new PlaneGeometry(1, 1)
+  const meshes: Mesh<PlaneGeometry, MeshBasicMaterial>[] = []
+  for (let i = 0; i < instances; i++) {
+    const material = new MeshBasicMaterial({
+      map: slots[perFace ? i : 0]!.texture,
+      transparent: true,
+      depthWrite: false,
+      // The overlay is drawn on top of everything (spec §6.2).
+      depthTest: !overlay,
+      toneMapped: false,
+    })
+    const mesh = new Mesh(geometry, material)
+    mesh.matrixAutoUpdate = false
+    mesh.frustumCulled = false
+    mesh.visible = false
+    root.add(mesh)
+    meshes.push(mesh)
+  }
+
+  // Per-frame scratch, allocated once.
+  const maxFaces = ctx.maxFaces
+  const anchorMatrices = Array.from({ length: maxFaces }, () => new Matrix4())
+  const ok = new Uint8Array(maxFaces)
+  const apparent = new Float64Array(maxFaces)
+  const selected = new Int32Array(instances)
+  const num = new Float64Array(2)
+  const euler = new Euler()
+  const quat = new Quaternion()
+  const pos = new Vector3()
+  const scl = new Vector3()
+  const local = new Matrix4()
+  const plane = new Matrix4()
+  const screenMatrix = new Matrix4()
+  let frameRef: FrameContext | undefined
+  const idOf = (slot: number) => frameRef!.anchors.id(slot)
+
+  /** Redraws the slot's texture if needed; false when there is nothing to draw. */
+  const refresh = (slot: Slot, face: number, sizeValue: number): boolean => {
+    const content = text.evaluate(face)
+    const wrap = maxWidth === undefined ? Infinity : maxWidth / sizeValue
+    if (slot.raster.update(content, color.evaluate(face), wrap)) {
+      const { raster, texture } = slot
+      if (raster.resized) texture.dispose() // the GPU texture is reallocated at the new canvas size
+      texture.repeat.set(raster.uScale, raster.vScale)
+      texture.offset.set(0, 1 - raster.vScale) // the image is at the top of the canvas (flipY)
+      texture.needsUpdate = true
+    }
+    return content !== ''
+  }
+
+  const place = (mesh: Mesh, face: number, anchorMatrix: Matrix4, raster: TextRaster, sizeValue: number) => {
+    const off = offset.evaluate(face)
+    const rot = rotation.evaluate(face)
+    euler.set(MathUtils.degToRad(rot[0]), MathUtils.degToRad(rot[1]), MathUtils.degToRad(rot[2]))
+    quat.setFromEuler(euler)
+    // The plane in em: its centre relative to the anchor point, its size.
+    const w = raster.width
+    const h = raster.height
+    plane.set(w, 0, 0, w / 2 - raster.originX, 0, h, 0, raster.originY - h / 2, 0, 0, 1, 0, 0, 0, 0, 1)
+    if (orientScreen && !onScreen) {
+      // Position and scale of the anchor (offset in the anchor frame), axes of the screen.
+      pos.set(off[0], off[1], off[2]).applyMatrix4(anchorMatrix)
+      const unit = scl.setFromMatrixColumn(anchorMatrix, 0).length()
+      scl.setScalar(unit * sizeValue)
+      mesh.matrix.compose(pos, quat, scl).multiply(plane)
+    } else {
+      pos.set(off[0], off[1], off[2])
+      scl.setScalar(sizeValue)
+      local.compose(pos, quat, scl)
+      mesh.matrix.multiplyMatrices(anchorMatrix, local).multiply(plane)
+    }
+  }
+
+  return {
+    kind: 'object',
+    stage: overlay ? 'overlay' : 'objects',
+    object: root,
+    excludeFromCapture: overlay && decl.excludeFromCapture === true,
+    update(frame) {
+      frameRef = frame
+      let n: number
+      if (onScreen) {
+        frame.anchors.screen(screenMatrix)
+        selected[0] = frame.faces.count > 0 ? 0 : NO_FACE
+        n = 1
+      } else {
+        const count = Math.min(frame.faces.count, maxFaces)
+        for (let i = 0; i < count; i++) {
+          const m = anchorMatrices[i]!
+          ok[i] = frame.anchors.face(i, anchor, follow, m) ? 1 : 0
+          // Apparent size: scale of the anchor frame over its distance to the camera.
+          const e = m.elements
+          apparent[i] = ok[i] ? Math.hypot(e[0]!, e[1]!, e[2]!) / Math.max(1e-6, -e[14]!) : 0
+        }
+        n = selectFaces(faces, count, ok, idOf, apparent, selected)
+      }
+      for (let k = 0; k < meshes.length; k++) {
+        const mesh = meshes[k]!
+        if (k >= n) {
+          mesh.visible = false
+          continue
+        }
+        const face = selected[k]!
+        opacity.write(face, num, 0)
+        size.write(face, num, 1)
+        const alpha = num[0]!
+        const sizeValue = num[1]!
+        if (!visible.evaluate(face) || !(alpha > 0) || !(sizeValue > 0)) {
+          mesh.visible = false
+          continue
+        }
+        const slot = slots[perFace ? k : 0]!
+        if (!refresh(slot, face, sizeValue)) {
+          mesh.visible = false
+          continue
+        }
+        mesh.material.opacity = Math.min(1, alpha)
+        place(mesh, face, onScreen ? screenMatrix : anchorMatrices[face]!, slot.raster, sizeValue)
+        mesh.visible = true
+      }
+      frameRef = undefined
+    },
+    dispose() {
+      geometry.dispose()
+      for (const m of meshes) m.material.dispose()
+      for (const s of slots) s.texture.dispose()
+    },
+  }
+}

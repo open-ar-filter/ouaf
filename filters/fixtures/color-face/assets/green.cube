@@ -1,0 +1,13 @@
+# Every input color to pure green (2x2x2 grid, explicit domain).
+TITLE "green"
+LUT_3D_SIZE 2
+DOMAIN_MIN 0 0 0
+DOMAIN_MAX 1 1 1
+0 1 0
+0 1 0
+0 1 0
+0 1 0
+0 1 0
+0 1 0
+0 1 0
+0 1 0

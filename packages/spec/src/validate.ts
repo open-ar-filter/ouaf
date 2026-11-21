@@ -445,6 +445,7 @@ function checkLayers(ctx: Ctx) {
     structural(def.schema, layer, path, ctx.errors)
     if (ctx.errors.length === before) walk(ctx, layer, def.schema, path)
     if (def.anchored && layer.anchor === undefined) ctx.usesFace = true // default anchor: "head"
+    if (layer.type === 'color' && layer.region === 'face') ctx.usesFace = true // masked by the tracked face ovals
     if (layer.id !== undefined) {
       if (ids.has(layer.id)) err(ctx, 'duplicate-id', `${path}/id`, `Duplicate layer id "${layer.id}" (already used by /layers/${ids.get(layer.id)}).`)
       ids.set(layer.id, i)

@@ -1,0 +1,53 @@
+{
+  "ouaf": "1",
+  "id": "text",
+  "name": "Text layers (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Browser-test fixture of the text layer (#19): an upright label above the head, a wrapped caption, a score overlay.",
+  "requires": { "face": true },
+  "params": {
+    "label": { "type": "string", "default": "OUAF!", "label": { "en": "Label", "fr": "Étiquette" } },
+    "fade": { "type": "number", "default": 1, "min": 0, "max": 1, "transition": 300, "label": { "en": "Opacity", "fr": "Opacité" } },
+    "size": { "type": "number", "default": 0.7, "min": 0.2, "max": 1.5, "label": { "en": "Size", "fr": "Taille" } }
+  },
+  "layers": [
+    {
+      "type": "text",
+      "id": "label",
+      "text": { "param": "label" },
+      "anchor": "forehead",
+      "offset": [0, 0.9, 0],
+      "orient": "screen",
+      "size": { "param": "size" },
+      "opacity": { "param": "fade" },
+      "color": "#00ff00",
+      "outline": { "width": 0.08, "color": "#000000" },
+      "shadow": { "color": "#00000099", "blur": 0.15, "offset": [0.05, -0.05] }
+    },
+    {
+      "type": "text",
+      "text": "Hello, I am a caption wrapped at maxWidth 😎",
+      "anchor": "chin",
+      "offset": [0, -0.6, 0.2],
+      "size": 0.35,
+      "font": "builtin:font/handwritten",
+      "color": "#ffffff",
+      "outline": { "width": 0.06, "color": "#3050ff" },
+      "maxWidth": 3,
+      "align": "left",
+      "lineHeight": 1.1
+    },
+    {
+      "type": "text",
+      "id": "score",
+      "text": "SCORE 42",
+      "anchor": "screen",
+      "offset": [0, -0.4, 0],
+      "size": 0.08,
+      "font": "builtin:font/mono",
+      "color": "#ff00ff",
+      "overlay": true
+    }
+  ]
+}

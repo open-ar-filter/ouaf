@@ -7,7 +7,9 @@
 import { createFaceTracker } from '../face-tracker.ts'
 import type { FaceTracker } from '../face.ts'
 import type { FaceTrackerImpl, FrameTracker, OuafPlugin } from './plugin.ts'
+import { colorPlugin } from '../layers/color/index.ts'
 import { stickerPlugin } from '../layers/sticker/index.ts'
+import { textPlugin } from '../layers/text/index.ts'
 
 /**
  * Face tracker on MediaPipe tasks-vision, on the main thread (phase 0 tracker). PROVISIONAL: the default tracker
@@ -50,5 +52,10 @@ export const facePlugin: OuafPlugin = {
 
 /** The plugins `createEngine` installs by default, in order. */
 export function builtinPlugins(): OuafPlugin[] {
-  return [facePlugin, stickerPlugin]
+  return [
+    facePlugin,
+    textPlugin,
+    stickerPlugin,
+    colorPlugin,
+  ]
 }

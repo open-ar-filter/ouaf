@@ -1,0 +1,36 @@
+{
+  "ouaf": "1",
+  "id": "color-grade",
+  "name": "Color grade (color layer fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Color layer fixture: a built-in LUT, then every adjustment of the color layer, each driven by a param (all neutral by default).",
+  "requires": {},
+  "params": {
+    "lut": { "type": "number", "default": 0, "min": 0, "max": 1, "step": 0.05, "label": "Vintage LUT" },
+    "brightness": { "type": "number", "default": 0, "min": -1, "max": 1, "step": 0.05, "label": "Brightness" },
+    "contrast": { "type": "number", "default": 0, "min": -1, "max": 1, "step": 0.05, "label": "Contrast" },
+    "saturation": { "type": "number", "default": 0, "min": -1, "max": 1, "step": 0.05, "label": "Saturation" },
+    "temperature": { "type": "number", "default": 0, "min": -1, "max": 1, "step": 0.05, "label": "Temperature" },
+    "tint": { "type": "color", "default": "#ffffff", "label": "Tint" },
+    "vignette": { "type": "number", "default": 0, "min": 0, "max": 1, "step": 0.05, "label": "Vignette" },
+    "grain": { "type": "number", "default": 0, "min": 0, "max": 1, "step": 0.05, "label": "Grain" }
+  },
+  "presets": {
+    "warm-film": { "lut": 0.6, "contrast": 0.15, "temperature": 0.4, "vignette": 0.5, "grain": 0.3 },
+    "cold": { "saturation": -0.4, "temperature": -0.8, "brightness": -0.1 }
+  },
+  "layers": [
+    { "type": "color", "lut": "builtin:lut/vintage", "intensity": { "param": "lut" } },
+    {
+      "type": "color",
+      "brightness": { "param": "brightness" },
+      "contrast": { "param": "contrast" },
+      "saturation": { "param": "saturation" },
+      "temperature": { "param": "temperature" },
+      "tint": { "param": "tint" },
+      "vignette": { "param": "vignette" },
+      "grain": { "param": "grain" }
+    }
+  ]
+}

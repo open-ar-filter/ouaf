@@ -1,9 +1,10 @@
 /**
  * Built-ins page (`/builtins.html`): shows the resources of `@ouaf/builtins` (#65) the way the text and color
- * layers will use them, until those layers exist: the fonts registered with `FontFace`, and the LUTs applied in
- * WebGL 2 to a test clip or the camera.
+ * layers use them: the fonts registered with `FontFace`, and the LUTs (parsed by the color layer's `.cube` loader)
+ * applied in WebGL 2 to a test clip or the camera, side by side with the original.
  */
 import { BUILTIN_ASSETS, resolveBuiltin, type BuiltinFont, type BuiltinLut } from '@ouaf/builtins'
+import { lutTextureData, parseCube } from '@ouaf/core'
 
 const BASE = new URL('builtins/', document.baseURI)
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -48,26 +49,8 @@ fontText.addEventListener('input', () => samples.forEach((s) => (s.textContent =
 
 // --- LUTs ------------------------------------------------------------------------------------------------------
 
-/** `.cube` 3D LUT: grid size and RGB triplets, red varying fastest. */
-function parseCube(text: string): { size: number; data: Float32Array } {
-  let size = 0
-  const values: number[] = []
-  for (const raw of text.split('\n')) {
-    const line = raw.trim()
-    if (!line || line.startsWith('#') || line.startsWith('TITLE') || line.startsWith('DOMAIN_')) continue
-    if (line.startsWith('LUT_3D_SIZE')) {
-      size = Number(line.split(/\s+/)[1])
-      continue
-    }
-    values.push(...line.split(/\s+/).map(Number))
-  }
-  if (!size || values.length !== size ** 3 * 3) throw new Error('Invalid .cube file')
-  const data = new Float32Array(size ** 3 * 4)
-  for (let i = 0; i < size ** 3; i++) {
-    data.set([values[i * 3]!, values[i * 3 + 1]!, values[i * 3 + 2]!, 1], i * 4)
-  }
-  return { size, data }
-}
+/** `.cube` LUT as the color layer loads it (`@ouaf/core`): RGBA half floats, red varying fastest. */
+const loadCube = (text: string) => lutTextureData(parseCube(text))
 
 const lutCanvas = $<HTMLCanvasElement>('lut-canvas')
 const video = $<HTMLVideoElement>('video')
@@ -127,7 +110,7 @@ const uEnabled = gl.getUniformLocation(prog, 'enabled')
 
 let split = 0.5
 let current: string | null = null
-const cubes = new Map<string, Promise<{ size: number; data: Float32Array }>>()
+const cubes = new Map<string, Promise<{ size: number; data: Uint16Array }>>()
 const buttons = new Map<string | null, HTMLButtonElement>()
 
 async function selectLut(name: string | null) {
@@ -135,11 +118,11 @@ async function selectLut(name: string | null) {
   for (const [n, b] of buttons) b.setAttribute('aria-pressed', String(n === name))
   if (!name) return
   let p = cubes.get(name)
-  if (!p) cubes.set(name, (p = fetch(resolveBuiltin(`builtin:${name}`, BASE)).then((r) => r.text()).then(parseCube)))
+  if (!p) cubes.set(name, (p = fetch(resolveBuiltin(`builtin:${name}`, BASE)).then((r) => r.text()).then(loadCube)))
   const { size, data } = await p
   if (current !== name) return
   gl.activeTexture(gl.TEXTURE1)
-  gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, size, size, size, 0, gl.RGBA, gl.FLOAT, data)
+  gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, size, size, size, 0, gl.RGBA, gl.HALF_FLOAT, data)
   gl.uniform1f(uSize, size)
 }
 for (const name of [null, ...luts.map(([n]) => n)]) {
