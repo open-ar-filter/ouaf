@@ -39,4 +39,14 @@ ffmpeg -v error -y \
   -c:v libx264 -profile:v main -crf 16 -g 30 -threads 1 -movflags +faststart -an -fflags +bitexact -flags:v +bitexact \
   "$A/flame.mp4"
 cp "$A/flame.mp4" "$S/flame.mp4"
+
+# Packed-alpha video made by `ouaf pack-alpha` (#64) from a WebM VP9 with alpha: a red disc on blue, opaque in the
+# centre (r < 0.3), half transparent in a ring (0.3–0.42), transparent outside, where the blue must not show.
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+r='hypot(X-W/2,Y-H/2)/H'
+ffmpeg -v error -y \
+  -f lavfi -i "nullsrc=s=128x128:r=10:d=1,format=rgba,geq=r='if(lt($r,0.42),255,0)':g=0:b='if(lt($r,0.42),0,255)':a='if(lt($r,0.3),255,if(lt($r,0.42),128,0))'" \
+  -c:v libvpx-vp9 -pix_fmt yuva420p -b:v 0 -crf 20 "$tmp/ring.webm"
+node ../../packages/cli/src/bin.ts pack-alpha "$tmp/ring.webm" -o "$S/ring.mp4" --overwrite
 ls -l "$A" "$S"

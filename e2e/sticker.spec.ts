@@ -93,6 +93,27 @@ test('screen stickers: image formats, blend modes, packed-alpha video, spriteshe
     .toEqual(['green', 'red'])
 })
 
+test('a video made by `ouaf pack-alpha` shows its transparency in a sticker', async ({ page }) => {
+  // assets/ring.mp4 (make-sticker-assets.sh): `ouaf pack-alpha` of a WebM VP9 with alpha, 0.14 high, over a white
+  // square. Source: a red disc on blue; alpha 1 for r < 0.3 (relative to the height), 0.5 up to 0.42, 0 outside.
+  await page.goto('/engine.html?source=no-face&autostart&filter=/filters/fixtures/sticker-screen/')
+  await page.waitForFunction(() => (window.ouaf?.engine.filters.length ?? 0) > 0 && (window.ouaf?.frames ?? 0) > 0 || (window.ouaf?.errors.length ?? 0) > 0, undefined, { timeout: 60_000 })
+  expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
+
+  const y = -0.38
+  const points: Array<[string, readonly [number, number], RGB, number]> = [
+    ['opaque centre: the color', [0, y], [255, 0, 0], 30],
+    ['half-transparent ring: color and white mixed', [0.36 * 0.14, y], [255, 128, 128], 30],
+    ['transparent corner: the white below, no blue', [0.06, y + 0.06], [255, 255, 255], 20],
+  ]
+  await expect
+    .poll(async () => {
+      const colors = await colorsAt(page, points.map(([, p]) => p))
+      return points.flatMap(([name, , e, t], i) => (near(colors[i]!, e, t) ? [] : [`${name}: ${colors[i]!.join(',')}`]))
+    }, POLL)
+    .toEqual([])
+})
+
 test('face stickers follow the tracked face', async ({ page }) => {
   await page.goto('/engine.html?source=pesquet-closeup&autostart&filter=/filters/fixtures/sticker/')
   await page.waitForFunction(() => ((window.ouaf?.stats?.faces ?? 0) > 0 && (window.ouaf?.stats?.trackingHz ?? 0) > 0) || (window.ouaf?.errors.length ?? 0) > 0, undefined, { timeout: 60_000 })

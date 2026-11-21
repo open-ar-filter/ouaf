@@ -1,7 +1,7 @@
 {
   "name": "@ouaf/cli",
   "version": "0.1.0",
-  "description": "Ouaf (Open Universal AR Filter) command-line tool: validates filter folders and .ouaf packages",
+  "description": "Ouaf (Open Universal AR Filter) command-line tool: validates filter folders and .ouaf packages, packs alpha videos",
   "type": "module",
   "bin": {
     "ouaf": "./src/bin.ts"
