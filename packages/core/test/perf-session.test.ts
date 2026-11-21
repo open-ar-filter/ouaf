@@ -214,6 +214,53 @@ describe('SessionRecorder', () => {
   it('holds 10 minutes at 60 fps by default', () => {
     expect(new SessionRecorder().capacity).toBeGreaterThanOrEqual(10 * 60 * 60)
   })
+
+  it('has no extra columns or statistics by default', () => {
+    const s = setup()
+    s.rec.start()
+    s.frame(10)
+    s.rec.stop()
+    const doc = s.rec.export()
+    expect(Object.keys(doc.samples)).toEqual(['t', 'mediaTime', 'trackingMs', 'renderMs', 'faces'])
+    expect(doc.summary.extra).toBeUndefined()
+    expect(doc.intervals[0]?.extra).toBeUndefined()
+  })
+
+  it('records extra columns, with NaN for missing values excluded from their statistics', () => {
+    const s = setup({ extraColumns: ['segmentationMs', 'readPixels'], intervalMs: 25 })
+    const sample = createFrameSample()
+    const extra = new Float64Array(2)
+    sample.extra = extra
+    s.rec.start()
+    const at = (stepMs: number, seg: number, reads: number) => {
+      s.advance(stepMs)
+      sample.now = s.now
+      extra[0] = seg
+      extra[1] = reads
+      s.rec.record(sample)
+    }
+    at(10, 4.567, 0)
+    at(10, NaN, 2)
+    at(10, 8, NaN)
+    s.rec.record({ ...sample, now: s.now + 10, extra: undefined }) // no extra values at all
+    s.rec.stop()
+    const doc = s.rec.export()
+    expect(doc.samples.segmentationMs).toEqual([4.57, NaN, 8, NaN])
+    expect(doc.samples.readPixels).toEqual([0, 2, NaN, NaN])
+    expect(doc.summary.extra?.segmentationMs).toEqual({ mean: 6.283, p50: 6.283, p95: 7.828, p99: 7.966, max: 8 })
+    expect(doc.summary.extra?.readPixels?.mean).toBe(1)
+    expect(doc.intervals[0]?.extra?.segmentationMs?.max).toBe(4.567) // t = 10 and 20 ms
+    expect(doc.intervals[1]?.extra?.segmentationMs?.max).toBe(8) // t = 30 and 40 ms
+    expect(doc.intervals[1]?.extra?.readPixels?.mean).toBeNull()
+    // NaN is exported as null.
+    expect(JSON.parse(stringifySession(doc)).samples.segmentationMs).toEqual([4.57, null, 8, null])
+  })
+
+  it('rejects invalid extra column names', () => {
+    expect(() => new SessionRecorder({ extraColumns: ['renderMs'] })).toThrow(RangeError)
+    expect(() => new SessionRecorder({ extraColumns: ['a', 'a'] })).toThrow(RangeError)
+    expect(() => new SessionRecorder({ extraColumns: [''] })).toThrow(RangeError)
+  })
 })
 
 describe('stringifySession', () => {

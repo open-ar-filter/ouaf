@@ -34,7 +34,9 @@ summarizes it for people analysing the files.
 ### Statistics (`summary` and each interval)
 
 `samples` (count), `fps`, `frameMs`, `trackingMs`, `renderMs` (each `{ mean, p50, p95, p99, max }`) and `faces`
-(mean number of detected faces).
+(mean number of detected faces). Recordings with extra columns (see below) also have `extra`: one
+`{ mean, p50, p95, p99, max }` per extra column, by name, computed over the samples where the value applies (`NaN` /
+`null` values excluded). Files without extra columns have no `extra` field.
 
 `frameMs` is the time between consecutive samples. Deltas that span a `visibility` or `pipeline` event are
 excluded (the camera was paused or restarted, so the delta is not a frame time), and `fps` is
@@ -66,7 +68,27 @@ Each event has `t` (ms since the start) and `type`:
 | `renderMs`   | ms | time spent rendering |
 | `faces`      | count | faces detected |
 
-A 10-minute run at 30 fps is about 18 000 samples, roughly 0.6 MB of JSON.
+### Extra columns (additive)
+
+A producer can record more per-frame values than the built-in columns (`SessionRecorderOptions.extraColumns`, values
+passed in `FrameSample.extra`). Each extra column is one more array of `samples`, with the same length as the others,
+rounded to 0.01, and `null` where the value did not apply to that frame. Names never reuse a built-in column. Readers
+that do not know an extra column can ignore it: version 1 files without extra columns are unchanged.
+
+Extra columns written by the playground pages:
+
+| Page | Column | Unit | Meaning |
+|------|--------|------|---------|
+| `spikes/gl-share.html` (#7) | `segmentationMs` | ms | Main-thread time of `ImageSegmenter.segmentForVideo` until its callback runs (GPU work may still be queued) |
+| | `transferMs` | ms | Getting the mask into the renderer: `getAsWebGLTexture` + `resetState` (`shared`), `getAsFloat32Array` readback (`cpu`), blit + `copyExternalImageToTexture` or readback + `writeTexture` (`webgpu`) |
+| | `uploadMs` | ms | `cpu` path: texture upload of the read-back mask (`initTexture`); `null` elsewhere |
+| | `readbacks` | count | Synchronous GPU→CPU readbacks during the frame: `readPixels`, `getBufferSubData`, `clientWaitSync` calls (all WebGL contexts of the page) plus `MPMask.getAsFloat32Array` / `getAsUint8Array` calls |
+| | `readbackBytes` | bytes | Bytes requested by those `readPixels` / `getBufferSubData` calls |
+
+The spike page also adds its variant to `app` (`path`, `copy`, `reset`, `delegate`, mask size and format, context
+count…).
+
+A 10-minute run at 30 fps is about 18 000 samples, roughly 0.6 MB of JSON (more with extra columns).
 
 ## Example
 

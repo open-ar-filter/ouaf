@@ -15,6 +15,11 @@ export interface FrameSample {
   renderMs: number
   /** Faces detected in the frame. */
   faces: number
+  /**
+   * Values of the recorder's extra columns (`SessionRecorderOptions.extraColumns`), in the same order; `NaN`
+   * when a value does not apply to this frame. Optional: pipelines without extra columns leave it undefined.
+   */
+  extra?: ArrayLike<number>
 }
 
 export function createFrameSample(): FrameSample {

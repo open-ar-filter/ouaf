@@ -23,8 +23,8 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
     // Downloaded by `npm run fetch-models` (gitignored).
     prefix: 'models/',
     dir: resolve(here, 'models'),
-    files: /\.task$/,
-    hint: 'run `npm run fetch-models` to download the face model',
+    files: /\.(task|tflite)$/,
+    hint: 'run `npm run fetch-models` to download the models',
   },
 ]
 
@@ -32,6 +32,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.js': 'text/javascript',
   '.wasm': 'application/wasm',
   '.task': 'application/octet-stream',
+  '.tflite': 'application/octet-stream',
 }
 
 function listFiles(dir: string, files: RegExp): string[] {
