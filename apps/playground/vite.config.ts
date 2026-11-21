@@ -144,9 +144,13 @@ function selfHostedAssets(): Plugin {
   }
 }
 
-/** Extra pages: the engine page, and every `spikes/*.html` as a separate entry (one page per phase 0 spike). */
+/** Extra pages: the engine and built-ins pages, and every `spikes/*.html` as a separate entry (one page per phase 0 spike). */
 function pages(): Record<string, string> {
-  const input: Record<string, string> = { main: resolve(here, 'index.html'), engine: resolve(here, 'engine.html') }
+  const input: Record<string, string> = {
+    main: resolve(here, 'index.html'),
+    engine: resolve(here, 'engine.html'),
+    builtins: resolve(here, 'builtins.html'),
+  }
   const dir = resolve(here, 'spikes')
   for (const name of listFiles(dir, /\.html$/)) input[`spikes/${name.replace(/\.html$/, '')}`] = join(dir, name)
   return input
