@@ -1,0 +1,44 @@
+{
+  "ouaf": "1",
+  "id": "sticker-screen",
+  "name": "Screen stickers (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Sticker layer (#20) laid out on the screen for pixel checks: each image format, the blend modes, a packed-alpha video, a spritesheet. Synthetic assets (../make-sticker-assets.sh).",
+  "requires": {},
+  "assets": {
+    "yellow": {
+      "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10' fill='#ffff00'/></svg>"
+    },
+    "flame": {
+      "src": "assets/flame.mp4",
+      "alpha": "packed"
+    },
+    "walk": {
+      "src": "assets/walk.png",
+      "frames": {
+        "cols": 4,
+        "rows": 2,
+        "fps": 4
+      }
+    }
+  },
+  "layers": [
+    {"id": "png", "type": "sticker", "src": "assets/magenta.png", "anchor": "screen", "offset": [-0.2, 0.3, 0], "size": 0.07},
+    {"id": "webp", "type": "sticker", "src": "assets/cyan.webp", "anchor": "screen", "offset": [-0.1, 0.3, 0], "size": 0.07},
+    {"id": "jpeg", "type": "sticker", "src": "assets/orange.jpg", "anchor": "screen", "offset": [0, 0.3, 0], "size": 0.07},
+    {"id": "avif", "type": "sticker", "src": "assets/lime.avif", "anchor": "screen", "offset": [0.1, 0.3, 0], "size": 0.07},
+    {"id": "svg", "type": "sticker", "src": "yellow", "anchor": "screen", "offset": [0.2, 0.3, 0], "size": 0.07},
+    {"type": "sticker", "src": "assets/gray.png", "anchor": "screen", "offset": [-0.18, 0.1, 0], "size": 0.1},
+    {"id": "blend-normal", "type": "sticker", "src": "assets/gray.png", "anchor": "screen", "offset": [-0.18, 0.1, 0.01], "size": 0.05, "blend": "normal"},
+    {"type": "sticker", "src": "assets/gray.png", "anchor": "screen", "offset": [-0.06, 0.1, 0], "size": 0.1},
+    {"id": "blend-add", "type": "sticker", "src": "assets/gray.png", "anchor": "screen", "offset": [-0.06, 0.1, 0.01], "size": 0.05, "blend": "add"},
+    {"type": "sticker", "src": "assets/gray.png", "anchor": "screen", "offset": [0.06, 0.1, 0], "size": 0.1},
+    {"id": "blend-multiply", "type": "sticker", "src": "assets/gray.png", "anchor": "screen", "offset": [0.06, 0.1, 0.01], "size": 0.05, "blend": "multiply"},
+    {"type": "sticker", "src": "assets/gray.png", "anchor": "screen", "offset": [0.18, 0.1, 0], "size": 0.1},
+    {"id": "blend-screen", "type": "sticker", "src": "assets/gray.png", "anchor": "screen", "offset": [0.18, 0.1, 0.01], "size": 0.05, "blend": "screen"},
+    {"type": "sticker", "src": "assets/white.png", "anchor": "screen", "offset": [-0.12, -0.2, 0], "size": 0.2},
+    {"id": "video", "type": "sticker", "src": "flame", "anchor": "screen", "offset": [-0.12, -0.2, 0.01], "size": 0.18},
+    {"id": "spritesheet", "type": "sticker", "src": "walk", "anchor": "screen", "offset": [0.12, -0.2, 0], "size": 0.18}
+  ]
+}
