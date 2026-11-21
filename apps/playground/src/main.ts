@@ -125,11 +125,12 @@ async function start() {
   if (testHook) testHook.hook.delegate = tracker?.delegate ?? null
 
   renderer = createRenderer(camera, { maxFaces: MAX_FACES })
+  // The <video> stays displayed, behind the canvas when there is a renderer: browsers throttle or pause the decoding
+  // of hidden (display: none) muted videos, which slows a file source down to a few fps on phones.
+  video.hidden = false
+  video.classList.toggle('backing', renderer !== undefined)
+  video.classList.toggle('mirrored', !renderer && camera.mirrored)
   if (renderer) stage.append(renderer.element)
-  else {
-    video.hidden = false
-    video.classList.toggle('mirrored', camera.mirrored)
-  }
 
   perf?.setInfo({
     delegate: tracker?.delegate,
