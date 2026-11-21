@@ -49,8 +49,9 @@ function readAmount(decl: LayerDecl, ctx: LayerContext): () => number {
   const amount = decl.amount
   if (typeof amount === 'number') return () => amount
   if (amount && typeof amount === 'object' && 'param' in amount) {
-    const name = String((amount as { param: string }).param)
-    return () => Number(ctx.params.get(name) ?? 0)
+    // Resolved once; read by index every frame: the animated value, so `transition` is visible.
+    const index = ctx.params.indexOf(String((amount as { param: string }).param))
+    return () => ctx.params.numberAt(index)
   }
   return () => 1
 }

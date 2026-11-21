@@ -4,10 +4,10 @@
 import { formatIssues, validateManifest, type SpecRegistry, type Stage, type TManifest } from '@ouaf/spec'
 import { satisfies } from './semver.ts'
 import { Emitter } from './emitter.ts'
-import { IncompatibleEngineError, InvalidManifestError, MissingPluginError, OuafError } from './errors.ts'
+import { IncompatibleEngineError, InvalidManifestError, MissingPluginError, OuafError, withParamErrors } from './errors.ts'
 import { preloadAssets, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
 import type { LayerContext, LayerDecl, LayerInstance, LayerTypeImpl, ObjectsView } from './layer-type.ts'
-import { SimpleParams, type FilterParams, type ParamChange, type ParamValue } from './params.ts'
+import { ParamStore, type ParamChange, type ParamValue, type SelectOptions, type SetParamOptions } from '../params/index.ts'
 import { parsePluginRequirement } from './plugin.ts'
 import type { WebGLRenderer } from 'three'
 
@@ -29,14 +29,24 @@ export interface FilterHandle {
   enabled: boolean
   /** Position in the stack (0 = drawn first within each stage). */
   readonly index: number
-  /** Current parameter values. */
+  /** Committed parameter values (the targets of running transitions), as a fresh object. */
   readonly params: Readonly<Record<string, ParamValue>>
-  /** Validates and queues a change, applied at the start of the next frame. Throws `InvalidParamError`. */
-  setParam(name: string, value: unknown): void
+  /** Names of the manifest's presets. */
+  readonly presets: readonly string[]
+  /**
+   * Validates and queues a change, applied at the start of the next frame (spec §9). Numbers, colors and vectors
+   * animate over the parameter's `transition` (ms), or `options.transition`; `apply: "reload"` parameters preload the
+   * filter again and swap it in without an empty frame. Throws `InvalidParamError`; nothing is applied then.
+   */
+  setParam(name: string, value: unknown, options?: SetParamOptions): void
   /** Like `setParam` for several values, all or nothing. */
-  setParams(values: Readonly<Record<string, unknown>>): void
-  /** Applies a named preset (spec §9). Throws `InvalidParamError` for an unknown preset. */
-  applyPreset(name: string): void
+  setParams(values: Readonly<Record<string, unknown>>, options?: SetParamOptions): void
+  /** Applies a named preset (only the parameters it lists). Throws `InvalidParamError` for an unknown preset. */
+  applyPreset(name: string, options?: SetParamOptions): void
+  /** Supplies the options of a `select` parameter declared with `options: { from: "host" }`. */
+  setOptions(name: string, options: Readonly<Record<string, string | Readonly<Record<string, string>>>> | readonly string[]): void
+  /** Current options of a `select` parameter. */
+  optionsOf(name: string): SelectOptions | undefined
   /** Moves the filter to `index` in the stack (clamped). */
   moveTo(index: number): void
   /** Removes the filter from the stack and frees it. */
@@ -68,7 +78,7 @@ export class FilterInstance {
   readonly key: number
   readonly manifest: TManifest
   readonly source: string
-  readonly params: FilterParams
+  readonly params: ParamStore
   readonly layers: readonly LoadedLayer[]
   readonly assets: PreloadedAssets
   readonly warnings: readonly string[]
@@ -83,7 +93,7 @@ export class FilterInstance {
     key: number
     manifest: TManifest
     source: string
-    params: FilterParams
+    params: ParamStore
     layers: LoadedLayer[]
     assets: PreloadedAssets
     warnings: string[]
@@ -99,6 +109,8 @@ export class FilterInstance {
     this.needsFace = !!init.manifest.requires.face
     this.needsBlendshapes = this.needsFace && (!!init.manifest.requires.blendshapes || usesBlendshapes(init.manifest))
     this.events = new Emitter(init.onListenerError)
+    // Changes are committed by `params.beginFrame`, at the start of a frame (spec §9).
+    this.params.onChange((change) => this.events.emit('paramChange', change))
   }
 
   /** Layers of a stage, in layer order. */
@@ -117,6 +129,7 @@ export class FilterInstance {
       }
     }
     this.assets.dispose()
+    this.params.dispose()
     this.events.clear()
   }
 }
@@ -148,7 +161,14 @@ export async function loadFilter(
     warnings.push(`${source.label}/script: scripts are not supported by this engine version yet (#26); the script is ignored.`)
   }
 
-  const params = new SimpleParams(manifest.id, manifest.params ?? {}, manifest.presets ?? {}, initialParams ?? {})
+  // `apply: "reload"` parameters are applied at the next frame like live ones until the engine preloads and swaps
+  // whole filters (ReloadHooks).
+  const params = new ParamStore(manifest.params, { presets: manifest.presets, onError: (e) => env.warn(`Filter "${manifest.id}": ${String(e)}`) })
+  if (initialParams) {
+    // Initial values apply at once, without transitions.
+    withParamErrors(manifest.id, () => params.setMany(initialParams, { transition: 0 }))
+    params.beginFrame(0)
+  }
 
   const decls = manifest.layers as unknown as LayerDecl[]
   const impls = decls.map((decl, i) => {
@@ -192,6 +212,7 @@ export async function loadFilter(
   } catch (error) {
     for (const l of layers) l.instance.dispose()
     assets.dispose()
+    params.dispose()
     throw error
   }
   return new FilterInstance({ key, manifest, source: source.label, params, layers, assets, warnings, onListenerError: (e) => env.warn(String(e)) })
@@ -242,16 +263,25 @@ export function createHandle(
       return stack.indexOf(filter)
     },
     get params() {
-      return filter.params.snapshot()
+      return filter.params.values()
     },
-    setParam(name, value) {
-      filter.params.set({ [name]: value })
+    get presets() {
+      return filter.params.presetNames
     },
-    setParams(values) {
-      filter.params.set(values)
+    setParam(name, value, options) {
+      withParamErrors(filter.manifest.id, () => filter.params.set(name, value, options))
     },
-    applyPreset(name) {
-      filter.params.applyPreset(name)
+    setParams(values, options) {
+      withParamErrors(filter.manifest.id, () => filter.params.setMany(values, options))
+    },
+    applyPreset(name, options) {
+      withParamErrors(filter.manifest.id, () => filter.params.applyPreset(name, options))
+    },
+    setOptions(name, options) {
+      withParamErrors(filter.manifest.id, () => filter.params.setOptions(name, options))
+    },
+    optionsOf(name) {
+      return filter.params.optionsOf(name)
     },
     moveTo(index) {
       stack.move(filter, index)

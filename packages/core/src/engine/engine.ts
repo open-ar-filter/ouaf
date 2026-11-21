@@ -25,7 +25,7 @@ import { Emitter } from './emitter.ts'
 import { IncompatibleSourceError, OuafError, disposedError } from './errors.ts'
 import { FilterInstance, createHandle, loadFilter, type FilterHandle, type FilterLoadEnv } from './filter.ts'
 import type { FrameContext, LayerContext, LayerInstance, LayerTypeImpl, ObjectLayer, PassLayer } from './layer-type.ts'
-import { SimpleParams } from './params.ts'
+import { ParamStore } from '../params/index.ts'
 import type {
   EventSourceImpl,
   FaceTrackerImpl,
@@ -361,8 +361,8 @@ export class Engine {
 
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
-      const changes = filter.params.applyPending()
-      for (let c = 0; c < changes.length; c++) filter.events.emit('paramChange', changes[c]!)
+      // Media time drives transitions: deterministic with file sources (spec §12.5); a loop counts as no time.
+      filter.params.beginFrame(info.mediaTime * 1000)
     }
 
     const faces = this.#tracking.faces
@@ -513,7 +513,7 @@ export class Engine {
       renderer: this.#compositor.renderer,
       view: this.#compositor,
       assets: empty,
-      params: new SimpleParams(impl.id),
+      params: new ParamStore(undefined),
       maxFaces: this.maxFaces,
       warn: (message) => this.#warn(`Render pass "${impl.id}": ${message}`),
     }

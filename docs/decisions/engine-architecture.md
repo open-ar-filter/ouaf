@@ -28,7 +28,7 @@ A failed `addFilter`/`setFilters` leaves the stack unchanged. Compatibility (spe
 ```
 camera frame (FrameScheduler, requestVideoFrameCallback)
  → tracking.submit(video)        eager, one frame in flight, shared by the stack (spec §7)
- → params.applyPending()         per filter, emits paramChange
+ → params.beginFrame(mediaTime)   per filter: transitions advance, queued changes commit, paramChange fires
  → anchors.setFrame(latest result, mirrored)
  → layer.update(frame)           every layer of every enabled filter, then plugin render passes
  → compositor.render(stages)
@@ -65,8 +65,8 @@ their kind **before** the filter is activated (spec §10.4). The layer gets them
 are registered per kind by the plugin that owns the format (images and videos: sticker; glTF: model; `.cube`: color;
 fonts: text). The core loads `data` (JSON) and `shader` (text).
 
-`ctx` (`LayerContext`) gives the WebGL renderer, the objects camera, the preloaded assets, the params (read-only) and
-`maxFaces`. `frame` (`FrameContext`, valid during the call only) gives `time`, `now`, `dt`, the latest `faces`
+`ctx` (`LayerContext`) gives the WebGL renderer, the objects camera, the preloaded assets, the params (read-only:
+resolve a parameter once with `ctx.params.indexOf`, read its animated value each frame with `numberAt`) and `maxFaces`. `frame` (`FrameContext`, valid during the call only) gives `time`, `now`, `dt`, the latest `faces`
 (`FaceFrame`), `anchors`, the render size and `mirrored`. `update` and `render` must not allocate in the steady state.
 
 ## Stages and compositing (spec §7)
@@ -100,7 +100,7 @@ expression anchors, smoothing, stable face ids) behind the same interface.
 
 | Part | Now | Replaced by |
 |---|---|---|
-| Params (`SimpleParams`) | defaults, validation, batching, presets | `ParamStore` (#16, PR #99): transitions, reload, host options |
+| Params `apply: "reload"` | applied at the next frame like `live` | engine `ReloadHooks`: preload a new filter instance, swap it in |
 | Anchors (`ProvisionalAnchors`) | landmark positions, MediaPipe pose | #13 |
 | Face tracker | MediaPipe tasks-vision, main thread | LiteRT.js pipeline in a worker (face-runtime.md, tracking-worker.md) |
 | Bindings | read by each layer by hand | #15 evaluator, compiled per layer |

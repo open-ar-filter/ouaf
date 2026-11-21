@@ -4,6 +4,7 @@
  */
 import { CameraSource, VideoFileSource, createEngine, memorySource, type Engine, type EngineStats, type VideoSource } from '@ouaf/core'
 import * as core from '@ouaf/core'
+import { renderParams } from './params-panel.ts'
 import { playgroundPlugin } from './test-plugin.ts'
 
 declare global {
@@ -67,6 +68,7 @@ async function start(): Promise<void> {
       const handle = await engine.addFilter(url)
       show(`filter ${handle.index}`, `${handle.id} (${url})${handle.warnings.length ? ` — ${handle.warnings.join('; ')}` : ''}`)
     }
+    renderParams(document.getElementById('params') as HTMLElement, engine.filters, (message) => show('param error', message))
   } catch (error) {
     hook.errors.push(String(error))
     show('error', error instanceof Error ? error.message : String(error))

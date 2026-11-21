@@ -64,7 +64,7 @@ test('a filter folder is tracked, drawn and driven by its params', async ({ page
           seen.push(c)
           resolve(seen)
         })
-        f.setParam('tint', 0)
+        f.setParam('tint', 0, { transition: 0 })
       }),
   )
   expect(changes).toEqual([{ name: 'tint', value: 0, previous: 1 }])
@@ -127,4 +127,17 @@ test('stack operations and API errors', async ({ page }) => {
     keepOnFailure: 'invalid-manifest',
     kept: ['c'],
   })
+})
+
+test('params animate over their transition and presets apply', async ({ page }) => {
+  await open(page, `source=pesquet-closeup&autostart&filter=${FIXTURE}`)
+  // A 4 s transition (longer than a software-rendered screenshot takes): partway through, blue is partly back.
+  await page.evaluate(() => window.ouaf!.engine.filters[0]!.applyPreset('none', { transition: 4000 }))
+  await page.waitForTimeout(1000)
+  const during = await sample(page)
+  await page.waitForTimeout(4000)
+  const after = await sample(page)
+  expect(during.b).toBeGreaterThan(3)
+  expect(during.b).toBeLessThan(after.b - 3)
+  expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.params)).toEqual({ tint: 0 })
 })

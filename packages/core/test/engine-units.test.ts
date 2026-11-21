@@ -2,8 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Emitter } from '../src/engine/emitter.ts'
 import { satisfies } from '../src/engine/semver.ts'
 import { memorySource, preloadAssets, resolveAssetRef, type AssetLoader, type LoaderKind } from '../src/engine/assets.ts'
-import { AssetError, InvalidParamError } from '../src/engine/errors.ts'
-import { SimpleParams } from '../src/engine/params.ts'
+import { AssetError } from '../src/engine/errors.ts'
 
 describe('satisfies', () => {
   it.each([
@@ -132,41 +131,28 @@ describe('preloadAssets', () => {
   })
 })
 
-describe('SimpleParams (provisional, replaced by #16)', () => {
-  const defs = {
-    size: { type: 'number' as const, default: 1, min: 0.5, max: 2 },
-    style: { type: 'select' as const, default: 'gold', options: { gold: 'Gold', flowers: 'Flowers' } },
-    tint: { type: 'color' as const, default: '#ff0000' },
-    offset: { type: 'vec3' as const, default: [0, 0, 0] as [number, number, number] },
-  }
+describe('urlSource', () => {
+  it('reports an HTML page served instead of a filter file (SPA fallback)', async () => {
+    const { urlSource } = await import('../src/engine/assets.ts')
+    const fetchImpl = (async () => new Response('<!doctype html>', { headers: { 'content-type': 'text/html' } })) as typeof fetch
+    await expect(urlSource('https://host.test/filters/x/', fetchImpl).manifest()).rejects.toThrow(/HTML page/)
+  })
 
-  it('starts from defaults and initial values, batches changes until applyPending', () => {
-    const p = new SimpleParams('f', defs, {}, { size: 1.5 })
-    expect(p.get('size')).toBe(1.5)
-    p.set({ size: 2, style: 'flowers' })
-    expect(p.get('size')).toBe(1.5)
-    const changes = p.applyPending()
-    expect(changes).toEqual([
-      { name: 'size', value: 2, previous: 1.5 },
-      { name: 'style', value: 'flowers', previous: 'gold' },
+  it('resolves the manifest and assets against the folder', async () => {
+    const { urlSource } = await import('../src/engine/assets.ts')
+    const seen: string[] = []
+    const fetchImpl = (async (url: URL) => {
+      seen.push(String(url))
+      return new Response('{}', { headers: { 'content-type': 'application/json' } })
+    }) as unknown as typeof fetch
+    const folder = urlSource('https://host.test/filters/x', fetchImpl)
+    await folder.manifest()
+    await folder.file('assets/a.png')
+    await urlSource('https://host.test/filters/y/manifest.json', fetchImpl).manifest()
+    expect(seen).toEqual([
+      'https://host.test/filters/x/manifest.json',
+      'https://host.test/filters/x/assets/a.png',
+      'https://host.test/filters/y/manifest.json',
     ])
-    expect(p.applyPending()).toEqual([])
-  })
-
-  it('rejects invalid values without applying any of the batch', () => {
-    const p = new SimpleParams('f', defs)
-    expect(() => p.set({ size: 1.2, style: 'nope' })).toThrow(InvalidParamError)
-    expect(() => p.set({ size: 3 })).toThrow(/above the maximum 2/)
-    expect(() => p.set({ tint: 'red' })).toThrow(/hex color/)
-    expect(() => p.set({ offset: [0, 0] })).toThrow(/\[x, y, z\]/)
-    expect(() => p.set({ unknown: 1 })).toThrow(/no parameter "unknown"; parameters: size, style, tint, offset/)
-    expect(p.applyPending()).toEqual([])
-  })
-
-  it('applies presets and rejects unknown ones', () => {
-    const p = new SimpleParams('f', defs, { party: { size: 2 } })
-    p.applyPreset('party')
-    expect(p.applyPending()).toEqual([{ name: 'size', value: 2, previous: 1 }])
-    expect(() => p.applyPreset('nope')).toThrow(/no preset "nope"; presets: party/)
   })
 })
