@@ -1,0 +1,72 @@
+# Dependabot version updates (#67).
+#
+# - Weekly, on Monday morning (Paris time).
+# - Minor and patch updates are grouped into one PR per ecosystem.
+# - Major updates get one PR each, so CI decides on each of them separately.
+# - A few dependencies are kept out of the minor/patch group on purpose (see below).
+# - Security updates are not affected by groups or cooldown: they are opened as soon as an advisory is published.
+version: 2
+
+updates:
+  # npm workspaces: the root lockfile covers packages/* and apps/*.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Paris
+    # Wait a few days after a release before proposing it (supply-chain safety, and time for broken releases to be
+    # pulled).
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
+    open-pull-requests-limit: 10
+    versioning-strategy: increase
+    commit-message:
+      prefix: "Deps"
+    ignore:
+      # Workspace packages: resolved locally, never from the registry.
+      - dependency-name: "@ouaf/*"
+    groups:
+      # three and its types must move together, and three's 0.x minors can break the API: one PR per release,
+      # whatever its size.
+      three:
+        applies-to: version-updates
+        patterns:
+          - "three"
+          - "@types/three"
+      # Everything else, minor and patch only. Majors stay out and get their own PR.
+      minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "three"
+          - "@types/three"
+          # Pinned to an exact version (the spikes and docs refer to its internals, and its wasm is self-hosted):
+          # every update gets its own PR to be checked on its own.
+          - "@mediapipe/*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Paris
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "CI"
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
