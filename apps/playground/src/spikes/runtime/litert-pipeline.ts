@@ -5,7 +5,10 @@
  * Per frame: detector only when no face is tracked (letterboxed 128×128 input), otherwise the ROI predicted from the
  * previous landmarks; rotated crop to 256×256 on a 2D canvas (CPU readback of the crop); landmark model (478 points
  * and a face presence score); optionally the blendshapes model on 146 of the points. One face.
- * `crop: 'gpu'` does the rotated crop on WebGL2 instead (gpu-crop.ts), reading back only the 256×256 crop.
+ * `crop: 'gpu'` does the rotated crop on WebGL2 instead (gpu-crop.ts), reading back only the 256×256 crop;
+ * `detectorCrop: 'gpu'` does the same for the detector letterbox (128×128 read back).
+ *
+ * Runs on the main thread or in a worker (`litert.worker.ts`): no DOM access, asset URLs come from `assetBase`.
  */
 import { loadAndCompile, loadLiteRt, supportsFeature, Tensor, type CompiledModel } from '@litertjs/core'
 import {
@@ -20,6 +23,9 @@ import {
   type Roi,
 } from './geometry.ts'
 import { createGpuCropper, type GpuCropper } from './gpu-crop.ts'
+
+/** What a run accepts: the video element on the main thread, a transferred frame in the worker. */
+export type FrameSource = HTMLVideoElement | VideoFrame | ImageBitmap
 
 export const LANDMARKS = 478
 const BLENDSHAPES = 52
@@ -36,12 +42,21 @@ export interface LiteRtOptions {
   /** `always`: run the detector on every frame (its cost), instead of only when no face is tracked. */
   detect: 'track' | 'always'
   /** Landmark crop: `canvas` (2D canvas, whole frame read back to the CPU) or `gpu` (WebGL2, only the crop read back). */
-  crop: 'canvas' | 'gpu'
+  crop: Crop
+  /** Detector letterbox (128×128), same choice as `crop`. */
+  detectorCrop: Crop
+  /** Absolute URL of the playground root (`litert/wasm/`, `models/` are resolved against it). */
+  assetBase: string
 }
+
+export type Crop = 'canvas' | 'gpu'
 
 /** Per-stage timings of the last `run` (ms, NaN when the stage did not run). */
 export interface StageTimings {
+  /** Detector stage: letterbox, model, decoding. */
   detectMs: number
+  /** Detector letterbox alone (part of `detectMs`): drawing, readback, float conversion. */
+  detectCropMs: number
   cropMs: number
   landmarksMs: number
   blendshapesMs: number
@@ -61,7 +76,7 @@ export interface FaceResult {
 export interface LiteRtPipeline {
   readonly description: string
   readonly timings: StageTimings
-  run(source: CanvasImageSource, width: number, height: number, out: FaceResult): Promise<void>
+  run(source: FrameSource, width: number, height: number, out: FaceResult): Promise<void>
   /** Forgets the tracked face (the next run starts with the detector). */
   reset(): void
   dispose(): void
@@ -78,8 +93,8 @@ let loaded: Promise<unknown> | undefined
  * (without JSPI, reading a WebGPU tensor back fails with "Asyncify is not defined" in LiteRT.js 2.6.0, and models the
  * GPU delegate only partly supports cannot fall back to wasm per operation), the plain build otherwise.
  */
-function ensureLiteRt(build: { threads: boolean; jspi: boolean }): Promise<unknown> {
-  loaded ??= loadLiteRt(new URL('../litert/wasm/', document.baseURI).href, build)
+function ensureLiteRt(assetBase: string, build: { threads: boolean; jspi: boolean }): Promise<unknown> {
+  loaded ??= loadLiteRt(new URL('litert/wasm/', assetBase).href, build)
   return loaded
 }
 
@@ -121,8 +136,8 @@ export function fixDynamicBatch(model: Uint8Array, dims: readonly number[]): Uin
   return model
 }
 
-async function fetchModel(name: string): Promise<Uint8Array> {
-  const url = new URL(`../models/${name}.tflite`, document.baseURI).href
+async function fetchModel(assetBase: string, name: string): Promise<Uint8Array> {
+  const url = new URL(`models/${name}.tflite`, assetBase).href
   const res = await fetch(url)
   if (!res.ok || res.headers.get('content-type')?.includes('text/html')) throw new Error(`${url}: HTTP ${res.status}, run \`npm run fetch-models\``)
   return fixDynamicBatch(new Uint8Array(await res.arrayBuffer()), [LANDMARKS_SIZE, LANDMARKS_SIZE, 3])
@@ -130,12 +145,12 @@ async function fetchModel(name: string): Promise<Uint8Array> {
 
 export async function createLiteRtPipeline(options: LiteRtOptions): Promise<LiteRtPipeline> {
   const threaded = options.accelerator === 'wasm' && options.threads > 1
-  if (threaded && !crossOriginIsolated) throw new Error('threads need a cross-origin isolated page (COOP/COEP headers); open without ?coi=0')
+  if (threaded && !globalThis.crossOriginIsolated) throw new Error('threads need a cross-origin isolated page (COOP/COEP headers); open without ?coi=0')
   const jspi = options.accelerator === 'webgpu'
   if (jspi && !(await supportsFeature('jspi'))) throw new Error('WebGPU needs JSPI (WebAssembly JavaScript Promise Integration), missing in this browser')
-  await ensureLiteRt({ threads: threaded, jspi })
+  await ensureLiteRt(options.assetBase, { threads: threaded, jspi })
   const compile = async (name: string) =>
-    loadAndCompile(await fetchModel(name), {
+    loadAndCompile(await fetchModel(options.assetBase, name), {
       accelerator: options.accelerator,
       ...(options.accelerator === 'wasm' ? { cpuOptions: { numThreads: options.threads } } : {}),
     })
@@ -155,12 +170,20 @@ export async function createLiteRtPipeline(options: LiteRtOptions): Promise<Lite
   const detectorCtx = detectorCanvas.getContext('2d', { willReadFrequently: true })!
   const cropCanvas = new OffscreenCanvas(LANDMARKS_SIZE, LANDMARKS_SIZE)
   const cropCtx = cropCanvas.getContext('2d', { willReadFrequently: true })!
-  const gpuCropper: GpuCropper | undefined = options.crop === 'gpu' ? createGpuCropper(LANDMARKS_SIZE) : undefined
+  // One WebGL2 context for both crops: the frame is uploaded once per run, whichever crop needs it first.
+  const gpuCropper: GpuCropper | undefined = options.crop === 'gpu' || options.detectorCrop === 'gpu' ? createGpuCropper(LANDMARKS_SIZE) : undefined
   const gpuCrop = new Uint8Array(LANDMARKS_SIZE * LANDMARKS_SIZE * 4)
+  const gpuDetectorCrop = new Uint8Array(DETECTOR_SIZE * DETECTOR_SIZE * 4)
+  let uploaded = false
+  const upload = (source: FrameSource, width: number, height: number) => {
+    if (uploaded) return
+    gpuCropper!.upload(source, width, height)
+    uploaded = true
+  }
   const detectorInput = new Float32Array(DETECTOR_SIZE * DETECTOR_SIZE * 3)
   const landmarksInput = new Float32Array(LANDMARKS_SIZE * LANDMARKS_SIZE * 3)
   const blendshapesInput = new Float32Array(BLENDSHAPE_LANDMARKS.length * 2)
-  const timings: StageTimings = { detectMs: NaN, cropMs: NaN, landmarksMs: NaN, blendshapesMs: NaN, readMs: NaN }
+  const timings: StageTimings = { detectMs: NaN, detectCropMs: NaN, cropMs: NaN, landmarksMs: NaN, blendshapesMs: NaN, readMs: NaN }
   let tracked: Roi | undefined
 
   /** RGBA bytes → RGB floats in [lo, hi]. */
@@ -173,13 +196,21 @@ export async function createLiteRtPipeline(options: LiteRtOptions): Promise<Lite
     }
   }
 
-  async function detect(source: CanvasImageSource, width: number, height: number): Promise<Roi | undefined> {
+  async function detect(source: FrameSource, width: number, height: number): Promise<Roi | undefined> {
     const t = performance.now()
     const box = letterbox(width, height)
-    detectorCtx.fillStyle = '#000'
-    detectorCtx.fillRect(0, 0, DETECTOR_SIZE, DETECTOR_SIZE)
-    detectorCtx.drawImage(source, box.offsetX, box.offsetY, width * box.scale, height * box.scale)
-    toFloats(detectorCtx.getImageData(0, 0, DETECTOR_SIZE, DETECTOR_SIZE).data, detectorInput, -1, 1)
+    if (options.detectorCrop === 'gpu') {
+      upload(source, width, height)
+      // The letterbox is the unrotated square crop of side the frame's long side, centred on the frame.
+      gpuCropper!.crop({ cx: width / 2, cy: height / 2, size: Math.max(width, height), rotation: 0 }, DETECTOR_SIZE, gpuDetectorCrop)
+      toFloats(gpuDetectorCrop, detectorInput, -1, 1)
+    } else {
+      detectorCtx.fillStyle = '#000'
+      detectorCtx.fillRect(0, 0, DETECTOR_SIZE, DETECTOR_SIZE)
+      detectorCtx.drawImage(source, box.offsetX, box.offsetY, width * box.scale, height * box.scale)
+      toFloats(detectorCtx.getImageData(0, 0, DETECTOR_SIZE, DETECTOR_SIZE).data, detectorInput, -1, 1)
+    }
+    timings.detectCropMs = performance.now() - t
     const [regressors, scores] = await runModel(detector, [await input(detectorInput, [1, DETECTOR_SIZE, DETECTOR_SIZE, 3], options.accelerator)], timings)
     const detections = decodeDetections(regressors!, scores!, box)
     timings.detectMs = performance.now() - t
@@ -188,13 +219,14 @@ export async function createLiteRtPipeline(options: LiteRtOptions): Promise<Lite
   }
 
   return {
-    description: `LiteRT.js ${options.accelerator}${options.accelerator === 'wasm' ? `, ${options.threads} thread${options.threads > 1 ? 's' : ''}` : ''}, crop ${options.crop}`,
+    description: `LiteRT.js ${options.accelerator}${options.accelerator === 'wasm' ? `, ${options.threads} thread${options.threads > 1 ? 's' : ''}` : ''}, crop ${options.crop}, detector crop ${options.detectorCrop}`,
     timings,
     reset() {
       tracked = undefined
     },
     async run(source, width, height, out) {
-      timings.detectMs = timings.cropMs = timings.landmarksMs = timings.blendshapesMs = timings.readMs = NaN
+      timings.detectMs = timings.detectCropMs = timings.cropMs = timings.landmarksMs = timings.blendshapesMs = timings.readMs = NaN
+      uploaded = false
       const fromDetector = !tracked || options.detect === 'always'
       const roi = fromDetector ? await detect(source, width, height) : tracked
       out.roi = roi
@@ -206,8 +238,9 @@ export async function createLiteRtPipeline(options: LiteRtOptions): Promise<Lite
       }
 
       let t = performance.now()
-      if (gpuCropper) {
-        gpuCropper.crop(source as TexImageSource, width, height, roi, gpuCrop)
+      if (options.crop === 'gpu') {
+        upload(source, width, height)
+        gpuCropper!.crop(roi, LANDMARKS_SIZE, gpuCrop)
         toFloats(gpuCrop, landmarksInput, 0, 1)
       } else {
         cropCtx.setTransform(1, 0, 0, 1, 0, 0)
