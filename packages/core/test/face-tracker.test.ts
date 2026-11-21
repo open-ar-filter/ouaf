@@ -48,13 +48,13 @@ interface FakeOptions {
 
 /** Fake MediaPipe backend recording every created landmarker and call. */
 function fakeBackend({ failCreate = [], failWarmup = [], results = [] }: FakeOptions = {}) {
-  const created: Array<{ options: FaceLandmarkerOptions; closed: number; calls: Array<{ frame: unknown; ts: number }> }> = []
+  const created: Array<{ options: FaceLandmarkerOptions; loader: string; closed: number; calls: Array<{ frame: unknown; ts: number }> }> = []
   const loadModel = vi.fn(async (_url: string) => MODEL)
   const backend: LandmarkerBackend = {
     loadModel,
-    async createLandmarker(_wasm, options) {
+    async createLandmarker(_wasm, options, loader) {
       const delegate = options.baseOptions?.delegate ?? 'CPU'
-      const record = { options, closed: 0, calls: [] as Array<{ frame: unknown; ts: number }> }
+      const record = { options, loader, closed: 0, calls: [] as Array<{ frame: unknown; ts: number }> }
       created.push(record)
       if (failCreate.includes(delegate)) throw new Error(`${delegate} create failed`)
       const landmarker: Landmarker = {
@@ -99,6 +99,19 @@ describe('createFaceTracker', () => {
     })
     // One warm-up inference validates the delegate.
     expect(created[0]!.calls).toEqual([{ frame: WARMUP, ts: 0 }])
+    expect(created[0]!.loader).toBe('classic')
+  })
+
+  it('passes the wasm loader and the canvas (worker use)', async () => {
+    const { backend, created } = fakeBackend({ failCreate: ['GPU'] })
+    const canvas = { offscreen: true } as unknown as OffscreenCanvas
+    await createFaceTrackerWith({ ...base, wasmLoader: 'module', canvas, onWarning: () => {} }, backend)
+    // The CPU fallback gets them too.
+    for (const c of created) {
+      expect(c.loader).toBe('module')
+      expect(c.options.canvas).toBe(canvas)
+    }
+    expect(created).toHaveLength(2)
   })
 
   it('falls back to CPU when the GPU landmarker cannot be created, and reports it', async () => {
@@ -160,6 +173,19 @@ describe('FaceTracker.detect', () => {
         Array.from({ length: 16 }, (_, i) => f * 100 + i),
       )
     }
+  })
+
+  it('reads the size of captured frames (VideoFrame, ImageBitmap) and passes them to MediaPipe', async () => {
+    const { backend, created } = fakeBackend({ results: [result([fakeFace(0)]), result([fakeFace(0)])] })
+    const tracker = await createFaceTrackerWith(base, backend)
+    const out = createFaceFrame(1)
+    const frame = { displayWidth: 1280, displayHeight: 720, codedWidth: 1296, codedHeight: 736 } as VideoFrame
+    tracker.detect(frame, 100, 1, out)
+    expect([out.width, out.height, out.count]).toEqual([1280, 720, 1])
+    const bitmap = { width: 320, height: 240 } as ImageBitmap
+    tracker.detect(bitmap, 133, 1.033, out)
+    expect([out.width, out.height, out.count]).toEqual([320, 240, 1])
+    expect(created[0]!.calls.map((c) => c.frame)).toEqual([WARMUP, frame, bitmap])
   })
 
   it('clamps the count to maxFaces', async () => {

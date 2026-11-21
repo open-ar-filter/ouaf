@@ -39,10 +39,10 @@ function fakeVideo({ rvfc }: { rvfc: boolean }) {
     video: video as unknown as HTMLVideoElement,
     raw: video,
     pending,
-    present(now: number, mediaTime: number) {
+    present(now: number, mediaTime: number, extra: Partial<VideoFrameCallbackMetadata> = {}) {
       const cbs = [...pending.values()]
       pending.clear()
-      for (const cb of cbs) cb(now, { mediaTime, width: 640, height: 480, presentedFrames: 0, presentationTime: now, expectedDisplayTime: now })
+      for (const cb of cbs) cb(now, { mediaTime, width: 640, height: 480, presentedFrames: 0, presentationTime: now, expectedDisplayTime: now, ...extra })
     },
   }
 }
@@ -80,10 +80,31 @@ describe('video-frame mode', () => {
     v.present(16, 0.033)
     v.present(49, 0.066)
     expect(frames).toEqual([
-      { now: 16, mediaTime: 0.033, width: 640, height: 480 },
-      { now: 49, mediaTime: 0.066, width: 640, height: 480 },
+      { now: 16, mediaTime: 0.033, width: 640, height: 480, presentedFrames: 0 },
+      { now: 49, mediaTime: 0.066, width: 640, height: 480, presentedFrames: 0 },
     ])
     expect(v.pending.size).toBe(1)
+  })
+
+  it('passes the capture time when the browser reports it', () => {
+    const v = fakeVideo({ rvfc: true })
+    const frames: VideoFrameInfo[] = []
+    const s = new FrameScheduler(v.video, (f) => frames.push({ ...f }))
+    s.start()
+    v.present(16, 0.033, { captureTime: 5.5 })
+    v.present(49, 0.066)
+    expect(frames[0]!.captureTime).toBe(5.5)
+    expect(frames[1]!.captureTime).toBeUndefined()
+  })
+
+  it('passes the presented frame counter', () => {
+    const v = fakeVideo({ rvfc: true })
+    const frames: VideoFrameInfo[] = []
+    const s = new FrameScheduler(v.video, (f) => frames.push({ ...f }))
+    s.start()
+    v.present(16, 0.033, { presentedFrames: 10 })
+    v.present(83, 0.1, { presentedFrames: 12 })
+    expect(frames.map((f) => f.presentedFrames)).toEqual([10, 12])
   })
 
   it('stop() cancels the pending request and start() resumes', () => {

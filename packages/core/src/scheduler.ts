@@ -7,6 +7,17 @@ export interface VideoFrameInfo {
   /** Frame size in pixels. */
   width: number
   height: number
+  /**
+   * When the camera captured the frame (`performance.now()` clock, ms), from the `requestVideoFrameCallback`
+   * metadata when the browser provides it (local cameras in Chromium); `undefined` otherwise.
+   */
+  captureTime?: number | undefined
+  /**
+   * Frames the browser has presented for composition since the video started (`requestVideoFrameCallback`
+   * metadata); a jump of more than 1 between two callbacks means camera frames went by without a callback (the main
+   * thread was busy). `undefined` in `animation-frame` mode.
+   */
+  presentedFrames?: number | undefined
 }
 
 export type FrameCallback = (frame: VideoFrameInfo) => void
@@ -98,7 +109,7 @@ export class FrameScheduler {
   #onVideoFrame = (now: number, meta: VideoFrameCallbackMetadata): void => {
     this.#handle = undefined
     if (!this.#running) return
-    this.#emit({ now, mediaTime: meta.mediaTime, width: meta.width, height: meta.height })
+    this.#emit({ now, mediaTime: meta.mediaTime, width: meta.width, height: meta.height, captureTime: meta.captureTime, presentedFrames: meta.presentedFrames })
   }
 
   #onAnimationFrame = (now: number): void => {
