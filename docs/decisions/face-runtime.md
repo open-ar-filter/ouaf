@@ -243,6 +243,7 @@ display = rendered frames per second.
 | W8 | ×1, worker, eager | 14.3 Hz | 29.1 | 67 | 33 | 5.7 |
 | W6, 5 min | ×4, worker, eager | **8.8 Hz** | 29.2 | 113 | 70 | 15 |
 | W8, 5 min | **×1, worker, eager** | **14.6 Hz** | 29.1 | 68 | 32 | 5.6 |
+| W8, 10 min | ×1, worker, eager | 13.8 Hz (14.1 → 13.4 Hz minute by minute) | 29.0 | 67 | 36 | 6.0 |
 
 Reading:
 
@@ -255,6 +256,8 @@ Reading:
   because the threads, rendering and video decoding compete for the 4 big cores. On the Note 11S, W6 leads W8 over
   one minute (16.4 against 14.3 Hz) but collapses to 8.8 Hz over 5 minutes (landmarks 24 → 70 ms), while W8 holds
   14.6 Hz. Six threads are already slower than four on the main thread (R6).
+- **Sustained (10 min, Note 11S, W8)**: the display stays at 29 fps and tracking drifts by ≈ 5 % (14.1 → 13.4 Hz,
+  landmarks 33 → 37 ms, battery 29 → 33 °C), with no collapse.
 - **GPU detector crop**: the letterbox costs 4–6 ms less on the GPU (W3 → W4 on the Note 14 Pro, 19 → 13 ms). The
   jump from W1 to W2 (16.6 → 24.9 Hz) comes mostly from blendshapes running 3× faster in W2: run-to-run variance,
   not the crop.
