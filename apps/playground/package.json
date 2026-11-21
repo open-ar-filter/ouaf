@@ -15,6 +15,7 @@
     "@litertjs/core": "2.6.0",
     "@mediapipe/tasks-vision": "1.2.3",
     "@ouaf/core": "0.1.0",
+    "@ouaf/spec": "0.1.0",
     "three": "^0.187.0",
     "typebox": "^1.4.7"
   },

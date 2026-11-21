@@ -1,0 +1,17 @@
+{
+  "ouaf": "1",
+  "id": "mouth-tint",
+  "name": "Mouth tint (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Bindings fixture: the image turns red as the mouth opens (face.blendshapes.jawOpen through range/to), and the dot grows with the param `size`.",
+  "requires": { "face": true, "plugins": ["playground@^1"] },
+  "params": {
+    "strength": { "type": "number", "default": 1, "min": 0, "max": 1, "transition": 500 }
+  },
+  "layers": [
+    { "type": "playground:dot", "anchor": "mouth", "color": "#ffffff", "size": 0.3 },
+    { "type": "playground:tint", "color": "#ff2020", "amount": { "bind": "face.blendshapes.jawOpen", "range": [0.05, 0.4], "to": [0, 1], "default": 0 } },
+    { "type": "playground:tint", "color": "#4040ff", "amount": { "param": "strength" } }
+  ]
+}
