@@ -161,6 +161,7 @@ implementation are listed in Appendix D (informative).
 | `anchor` | `head` | Anchor (section 5). |
 | `offset` | `[0,0,0]` | Offset in the anchor frame, *bindable*. |
 | `rotation` | `[0,0,0]` | Rotation in degrees, *bindable*. |
+| `scale` | `1` | Size multiplier, a number or `[x, y, z]`, *bindable*; e.g. animated by a script for a "pop" (12.4). |
 | `orient` | `face` | `face`: follows the head; `screen`: keeps facing the screen (readable text). |
 | `follow` | `auto` | What the anchor **position** follows: `rigid`: the head pose only (stable, ignores expressions); `expression`: the live landmarks (moves with the mouth, brows, cheeks); `auto`: the anchor's default (5.3). Rotation always follows the head. No effect with `anchor: "screen"`. |
 | `faces` | `all` | Faces affected (5.4). |
@@ -345,24 +346,52 @@ vec4 effect(vec2 uv) {
 ```
 
 - **Fragment only**, GLSL ES 3.0, **without** a `#version` directive or `main()`: the engine provides the wrapper.
-- Provided inputs: `ouaf_sample(vec2)` (image at this stage), `ouaf_time` (s), `ouaf_resolution` (px), `ouaf_faceMask`,
-  `ouaf_prevFrame` (previous frame, for trail effects); *provisional*: `ouaf_personMask`, `ouaf_audioLevel`, anchor positions.
-- Each `uniforms` entry becomes a uniform of the same name (float, bool, vec2, vec3, color → vec4); each `textures`
-  entry a `sampler2D`.
+- Each `uniforms` entry becomes a uniform of the same name (number → `float`, boolean → `bool`, `vec2`, `vec3`,
+  color → `vec4`); each `textures` entry a `sampler2D` of the same name.
 - `stage`: `background`, `face` (limited to the face mesh) or `post` (full screen, default).
-- A validator SHOULD compile the shader and report errors with their line numbers.
+- Names starting with `ouaf_` or `OUAF_` are reserved for the engine.
+
+### 11.1 Inputs
+
+| Input | Description |
+|---|---|
+| `vec4 ouaf_sample(vec2 uv)` | Image at this stage: what was drawn before this shader, as sRGB-encoded values. |
+| `float ouaf_time`, `float ouaf_dt` | Media time and duration of the frame, in seconds. |
+| `vec2 ouaf_resolution` | Size of the rendered image, in pixels. |
+| `float ouaf_faceMask(vec2 uv)` | 0 to 1: soft mask covering every tracked face (1 inside, feathered at the edge). |
+| `vec4 ouaf_prevFrame(vec2 uv)` | Output of **this shader** at the previous frame (trails, feedback); black at the first frame. |
+| `int ouaf_faceCount` | Number of tracked faces (0 when none), at most `OUAF_MAX_FACES`. |
+| `OUAF_MAX_FACES` | Size of the per-face arrays: the engine's maximum number of faces (5.4). |
+| `float ouaf_faceSize[OUAF_MAX_FACES]` | Distance between the eye centres of each face, in `uv` units of the image height. |
+| `vec2 ouaf_anchor_<name>[OUAF_MAX_FACES]` | Position of each anchor declared in the layer's `anchors` (below), per face. |
+
+- `uv` and anchor positions follow the GLSL convention: from 0 to 1 over the image, **origin at the bottom left, y up**,
+  in the image as displayed (mirroring applied). Values of the per-face arrays are only meaningful for
+  `i < ouaf_faceCount`.
+- **Anchors are declared**, since GLSL has no strings: `"anchors": ["noseTip", "leftEye"]` in the layer gives
+  `ouaf_anchor_noseTip` and `ouaf_anchor_leftEye`. Only declared anchors are computed and uploaded. Face anchors only
+  (5.3); declaring anchors, using `stage: "face"` or calling `ouaf_faceMask` requires `requires.face`.
+- An engine only allocates what a shader uses: `ouaf_prevFrame` costs an extra image buffer, so the engine provides
+  it only to a shader that calls it.
+- Reserved for later versions: `ouaf_personMask` (segmentation, phase 2), `ouaf_audioLevel` (audio, phase 3).
+- A validator SHOULD compile the shader and report errors with their line numbers, counted in the author's file.
 - An engine MUST handle GPU context loss and disable a filter whose shader causes it.
 - For a future WebGPU renderer, GLSL → WGSL translation happens at packaging time; authors only write GLSL.
 
-## 12. Scripts *(provisional)*
+## 12. Scripts
 
 ### 12.1 Execution model
 
-- The script runs in a **sandbox** (section 15): no DOM, no network, no access to the host.
-- It talks to the engine through messages; its commands take effect with **at least one frame of latency**.
-  Hence the rule: **spatial work is native** (anchoring, tracking, bindings) and **the script does the logic**
-  (change a text, start an animation, count points).
+- The script runs in a **sandbox** (section 15): no DOM, no network, no access to the host. Each filter has its own.
+- It talks to the engine through messages. Its commands take effect **at the earliest at the next frame**: the
+  answer to frame N is applied when rendering frame N+1 or later. Hence the rule: **spatial work is native**
+  (anchoring, tracking, bindings, animations) and **the script does the logic** (change a text, start an animation,
+  count points).
 - It only receives the data it asks for (12.4).
+- **Live sources** (camera, a playing video): the engine never waits for the script. An answer is applied at the
+  first frame rendered after it arrives.
+- **File sources** (image, offline video, `pushFrame`): the engine waits for the answer to frame N before rendering
+  frame N+1, so that every run gives the same result (12.5). The watchdog (12.7) still applies.
 
 ### 12.2 The manifest's `script` section (filled in by `ouaf pack`)
 
@@ -370,15 +399,19 @@ vec4 effect(vec2 uv) {
 "script": { "entry": "script.js", "setup": true, "update": true, "on": ["smile", "message:startGame"], "draw": ["bubble"], "uses": ["face.pose"] }
 ```
 
+`uses` lists the data the script receives (12.4); when omitted, `["face.pose", "face.blendshapes"]`.
+
 ### 12.3 Functions in `filter.js`
 
 ```js
-export default {
+import { defineFilter } from '@ouaf/spec'
+
+export default defineFilter({
   // … manifest data …
   state: { smiles: 0 },                       // initial (global) state
   setup(f) { },                               // once, on activation
   on: {
-    smile(f, { face }) {                      // every event carries the face concerned
+    smile(f, { face }) {                      // every face event carries the face concerned
       f.state.smiles++
       f.layer('label', face).set({ text: `😄 × ${f.state.smiles}` })
       f.layer('label', face).animate({ scale: [1, 1.4, 1] }, { duration: 300, easing: 'outBack' })
@@ -387,30 +420,73 @@ export default {
   },
   update(f, frame) { },                       // every frame (avoid it when a binding is enough)
   draw: { bubble(ctx, f, frame) { } },        // canvas layers
-}
+})
 ```
+
+`defineFilter` returns its argument unchanged; it only gives editors and type checkers the types of the format
+(`f.layer()` only accepts the declared layer ids).
 
 ### 12.4 The `f` API and `frame` data
 
 | API | Purpose |
 |---|---|
-| `f.layer(id, face?)` | Layer handle: `.set(props)`, `.animate(props, { duration, easing })`, `.play(animationName)`, `.invalidate()` (canvas). |
-| `f.state` / `face.state` | Global state / per-face state. |
-| `f.params` | Parameters, **read-only**. |
-| `f.emit(name, data)` | Message to the host (`engine.on('filter:name')`). |
-| `f.asset(name)` | Asset usable in a canvas. |
+| `f.layer(id, face?)` | Handle on a layer (below). With `face`, the instance of that face; without, every instance. |
+| `f.state` / `face.state` | Global state / per-face state (reset when the face leaves). Plain data. |
+| `f.params` | Parameters, **read-only**, updated at each frame. |
+| `f.emit(name, data?)` | Message to the host: `handle.on('filter:<name>', data)` and `engine.on('filter:<name>', { filter, data })`. |
+| `f.asset(name)` | Image asset, as an `ImageBitmap` drawable in a canvas (a spritesheet gives its first frame). Synchronous: assets are preloaded (10.4). |
 | `f.sound(name)` | `.play()`, `.stop()` *(reserved)*. |
-| `f.random()` | **Seeded** random numbers (reproducible rendering). |
-| `f.after(ms, fn)`, `f.every(ms, fn)` | Timers, in media time. |
+| `f.random()` | Number in [0, 1) from the filter's seeded generator (12.5). |
+| `f.after(ms, fn)`, `f.every(ms, fn)` | Timers in **media time**: `fn(f)` runs at the first frame whose time reaches the deadline. They return `{ cancel() }` and are all cancelled when the filter is deactivated. |
 
-`frame` contains `time` (media time, s), `faces` (list), and for each face `id`, `index`, and depending on `uses`:
-`face.pose` + `face.size` (default), `face.blendshapes` (default; absent while the engine has dropped them, 16.2),
-`face.anchors` (screen positions), `face.landmarks` (478 points).
+**Layer handles.**
+
+- `.set(props)`: sets properties. Settable: every *bindable* property, plus the content properties `text`, `color`,
+  `font`, `src` (a declared asset), `lut`, `animation`, `size` and `scale`. Structural properties (`type`, `id`,
+  `anchor`, `faces`, `stage`, `kind`, `width`, `height`) cannot be set. A set value **replaces** the property's
+  binding, if any, until the script sets the property to `null`, which restores the manifest value (fixed or bound).
+- `.animate(props, { duration, easing?, delay?, repeat? })`: animates numbers, vectors and colors, played by the
+  engine at the frame rate (no per-frame message). A value is either the target (animated from the current value) or
+  a list of keyframes evenly spaced over `duration`: for a vector property (`offset`, `rotation`), a list of numbers
+  is the target and a list of vectors is keyframes; for `scale`, a list of numbers is keyframes of a uniform scale
+  (`{ scale: [1, 1.4, 1] }`). `repeat`: number of extra runs, `-1` for endless. Animating a
+  property cancels the previous animation of that property. The final value stays set, as with `.set()`.
+- `.play(animationName)` (model), `.invalidate()` (canvas: redraw at the next frame).
+- Easings: `linear`, and `in`, `out`, `inOut` × `Quad`, `Cubic`, `Back`, `Elastic`, `Bounce` (e.g. `outBack`,
+  `inOutQuad`), with the usual definitions of Robert Penner's equations. Default: `inOutQuad`.
+
+**Messages.** `data` of `f.emit` MUST be structured-cloneable and at most 64 KB; an engine MUST refuse larger
+messages with a warning, and MAY drop messages above 60 per second. The host sends messages the other way with
+`handle.send(name, data)` (one filter) or `engine.send(name, data)` (every filter of the stack); the script receives
+them as the `message:<name>` event (13).
+
+**`frame` data.** `frame.time` (media time, s), `frame.dt` (s since the previous call to the script, which covers the
+frames it skipped, 12.7), `frame.faces` (list) and, with `uses: ["pairs"]`, `frame.pairs`. Each face has `id`
+(stable while the face is tracked, 5.4), `index`, `state`, and, depending on `uses`:
+
+| `uses` | Per face |
+|---|---|
+| `face.pose` (default) | `pose: { yaw, pitch, roll }` in degrees and `size`, as the data paths of section 8. |
+| `face.blendshapes` (default) | `blendshapes: { jawOpen: 0.3, … }` from 0 to 1; absent while the engine has dropped them (16.2). |
+| `face.anchors` | `anchors: { noseTip: [x, y], … }`: every face anchor of 5.3. |
+| `face.landmarks` | `landmarks`: `Float32Array` of 478 × 3 values `x, y, z`. |
+| `pairs` | (on `frame`) `pairs`: one `{ a, b, distance, contact }` per pair of faces (below). |
+
+- **Positions** (`anchors`, `landmarks`) are in **display space, normalized**: from 0 to 1 over the displayed image,
+  origin at the top left, **y down** (as in a canvas), mirroring applied, so they match what the person sees.
+  `landmarks` `z` is a relative depth at the scale of `x` (smaller is closer to the camera).
+- **Pairs**: `a` and `b` are faces of `frame.faces`; `distance` is the on-screen distance between the two head
+  centres, in **face units** (the mean eye distance of the two faces), so it does not depend on how far the people
+  are from the camera; `contact` is `true` while the face outlines touch or overlap on screen (the `pairContact`
+  event, 13). The distance is measured on screen: two people one behind the other can look in contact.
 
 ### 12.5 Determinism
 
-With a file source (image, video), a filter MUST produce the same result on every run:
-`frame.time` is the media time and `f.random()` is seeded with a fixed value.
+- With a file source (image, offline video, `pushFrame`), a filter MUST produce the same result on every run:
+  `frame.time` is the media time, the engine waits for the script (12.1), and `f.random()` is seeded with a fixed value.
+- With a live source, `f.random()` is seeded randomly at each activation, so that random choices differ between
+  sessions. The same rule applies to `{ pick, by: "random" }` assets (10.1).
+- A host MAY fix the seed (reference engine: `createEngine({ seed })`), e.g. to reproduce a bug.
 
 ### 12.6 Canvas
 
@@ -420,8 +496,17 @@ keep canvases small.
 
 ### 12.7 Limits
 
-An engine MUST enforce a per-frame time budget for the script. A late answer is ignored for the current frame;
-repeated overruns stop the script (the declarative rest of the filter keeps working).
+The sandbox runs the script off the rendering thread: a slow script makes its own commands late, never the rendering.
+
+- An engine MUST NOT block rendering on a script with a live source.
+- **One frame in flight**: an engine MUST NOT send frame N+1 to the script before it has answered frame N. Frames
+  produced in between are not sent to the script (the next `frame.dt` covers them); events are queued and delivered
+  in order, never dropped.
+- **Watchdog**: a script that does not answer within **1 s** (`setup` included) MUST be stopped (the reference
+  engine terminates its Worker). The engine emits an `error` event with the code `SCRIPT_STOPPED`; the rest of the
+  filter (layers, bindings, animations already started) keeps working. The script stays stopped until the filter is
+  activated again.
+- An engine SHOULD emit a warning when the script answers more slowly than the rendering frame rate.
 
 ## 13. Events
 
@@ -436,8 +521,11 @@ repeated overruns stop the script (the declarative rest of the filter keeps work
 | `kiss` | `mouthPucker` | 0.7 |
 | `nod`, `shake` | Vertical / horizontal head oscillation | 0.5 |
 | `paramChange` | A parameter changed: `{ name, value, previous }` | — |
-| `message:<name>` | Message from the host (`engine.send(name, data)`) | — |
+| `pairContact`, `pairSeparate` | Two faces touch / move apart on screen; `payload.faces` = `[a, b]` (12.4) | 0 |
+| `message:<name>` | Message from the host (`handle.send(name, data)` or `engine.send(name, data)`) | — |
 
+- Pair events carry the two faces instead of one. Their threshold is the gap between the two face outlines, in face
+  units: `0` fires when the outlines touch, `0.2` slightly before.
 - Expression events fire **once** at the start of the gesture, with **hysteresis** (no bursts on the slightest twitch).
 - Expression events MUST keep working when blendshapes are dropped (16.2): the engine then derives them from the
   landmark geometry (mouth opening, eyelid opening, eyebrow height, mouth corners…), mapped to the same 0–1 scale as
@@ -464,7 +552,8 @@ repeated overruns stop the script (the declarative rest of the filter keeps work
    to untrusted code.
 3. **No identification.** An engine MUST NOT recognize or re-identify a person. Face ids are ephemeral.
 4. **Untrusted assets.** Size and dimensions are checked before decoding; SVGs are rendered as images; no remote resources.
-5. **Denial of service.** Per-frame time budget, script stopped after repeated overruns, GPU context loss handled.
+5. **Denial of service.** The script never blocks rendering, at most one frame is in flight to it, a script that
+   does not answer within 1 s is stopped (12.7), and GPU context loss is handled (11).
 6. **Deceptive UI.** `overlay` layers are drawn into the canvas: a filter cannot create input fields.
 7. **Expressions, not emotions.** Events describe expressions (smile, open mouth). Emotion inference is reserved for an
    explicit plugin; hosts in education or workplace settings MUST disable it (EU AI Act).
@@ -585,8 +674,6 @@ which are implementation choices outside this specification. The items below rem
 phase 1 work they depend on.
 
 - Offset of the `head` origin (Appendix D), to be checked once rigid anchors are rendered.
-- Detailed script API (section 12): signatures, available easings, per-frame time budget.
-- Provisional shader inputs (`ouaf_personMask`, `ouaf_audioLevel`, anchors).
 - Default event thresholds, after measurements on a variety of faces, and the mapping of the geometric measures used
   when blendshapes are dropped (13, 16.2) onto the same scale.
 - Numeric limits (package size, dimensions, number of layers) after measurements on mobile: the phase 0 runs only

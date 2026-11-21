@@ -136,7 +136,8 @@ describe('expression events: defaults', () => {
     const reg = createRegistry()
     for (const [name, threshold] of Object.entries(DEFAULT_EVENT_THRESHOLDS)) expect(reg.events.get(name)?.threshold, name).toBe(threshold)
     for (const name of EXPRESSION_EVENTS) expect(reg.events.get(name)?.face, name).toBe(true)
-    const face = [...reg.events.values()].filter((e) => e.face).map((e) => e.name)
+    // Pair events (spec §13) carry two faces: they come from a pair detector, not from the per-face detectors.
+    const face = [...reg.events.values()].filter((e) => e.face && !e.name.startsWith('pair')).map((e) => e.name)
     expect([...EXPRESSION_EVENTS].sort()).toEqual(face.sort())
     expect(Object.keys(DEFAULT_EVENT_MIN_DURATION_MS).sort()).toEqual(EXPRESSION_EVENTS.filter((n) => !n.startsWith('face')).sort())
   })
