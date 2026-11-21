@@ -472,7 +472,7 @@ To keep the tracking rate above the floor, an engine MAY drop the following capa
 | Order | Capability | While dropped |
 |---|---|---|
 | 1 | Blendshapes, unless `requires.blendshapes` (4.1) | `face.blendshapes.<name>` bindings take their `default` (8); `face.blendshapes` is absent from script data (12.4); expression events come from the landmark geometry (13). |
-| 2 | Faces beyond the first | The engine lowers `maxFaces` (5.4): layers keep applying to the faces still tracked. |
+| 2 | Faces beyond the first | The engine lowers `maxFaces` (5.4), down to the number of faces tracked, which also drops the search for new faces while every slot is taken: layers keep applying to the faces still tracked, and a person who enters the image is not picked up until the capability is restored. |
 | 3 | Analysis resolution | The engine analyses a smaller copy of the camera image; tracking is less precise on small faces. |
 
 - An engine MUST NOT drop a required capability: face landmarks and pose, and blendshapes when `requires.blendshapes`
@@ -559,14 +559,20 @@ the extra one being `_neutral`):
 `mouthSmileLeft`, `mouthSmileRight`, `mouthStretchLeft`, `mouthStretchRight`, `mouthUpperUpLeft`, `mouthUpperUpRight`,
 `noseSneerLeft`, `noseSneerRight` (plus `_neutral`, not exposed).
 
-## Appendix C — To be confirmed (phase 0 / phase 1)
+## Appendix C — To be confirmed (phase 1)
+
+The phase 0 measurements (`docs/decisions/`) settled the tracking runtime, the worker and the default number of faces,
+which are implementation choices outside this specification. The items below remain open and are settled by the
+phase 1 work they depend on.
 
 - Offset of the `head` origin (Appendix D), to be checked once rigid anchors are rendered.
 - Detailed script API (section 12): signatures, available easings, per-frame time budget.
 - Provisional shader inputs (`ouaf_personMask`, `ouaf_audioLevel`, anchors).
 - Default event thresholds, after measurements on a variety of faces, and the mapping of the geometric measures used
   when blendshapes are dropped (13, 16.2) onto the same scale.
-- Numeric limits (package size, dimensions, number of layers) after measurements on mobile.
+- Numeric limits (package size, dimensions, number of layers) after measurements on mobile: the phase 0 runs only
+  drew a debug overlay (1–3 ms per frame), so rendering limits are measured with real layers (benchmark page,
+  adaptive quality).
 
 ## Appendix D — Reference anchor mapping (informative)
 
