@@ -20,9 +20,9 @@ import { LANDMARKS_STRIDE, LANDMARK_COUNT, type FaceFrame } from './face.ts'
 import { computeVideoToClip, createVideoToClip, resolveRenderSize, type FitMode, type Size } from './viewport.ts'
 
 export interface RendererOptions {
-  /** Video element playing the camera stream (`CameraSource.video`). */
+  /** Video element playing the camera stream (`VideoSource.video`: camera or file). */
   video: HTMLVideoElement
-  /** Mirror the image and everything drawn over it (`CameraSource.mirrored`). */
+  /** Mirror the image and everything drawn over it (`VideoSource.mirrored`). */
   mirrored: boolean
   /** Capacity of the landmark debug layer; faces beyond it are not drawn. */
   maxFaces: number

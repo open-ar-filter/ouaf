@@ -12,10 +12,12 @@
       body { margin: 0; padding: 16px; }
       dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; }
       dt { font-weight: 600; }
-      #stage { margin-top: 12px; }
+      #stage { margin-top: 12px; position: relative; }
       #stage > * { display: block; width: 100%; max-width: 640px; background: #000; }
       #stage > [hidden] { display: none; }
-      .view { position: relative; }
+      /* Kept displayed under the WebGL canvas so the browser keeps decoding it at full rate. */
+      #stage > video.backing { position: absolute; top: 0; left: 0; z-index: 0; }
+      .view { position: relative; z-index: 1; }
       .view > canvas { display: block; width: 100%; }
       .view > .anchors-overlay { position: absolute; inset: 0; height: 100%; pointer-events: none; }
       video.mirrored { transform: scaleX(-1); }

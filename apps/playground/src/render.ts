@@ -1,10 +1,12 @@
-import { Renderer, type CameraSource, type FaceFrame, type FitMode } from '@ouaf/core'
+import { Renderer, type FaceFrame, type FitMode, type VideoSource } from '@ouaf/core'
 import { createAnchorsOverlay } from './anchors-overlay.ts'
 import { createSyntheticFace } from './debug-face.ts'
 
 export interface PlaygroundRenderer {
   /** Element to show instead of the raw `<video>`. */
   readonly element: HTMLElement
+  /** The WebGL canvas (for test snapshots). */
+  readonly canvas: HTMLCanvasElement
   /** Internal render resolution. */
   readonly width: number
   readonly height: number
@@ -24,7 +26,7 @@ export interface PlaygroundRenderer {
  * - `debug-face` — draw a synthetic face while no face is tracked (see `debug-face.ts`);
  * - `anchors=0` — hide the labelled anchors overlay (#10), shown by default.
  */
-export function createRenderer(camera: CameraSource, options: { maxFaces: number }): PlaygroundRenderer | undefined {
+export function createRenderer(camera: VideoSource, options: { maxFaces: number }): PlaygroundRenderer | undefined {
   const params = new URLSearchParams(location.search)
   const fit: FitMode = params.get('fit') === 'contain' ? 'contain' : 'cover'
   const res = /^(\d+)x(\d+)$/.exec(params.get('res') ?? '')
@@ -55,6 +57,7 @@ export function createRenderer(camera: CameraSource, options: { maxFaces: number
 
   return {
     element,
+    canvas: renderer.canvas,
     get width() {
       return renderer.width
     },

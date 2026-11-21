@@ -5,3 +5,6 @@ dist/
 /shots/
 # Tracking models downloaded by `npm run fetch-models`
 /apps/playground/models/
+/test-media/.work/
+/test-results/
+/playwright-report/
