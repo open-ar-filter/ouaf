@@ -37,6 +37,10 @@ export function urlSource(url: string | URL, fetchImpl: typeof fetch = fetch): F
       throw new OuafError('filter-load', `Could not fetch ${target.href}.`, { cause })
     }
     if (!res.ok) throw new OuafError('filter-load', `Could not fetch ${target.href}: HTTP ${res.status}.`)
+    // Dev servers with an SPA fallback answer a missing file with the index page.
+    if (res.headers.get('content-type')?.includes('text/html')) {
+      throw new OuafError('filter-load', `Could not fetch ${target.href}: the server returned an HTML page (missing file, or a server that does not serve this folder?).`)
+    }
     return res
   }
   return {

@@ -130,3 +130,29 @@ describe('preloadAssets', () => {
     )
   })
 })
+
+describe('urlSource', () => {
+  it('reports an HTML page served instead of a filter file (SPA fallback)', async () => {
+    const { urlSource } = await import('../src/engine/assets.ts')
+    const fetchImpl = (async () => new Response('<!doctype html>', { headers: { 'content-type': 'text/html' } })) as typeof fetch
+    await expect(urlSource('https://host.test/filters/x/', fetchImpl).manifest()).rejects.toThrow(/HTML page/)
+  })
+
+  it('resolves the manifest and assets against the folder', async () => {
+    const { urlSource } = await import('../src/engine/assets.ts')
+    const seen: string[] = []
+    const fetchImpl = (async (url: URL) => {
+      seen.push(String(url))
+      return new Response('{}', { headers: { 'content-type': 'application/json' } })
+    }) as unknown as typeof fetch
+    const folder = urlSource('https://host.test/filters/x', fetchImpl)
+    await folder.manifest()
+    await folder.file('assets/a.png')
+    await urlSource('https://host.test/filters/y/manifest.json', fetchImpl).manifest()
+    expect(seen).toEqual([
+      'https://host.test/filters/x/manifest.json',
+      'https://host.test/filters/x/assets/a.png',
+      'https://host.test/filters/y/manifest.json',
+    ])
+  })
+})
