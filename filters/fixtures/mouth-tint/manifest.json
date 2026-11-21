@@ -4,7 +4,7 @@
   "name": "Mouth tint (engine test fixture)",
   "version": "1.0.0",
   "license": "CC0-1.0",
-  "description": "Bindings fixture: the image turns red as the mouth opens (face.blendshapes.jawOpen through range/to), with a white dot on the mouth; the param `strength` adds a blue veil, chained after the red tint (both multiply: red then blue gives near black).",
+  "description": "Bindings fixture: red tint as the mouth opens (jawOpen, range/to); the param strength chains a blue veil after it.",
   "requires": { "face": true, "plugins": ["playground@^1"] },
   "params": {
     "strength": { "type": "number", "default": 0, "min": 0, "max": 1, "transition": 500 }
