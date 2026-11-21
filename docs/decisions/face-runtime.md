@@ -1,7 +1,8 @@
 # Face tracking runtime: MediaPipe tasks-vision or our own pipeline on LiteRT.js (#83)
 
-Status: **proposed**. The desktop numbers below are clear-cut; the decision is final once the Redmi Note 11S (and
-an iPhone) have run the R1–R9 protocol in [`phase0-measurement-protocol.md`](phase0-measurement-protocol.md#83--face-models-on-another-runtime).
+Status: **proposed**. The desktop numbers below are clear-cut, and the Redmi Note 11S confirms the lead once the
+crop runs on the GPU (2026-11-21, below). The decision is final once an iPhone and a high-end Android phone have
+run the R1–R9 protocol in [`phase0-measurement-protocol.md`](phase0-measurement-protocol.md#83--face-models-on-another-runtime).
 
 ## Question
 
@@ -23,11 +24,13 @@ would our own pipeline cost to build and maintain?
   install), and its CPU path is the same XNNPACK; it stays the fallback if LiteRT.js disappoints on devices.
 - Our own pipeline (`apps/playground/src/spikes/runtime/`): the geometry MediaPipe's graph does around the models
   (SSD anchors and box decoding, weighted NMS, rotated square ROI from the eyes, ROI tracked from the previous
-  frame's landmarks so the detector only runs when the face is lost, rotated crop on a 2D canvas, projection back
-  to frame pixels). About 450 lines with the page.
-- Page `/spikes/runtime.html`: LiteRT.js (`threads=N`, `accel=webgpu`) or MediaPipe (`runtime=mediapipe`) on the
-  same clip, same performance panel and export, and a **Check vs MediaPipe** button that runs both on one paused
-  frame and draws both sets of points.
+  frame's landmarks so the detector only runs when the face is lost, rotated crop on a 2D canvas or, with
+  `crop=gpu`, on WebGL2 (`gpu-crop.ts`: only the 256×256 crop is read back), projection back to frame pixels).
+  About 550 lines with the page.
+- Page `/spikes/runtime.html`: LiteRT.js (`threads=N`, `accel=webgpu`, `crop=gpu`, `schedule=eager`) or MediaPipe
+  (`runtime=mediapipe`) on the same clip, same performance panel and export, a **tracking rate** (`track Hz`:
+  completed runs per second, apart from the rendering frame rate) and a **Check vs MediaPipe** button that runs both
+  on one paused frame and draws both sets of points.
 
 Two LiteRT.js quirks found on the way, both handled in the spike:
 
@@ -80,6 +83,66 @@ Reading:
 - If the phone keeps the same ratio, 75–100 ms with MediaPipe would become ≈ 40–50 ms single-threaded and
   ≈ 25–30 ms with 4 threads: the 20–30 Hz the phone needs. To be confirmed (R3, R5).
 
+## Results (Redmi Note 11S)
+
+`2201117SY`: Helio G96 (MT6781, 2× Cortex-A76 + 6× Cortex-A55), Mali-G57 MC2, Android, Chrome 157, 2026-11-21.
+Not the full R1–R9 protocol yet: 2–15 s windows, one session, battery temperature 31 → 35 °C. Tracking rate =
+completed runs per second; when every frame is analysed (`dropped` = 0) it equals the rendering frame rate.
+
+**Front camera** (720×1280), measured by hand:
+
+| Variant | tracking | pipeline p50 / p95 | crop | landmarks | blendshapes |
+|---|---|---|---|---|---|
+| MediaPipe GPU | 7.1 Hz | 133.6 / 157.7 | | | |
+| MediaPipe CPU | 11.5 Hz | 67.5 / 80.1 | | | |
+| LiteRT.js wasm, 4 threads (2 runs) | 10.3–11.3 Hz | 85.0–93.1 | 37.8–44.9 | 39.4–41.1 | 7.6–8.1 |
+| LiteRT.js WebGPU | ≈ 6 Hz (2 frames in 3 dropped) | 142.7 / 249.9 | 49.8 | 61.0 | 19.6 |
+| LiteRT.js wasm, 4 threads, `crop=gpu` | 16.5 Hz | 57.4 / 66.5 | **14.4** | 36.0 | 6.7 |
+| … `crop=gpu&blendshapes=0` | ≈ 17 Hz | 50.5 / 69.6 | 14.6 | 35.6 | — |
+| … 1 thread, `crop=gpu&blendshapes=0` | ≈ 17 Hz | 49.5 / 66.9 | 13.2 | 35.5 | — |
+
+**Clip `pesquet-closeup`** (720×1280, 30 fps), Chrome driven over USB (DevTools protocol), 15 s per variant:
+
+| Variant | tracking | pipeline p50 | crop | landmarks |
+|---|---|---|---|---|
+| MediaPipe GPU | 4.8 Hz | 173 | | |
+| MediaPipe CPU | 7.5 Hz | 102 | | |
+| LiteRT.js wasm, 4 threads | 11.2 Hz | 85 | 35.3 | 39.0 |
+| LiteRT.js wasm, 4 threads, `crop=gpu` (4 runs) | **14.7–16.9 Hz** | 53–63 | 19.7–29.0 | 23.8–32.4 |
+| … `crop=gpu&blendshapes=0` | **19.3 Hz** | 44.5 | 20.4 | 23.4 |
+| LiteRT.js wasm, 1 thread, `crop=gpu` | 11.2 Hz | 83 | 30.4 | 45.4 |
+| any of the above with `schedule=eager` | 14–22 Hz | 42–71 | | 20–35 |
+
+With `schedule=eager`, rendering drops to ≈ 1 fps (see below). The WebGPU readback (`read`) alone is 48.9 ms.
+
+Reading:
+
+- **The canvas crop was half the pipeline on the phone** (38–45 ms against 4 ms on desktop): with
+  `willReadFrequently` the canvas lives on the CPU, so `drawImage(video)` pulls the whole 720×1280 frame back from
+  the GPU and resamples it in software. The WebGL2 crop reads back only the 256×256 crop: 13–29 ms (the readback
+  waits for the GPU, plus the float conversion). It gives the same landmarks as the canvas crop against MediaPipe
+  (0.6 % and 1.2 % mean distance of the face size on two clip frames, desktop).
+- **LiteRT.js with `crop=gpu` is ≈ 1.6–1.9× MediaPipe CPU** with 4 threads (pipeline 53–63 ms against 102 ms on the
+  clip), and ≈ 1.2–1.4× on a single thread (83 against 102 ms on the clip; 49.5 ms without blendshapes against
+  67.5 ms on the camera). The single-threaded lead is below the ≥ 1.5× set in the recommendation: on this phone,
+  most of the gain needs threads, hence cross-origin isolation.
+- **Threads**: 4 threads beat 1 on the clip (≈ 15.5 Hz against 11.2 Hz), not in the hand-measured camera runs
+  (landmarks 35.6 against 35.5 ms). Run-to-run variance is large: the landmark model's p50 ranges from 20 to 57 ms
+  for the same variant, probably which core (A76 or A55) the work lands on, and heat. Decisions on threads need
+  5-minute recordings.
+- **Both GPU paths are ≈ 2× slower than CPU** on this Mali-G57: MediaPipe GPU, and LiteRT.js WebGPU (slower
+  inference plus ≈ 49 ms of output readback). WebGPU is not worth it here; the backend has to be chosen by
+  measuring (#90).
+- **Tracking snaps to display ticks**: runs start on frame callbacks, which come on 16.7 ms ticks, so a sequential
+  pipeline settles on 1000 / (16.7 n) Hz: 50 ms → 20 Hz, 66.7 ms → 15 Hz.
+- **`schedule=eager`** (next run as soon as one ends, on the latest frame) lifts tracking to 20–22 Hz when the
+  pipeline is ≈ 42–50 ms, but **starves rendering on the main thread** (≈ 1 fps), even when yielding one rendering
+  step between runs: a LiteRT.js run keeps the main thread busy throughout, not only during the crop. The gain
+  needs the pipeline in a worker (#6).
+- Against the device adaptation rules of #90 (15 Hz floor, shown again above 18 Hz): LiteRT.js 4 threads with
+  `crop=gpu` sits at ≈ 15–17 Hz with blendshapes and ≈ 19 Hz without. The filter is shown, and dropping
+  blendshapes, the first optional capability, gives the margin. MediaPipe (≤ 11.5 Hz) is below the floor on this phone.
+
 ## What our own pipeline would need (cost estimate)
 
 Already in the spike: detection and decoding, NMS, detection → ROI, ROI tracking from landmarks, crop/warp, landmark
@@ -90,8 +153,8 @@ projection, blendshapes input. Missing for production:
 | Multi-face (`maxFaces` > 1) | S–M | one ROI per face, detector when fewer faces than `maxFaces` are tracked (MediaPipe's policy), batch or loop the landmark model |
 | Facial transformation matrix | M | MediaPipe's geometry pipeline (`geometry_pipeline_metadata_landmarks.binarypb`: canonical face mesh and Procrustes weights, also in the `.task`); a weighted Procrustes fit, ≈ 200 lines |
 | Landmark / ROI smoothing | S | MediaPipe smooths the ROI between frames; #13 (anchors, smoothing) does landmark filtering on our side anyway |
-| Crop on the GPU | M | the 4 ms canvas readback is the next cost after inference; a WebGL/WebGPU crop feeding a GPU tensor (WebGPU) or a smaller readback (wasm) |
-| Worker | S | the pipeline is already asynchronous; runs in the #6 worker unchanged (OffscreenCanvas crop) |
+| Crop on the GPU | S | done for the landmark crop (`crop=gpu`, WebGL2, decisive on the phone); the detector's letterbox still goes through the canvas (38–58 ms on the phone when the face is lost) |
+| Worker | S–M | the pipeline is already asynchronous; runs in the #6 worker (OffscreenCanvas / WebGL2 crop). Needed on the phone: a run keeps the main thread busy, so rendering and tracking cannot be decoupled on the main thread (`schedule=eager`) |
 | Tests | M | golden landmarks on the test clips (#77) against MediaPipe, unit tests for the geometry |
 | Payload | — | LiteRT.js wasm ≈ 11 MB (3.1 MB gzip) per build, vs 14.7 MB (4.2 MB gzip) for MediaPipe's vision wasm; only one LiteRT build is downloaded (chosen at load) |
 
@@ -122,14 +185,17 @@ For a library embedded in other people's pages this is the host's decision, not 
 - the playground can isolate only the pages that need it (done here with per-path headers in `vite.config.ts`).
 
 Consequence: threads must be an **opt-in bonus**. The engine detects `crossOriginIsolated` and loads the threaded
-build when it is true, the single-threaded build otherwise. The single-threaded build already beats MediaPipe, so
-the default case does not depend on isolation.
+build when it is true, the single-threaded build otherwise. The single-threaded build still beats MediaPipe (≈ 2×
+on desktop, ≈ 1.2–1.4× on the Redmi Note 11S with `crop=gpu`), so the default case does not depend on isolation;
+on that phone, though, isolation is worth ≈ 1.3–1.5× more and decides whether the 15 Hz floor of #90 is met.
 
 ## Recommendation (pending device runs)
 
-1. Run R1–R9 on the Redmi Note 11S and an iPhone. If LiteRT.js single-threaded keeps a clear lead there (≥ 1.5×),
-   **move face tracking to our own pipeline on LiteRT.js**, behind the unchanged `FaceTracker`, with threads when
-   the host page is cross-origin isolated and WebGPU only if R7 beats wasm on phones (JSPI required, Chrome only for
+1. Run R1–R9 on an iPhone and a high-end Android phone, and 5-minute recordings on the Redmi Note 11S. The Redmi
+   confirms a lead with the crop on the GPU: ≈ 1.6–1.9× with 4 threads, but only ≈ 1.2–1.4× single-threaded, below
+   the ≥ 1.5× aimed at. If the other devices keep a clear lead, **move face tracking to our own pipeline on
+   LiteRT.js**, behind the unchanged `FaceTracker`. Crop on the GPU, threads when the host page is cross-origin
+   isolated, and WebGPU only where it measures faster than wasm: not on the Redmi (JSPI required, Chrome only for
    now).
 2. Keep MediaPipe tasks-vision as the fallback implementation until the transformation matrix, multi-face and the
    golden tests are in place.
