@@ -5,7 +5,8 @@
 import { Type, type Static, type TProperties } from 'typebox'
 import { Color, LocalizedText, Name, Vec2, Vec3 } from './common.ts'
 
-const ParamCommon = {
+/** Properties shared by every parameter type. */
+export const ParamCommon = {
   label: Type.Optional(LocalizedText),
   description: Type.Optional(LocalizedText),
   group: Type.Optional(LocalizedText),
