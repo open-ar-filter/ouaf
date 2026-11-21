@@ -111,7 +111,9 @@ type PressureObserverCtor = new (cb: (records: PressureRecordLike[]) => void) =>
  * session recorder with 5/10-minute presets and JSON export. Keeps the screen awake while recording.
  */
 export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefined {
-  const stats = new RollingStats({ windowMs: 2000 })
+  // `?window=N`: seconds covered by the live figures (default 2; longer = steadier, e.g. a whole test clip loop).
+  const windowS = Math.min(60, Math.max(1, Number(new URLSearchParams(location.search).get('window')) || 2))
+  const stats = new RollingStats({ windowMs: windowS * 1000, capacity: Math.max(256, windowS * 130) })
   const snap = createRollingSnapshot()
   const recorder = new SessionRecorder(options.extraColumns ? { extraColumns: options.extraColumns } : {})
   let info: PipelineInfo | undefined
@@ -363,7 +365,7 @@ export function createPerf(options: PerfOptions = {}): PlaygroundPerf | undefine
       recorder.setInfo(next)
       infoLine.textContent =
         `video ${next.videoWidth}×${next.videoHeight} → render ${next.renderWidth}×${next.renderHeight}, ` +
-        `max ${next.maxFaces} faces · p50/p95 ms over 2 s`
+        `max ${next.maxFaces} faces · p50/p95 ms over ${windowS} s`
     },
     note(message: string) {
       recorder.event({ type: 'note', message })
