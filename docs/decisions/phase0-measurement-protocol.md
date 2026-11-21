@@ -150,7 +150,21 @@ Page: `/spikes/runtime.html`, served cross-origin isolated (COOP `same-origin`, 
 threads exist; the **Isolation** row must read `crossOriginIsolated yes`. Options: `runtime=litert|mediapipe`,
 `accel=wasm|webgpu`, `threads=N` (default min(4, cores); `threads=1` loads the single-threaded build),
 `delegate=CPU|GPU` (MediaPipe), `blendshapes=0`, `detect=always` (detector on every frame), `coi=0` (page served
-without isolation). The links at the top switch variant and keep the other options. All runs on
+without isolation), and for LiteRT.js:
+
+- `crop=gpu`: both crops on WebGL2, only the crops read back (256×256 landmark crop, 128×128 detector letterbox);
+- `detcrop=canvas|gpu`: the detector letterbox alone (default: as `crop`). `crop=gpu&detcrop=canvas` is the variant
+  measured on the Redmi Note 11S on 2026-11-21, before the letterbox moved to WebGL2;
+- `mode=worker` (or `worker=1`): detection, landmarks and blendshapes in a dedicated worker, crops on an
+  OffscreenCanvas there, frames transferred as `VideoFrame` (`transfer=bitmap`: `ImageBitmap`) as in #6. The page
+  only captures, renders and reads the results. Falls back with a warning (**Warnings** row, in red): one thread
+  when the worker is not cross-origin isolated, 2D-canvas crops without WebGL2 on OffscreenCanvas, the main thread
+  when the worker cannot start;
+- `schedule=eager`: the next run starts when the previous one ends instead of on the next frame callback. On the main
+  thread it starves rendering (≈ 1 fps on the Redmi); in a worker it starts right away when a frame newer than the
+  analysed one has been presented, otherwise on the next frame callback.
+
+The links at the top switch variant and keep the other options. All runs on
 `&source=pesquet-closeup&autostart&window=10`, one minute each:
 
 | Run | URL | What |
@@ -174,6 +188,46 @@ without isolation). The links at the top switch variant and keep the other optio
 - On the phone, watch whether `pipeline` drifts over a 10-minute run with the best variant (threads heat several
   cores at once).
 - iPhone: R3, R5 and R7 (WebGPU only on Safari 26+); note any page error.
+
+### GPU crops and worker (W1–W10)
+
+After the Redmi Note 11S runs (`face-runtime.md`): the detector letterbox on WebGL2, and the pipeline in a worker so
+that rendering keeps the display rate while tracking runs as fast as it can. Same clip and options
+(`&source=pesquet-closeup&autostart&window=10`), one minute each; W2 and W6 also as 5-minute recordings, with and
+without blendshapes, on the clip and on the camera (drop `source` and `autostart`).
+
+| Run | URL | What |
+|---|---|---|
+| W1 | `/spikes/runtime.html?threads=4&crop=gpu&detcrop=canvas` | reference: the Redmi's best variant of 2026-11-21 |
+| W2 | `…?threads=4&crop=gpu` | detector letterbox on WebGL2 too |
+| W3 | `…?threads=4&crop=gpu&detcrop=canvas&detect=always` | letterbox cost on every frame, canvas |
+| W4 | `…?threads=4&crop=gpu&detect=always` | same, WebGL2: compare `dcrop` with W3 |
+| W5 | `…?threads=4&crop=gpu&mode=worker` | pipeline in a worker, runs on frame callbacks |
+| W6 | `…?threads=4&crop=gpu&mode=worker&schedule=eager` | worker, next run as soon as a newer frame exists |
+| W7 | W6 `&blendshapes=0` | blendshapes cost in the worker |
+| W8 | W6 with `threads=1` | single thread in the worker (no isolation needed) |
+| W9 | W6 `&transfer=bitmap` | ImageBitmap instead of VideoFrame |
+| W10 | `…?threads=4&crop=gpu&schedule=eager` | main-thread eager, for comparison with W6 (expected: rendering collapses) |
+
+- Before each worker run, check the **Runtime** row (`… in a worker (videoframe) · worker crossOriginIsolated yes`),
+  the **Warnings** row (empty) and the **Face** row (`N pthreads in the worker`: at least 3 with 4 threads). Note any
+  fallback: it is a result in itself.
+- **Rendering vs tracking**: `fps` is the display rate (clip or camera frames rendered), `track Hz` the completed
+  runs per second. In W5–W9, `fps` must stay at the clip or camera rate whatever `track Hz` is; `track` (main-thread
+  tracking time) should read ≈ 0 (capture + post + result handling only).
+- **Pipeline**: `pipeline`, `crop`, `lmk`, `bs`, `read` against W2 (a worker run may be slower: no shared GPU context,
+  contention with the page); `xfer` = run time seen by the page minus the worker's (capture, transfer, messages).
+- **Detector crop**: `dcrop` (and `detect`) when the face is lost; the hand passing in front of the face in the clip
+  makes the detector run. W3 vs W4 measures it on every frame. On the Redmi the canvas letterbox cost 38–58 ms.
+- **Latency**: `latency` (frame → result on the main thread) and `age` (age of the landmarks drawn). With
+  `schedule=frame` a run starts on a frame callback, so a pipeline just above a display tick loses a frame; eager runs
+  do not wait for the tick. Check visually that the landmarks do not trail more than in W2.
+- `drop/fr`: frames never analysed. Expected > 0 whenever the pipeline is slower than the frame interval.
+
+Decision rule: the worker variant is worth it on the phone if W6 keeps `fps` at the clip or camera rate with a
+`track Hz` above W2's (≥ 15 Hz with blendshapes, the floor of #90; ≥ 18 Hz to show the filter again), without `age`
+growing by more than about one frame. The GPU letterbox is kept if `dcrop` in W4 is well below W3 and the landmarks
+still match MediaPipe (**Check vs MediaPipe** once on W2 and once on W6).
 
 ## Levers on slow devices
 

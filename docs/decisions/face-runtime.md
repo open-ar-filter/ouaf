@@ -1,8 +1,10 @@
 # Face tracking runtime: MediaPipe tasks-vision or our own pipeline on LiteRT.js (#83)
 
 Status: **proposed**. The desktop numbers below are clear-cut, and the Redmi Note 11S confirms the lead once the
-crop runs on the GPU (2026-11-21, below). The decision is final once an iPhone and a high-end Android phone have
-run the R1–R9 protocol in [`phase0-measurement-protocol.md`](phase0-measurement-protocol.md#83--face-models-on-another-runtime).
+crop runs on the GPU (2026-11-21, below). The detector letterbox now runs on the GPU too, and the pipeline can run in
+a worker (desktop check below; phone runs W1–W10 pending). The decision is final once an iPhone and a high-end
+Android phone have run the R1–R9 protocol in
+[`phase0-measurement-protocol.md`](phase0-measurement-protocol.md#83--face-models-on-another-runtime).
 
 ## Question
 
@@ -25,12 +27,20 @@ would our own pipeline cost to build and maintain?
 - Our own pipeline (`apps/playground/src/spikes/runtime/`): the geometry MediaPipe's graph does around the models
   (SSD anchors and box decoding, weighted NMS, rotated square ROI from the eyes, ROI tracked from the previous
   frame's landmarks so the detector only runs when the face is lost, rotated crop on a 2D canvas or, with
-  `crop=gpu`, on WebGL2 (`gpu-crop.ts`: only the 256×256 crop is read back), projection back to frame pixels).
-  About 550 lines with the page.
-- Page `/spikes/runtime.html`: LiteRT.js (`threads=N`, `accel=webgpu`, `crop=gpu`, `schedule=eager`) or MediaPipe
-  (`runtime=mediapipe`) on the same clip, same performance panel and export, a **tracking rate** (`track Hz`:
-  completed runs per second, apart from the rendering frame rate) and a **Check vs MediaPipe** button that runs both
-  on one paused frame and draws both sets of points.
+  `crop=gpu`, on WebGL2 (`gpu-crop.ts`: one frame upload per run, only the 256×256 crop and the 128×128 detector
+  letterbox are read back), projection back to frame pixels). About 550 lines with the page.
+- A worker variant (`mode=worker`, `litert.worker.ts`, ≈ 370 lines with the page side and the messages): the whole
+  pipeline runs in a dedicated worker, crops on an OffscreenCanvas there, frames transferred as `VideoFrame` (or
+  `ImageBitmap`) with a result buffer, as in #6. LiteRT.js's threaded build works from a worker: the worker script is served with the
+  same COEP header as the page, so `crossOriginIsolated` holds inside it, and the pthreads are nested workers. Three
+  shims are needed for LiteRT.js 2.6.0's loader in a module worker (`importScripts` replaced by a synchronous fetch
+  evaluated globally, `Module.locateFile` for the `.wasm`, and `Worker` wrapped so that the pthreads load the
+  Emscripten script rather than the worker's own). Fallbacks, each with a visible warning: one thread when the
+  worker is not isolated, canvas crops without WebGL2 on OffscreenCanvas, main thread when the worker cannot start.
+- Page `/spikes/runtime.html`: LiteRT.js (`threads=N`, `accel=webgpu`, `crop=gpu`, `detcrop`, `mode=worker`,
+  `schedule=eager`) or MediaPipe (`runtime=mediapipe`) on the same clip, same performance panel and export, a
+  **tracking rate** (`track Hz`: completed runs per second, apart from the rendering frame rate), latency and result
+  age, and a **Check vs MediaPipe** button that runs both on one paused frame and draws both sets of points.
 
 Two LiteRT.js quirks found on the way, both handled in the spike:
 
@@ -143,6 +153,57 @@ Reading:
   `crop=gpu` sits at ≈ 15–17 Hz with blendshapes and ≈ 19 Hz without. The filter is shown, and dropping
   blendshapes, the first optional capability, gives the margin. MediaPipe (≤ 11.5 Hz) is below the floor on this phone.
 
+## Results (desktop, GPU detector crop and worker)
+
+Desktop check of the two follow-ups of the Redmi runs, before the phone runs (W1–W10 of the protocol). Headless
+Chromium 159 (Playwright) on Linux, Intel Core Ultra 9 275HX (24 cores), **hardware WebGL** (ANGLE on OpenGL, Intel
+Arrow Lake iGPU), clip `pesquet-closeup` (720×1280, 30 fps), 15 s per variant after 3 s of warm-up, 2026-11-21.
+p50 / p95 in ms; `main` = main-thread tracking time per frame (`track` in the overlay); `age` = age of the landmarks
+drawn.
+
+| Variant | track Hz | display fps | pipeline | dcrop | crop | lmk | bs | main | xfer | latency | age |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| ×4, canvas crops (main thread) | 29.9 | 29.9 | 11.0 / 15.5 | 6.6 | 6.8 | 3.4 | 0.8 | 7.1 | | 11.5 | 33 |
+| ×4, `crop=gpu&detcrop=canvas` (W1) | 29.9 | 29.9 | 9.0 / 12.7 | 6.6 | 3.4 | 4.5 | 0.9 | 3.5 | | 9.6 | 33 |
+| ×4, `crop=gpu` (W2) | 29.9 | 29.9 | 8.6 / 12.5 | 2.5 | 3.2 | 4.4 | 0.8 | 3.3 | | 9.3 | 33 |
+| … `schedule=eager` (W10) | 29.9 | 29.9 | 8.8 / 12.8 | 3.2 | 3.0 | 4.6 | 0.8 | 3.1 | | 9.3 | 33 |
+| … `mode=worker` (W5) | 29.9 | 29.9 | 9.1 / 12.9 | 3.5 | 3.9 | 3.9 | 0.9 | **0.0** | 0.4 | 9.6 | 33 |
+| … `mode=worker&transfer=bitmap` | 29.7 | 29.8 | 9.8 / 13.3 | 3.6 | 3.8 | 4.0 | 0.8 | 0.5 | 0.9 | 10.4 | 33 |
+| … `mode=worker&schedule=eager` (W6) | 29.8 | 29.8 | 9.9 / 13.5 | 4.0 | 4.1 | 4.3 | 0.8 | **0.0** | 0.4 | 10.4 | 33 |
+| ×1, `crop=gpu` (main thread) | 29.8 | 29.8 | 17.0 / 20.9 | 2.4 | 2.9 | 12.1 | 1.5 | 3.1 | | 17.6 | 33 |
+| ×1, `crop=gpu&mode=worker` | **26.5** (11 % dropped) | 29.9 | 13.3 / 18.6 | 3.5 | 3.9 | 7.2 | 1.1 | 0.0 | 0.4 | 14.0 | 50 |
+| ×1, `crop=gpu&mode=worker&schedule=eager` (W8) | **29.9** | 29.9 | 12.8 / 16.6 | 3.1 | 3.9 | 7.1 | 1.2 | 0.0 | 0.3 | 13.6 | 50 |
+| ×4, `crop=gpu&detcrop=canvas&detect=always` (W3) | 29.9 | 29.9 | 14.6 / 18.7 | **6.3** / 8.1 | 2.6 | 3.1 | 0.8 | 6.3 | | 15.6 | 33 |
+| ×4, `crop=gpu&detect=always` (W4) | 29.9 | 29.9 | 10.9 / 15.0 | **2.6** / 3.5 | 2.0 | 3.5 | 0.8 | 2.6 | | 11.5 | 33 |
+| … `mode=worker&schedule=eager` | 29.9 | 29.9 | 11.3 / 15.7 | 3.4 / 4.3 | 1.5 | 3.5 | 0.8 | 0.1 | 0.4 | 12.0 | 33 |
+
+Reading:
+
+- **Correctness.** The WebGL2 letterbox gives the same detector ROI as the canvas one (≤ 0.4 px of centre, ≤ 1.4 px
+  of size for a 420–515 px ROI; ≤ 3 px / 5 px with SwiftShader) and the same landmarks (≤ 0.1 % of the ROI) on
+  `pesquet-talk`. One bilinear tap per pixel is what the canvas does: averaging 4² taps moved the ROI rotation by up
+  to 0.15 rad on a hard frame, so the letterbox keeps one tap. The worker gives **identical** landmarks to the main
+  thread on frontal frames (0.000 %), with `VideoFrame` and with `ImageBitmap`; Check vs MediaPipe reads the same
+  (0.6 % and 1.6–1.8 % mean of the face size at 2 s and 4 s of `pesquet-talk`, main thread and worker). Covered by
+  `e2e/runtime-worker.spec.ts`.
+- **Detector crop on the GPU: 6.3 → 2.6 ms** on every frame here (`detect=always`), the detector stage 7.8 → 4.6 ms.
+  The phone's canvas letterbox cost 38–58 ms, the same software path as the landmark crop before `crop=gpu` (whose
+  cost fell from ≈ 40 to ≈ 14 ms there); the GPU version should bring a lost face back several frames sooner.
+- **Threads in the worker work**: 4 threads in the worker start the same 9 pthreads (3 models × 3) as on the main
+  thread and the landmark model runs at the main thread's speed (3.9 against 4.4 ms; 7.1 ms on one thread).
+- **Main-thread cost drops to ≈ 0** (capture + post + result handling: < 0.1 ms with `VideoFrame`, 0.5 ms with
+  `ImageBitmap`), against 2.6–7.1 ms per frame on the main thread (the synchronous part of a run: crops and their
+  float conversion). The transfer round trip (`xfer`) costs 0.3–0.4 ms with `VideoFrame`, 0.9 ms with `ImageBitmap`.
+- **Tick alignment shows up even here.** Frame callbacks of a 30 fps clip come every 16.7 or 50 ms rather than
+  every 33 ms (vsync jitter: 41 of 89 intervals at 16.7 ms in worker mode). With `schedule=frame` a run that lasts
+  more than 16.7 ms then misses the next frame: one thread in the worker (13.3 ms p50, 18.6 p95) analyses only
+  26.5 frames per second. `schedule=eager` in the worker starts the pending frame as soon as the run ends and
+  tracks every frame (29.9 Hz), with the main thread still free. This is the gain the phone needs (20–22 Hz
+  measured with eager runs on the main thread, which then rendered at ≈ 1 fps).
+- What the desktop cannot show: every variant tracks the 30 fps clip at its full rate, so the rendering/tracking
+  decoupling has to be measured on the phone (W5–W10). Results are one frame old when drawn (`age` 33 ms: the result
+  of frame N is drawn with frame N+1), 50 ms when a run spans a tick.
+
 ## What our own pipeline would need (cost estimate)
 
 Already in the spike: detection and decoding, NMS, detection → ROI, ROI tracking from landmarks, crop/warp, landmark
@@ -153,8 +214,8 @@ projection, blendshapes input. Missing for production:
 | Multi-face (`maxFaces` > 1) | S–M | one ROI per face, detector when fewer faces than `maxFaces` are tracked (MediaPipe's policy), batch or loop the landmark model |
 | Facial transformation matrix | M | MediaPipe's geometry pipeline (`geometry_pipeline_metadata_landmarks.binarypb`: canonical face mesh and Procrustes weights, also in the `.task`); a weighted Procrustes fit, ≈ 200 lines |
 | Landmark / ROI smoothing | S | MediaPipe smooths the ROI between frames; #13 (anchors, smoothing) does landmark filtering on our side anyway |
-| Crop on the GPU | S | done for the landmark crop (`crop=gpu`, WebGL2, decisive on the phone); the detector's letterbox still goes through the canvas (38–58 ms on the phone when the face is lost) |
-| Worker | S–M | the pipeline is already asynchronous; runs in the #6 worker (OffscreenCanvas / WebGL2 crop). Needed on the phone: a run keeps the main thread busy, so rendering and tracking cannot be decoupled on the main thread (`schedule=eager`) |
+| Crop on the GPU | — | done in the spike for both crops (`crop=gpu`: landmark crop and detector letterbox on WebGL2, decisive on the phone for the landmark crop; letterbox 6.3 → 2.6 ms on desktop, phone pending) |
+| Worker | S | done in the spike (`mode=worker`): threads, WebGL2 crops and eager scheduling inside a worker, same landmarks. Left for production: LiteRT.js's loader needs three shims in a module worker (see above), to be replaced by an upstream fix or a classic worker build; `FaceTracker` integration as in #6 |
 | Tests | M | golden landmarks on the test clips (#77) against MediaPipe, unit tests for the geometry |
 | Payload | — | LiteRT.js wasm ≈ 11 MB (3.1 MB gzip) per build, vs 14.7 MB (4.2 MB gzip) for MediaPipe's vision wasm; only one LiteRT build is downloaded (chosen at load) |
 
@@ -191,12 +252,13 @@ on that phone, though, isolation is worth ≈ 1.3–1.5× more and decides wheth
 
 ## Recommendation (pending device runs)
 
-1. Run R1–R9 on an iPhone and a high-end Android phone, and 5-minute recordings on the Redmi Note 11S. The Redmi
-   confirms a lead with the crop on the GPU: ≈ 1.6–1.9× with 4 threads, but only ≈ 1.2–1.4× single-threaded, below
+1. Run R1–R9 on an iPhone and a high-end Android phone, and W1–W10 plus 5-minute recordings on the Redmi Note 11S.
+   The Redmi confirms a lead with the crop on the GPU: ≈ 1.6–1.9× with 4 threads, but only ≈ 1.2–1.4× single-threaded, below
    the ≥ 1.5× aimed at. If the other devices keep a clear lead, **move face tracking to our own pipeline on
    LiteRT.js**, behind the unchanged `FaceTracker`. Crop on the GPU, threads when the host page is cross-origin
    isolated, and WebGPU only where it measures faster than wasm: not on the Redmi (JSPI required, Chrome only for
-   now).
+   now). Run it in a worker with eager scheduling (`mode=worker&schedule=eager`) if W6 keeps the display rate with
+   a higher tracking rate than on the main thread.
 2. Keep MediaPipe tasks-vision as the fallback implementation until the transformation matrix, multi-face and the
    golden tests are in place.
 3. If the phones do not confirm the gain, keep MediaPipe tasks-vision and close this path; the spike page stays as
