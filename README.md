@@ -7,7 +7,7 @@ hands and voice), designed to be embedded as a library, with an open filter form
 - Manifest JSON Schema: [`docs/spec/ouaf-v1.schema.json`](docs/spec/ouaf-v1.schema.json) (generated — do not edit by hand)
 - TypeBox schemas and validator: [`packages/spec`](packages/spec)
 - Engine: [`packages/core`](packages/core)
-- Command-line tool (`ouaf validate`, `ouaf pack-alpha`): [`packages/cli`](packages/cli)
+- Command-line tool (`ouaf validate`, `ouaf pack`, `ouaf pack-alpha`): [`packages/cli`](packages/cli)
 - Dev app: [`apps/playground`](apps/playground)
 - Performance recordings (playground export format): [`docs/perf/session-format.md`](docs/perf/session-format.md)
 

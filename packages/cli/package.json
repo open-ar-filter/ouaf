@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@ouaf/spec": "0.1.0",
+    "esbuild": "^0.28.2",
     "typebox": "^1.4.7"
   }
 }
