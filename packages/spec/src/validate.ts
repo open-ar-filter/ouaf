@@ -9,6 +9,7 @@ import { ParamTypes, type ParamTypeName } from './params.ts'
 import { createRegistry, findEvent, type SpecRegistry } from './registry.ts'
 import { assetKind, type TAssetEntry } from './assets.ts'
 import type { TShaderLayer } from './layers.ts'
+import { shaderNameProblem } from './shader.ts'
 
 export type Severity = 'error' | 'warning'
 
@@ -230,13 +231,14 @@ const PARAM_COMPAT: Record<string, ParamTypeName[]> = {
   Vec3: ['vec3'],
 }
 
-function valueKind(schema: TSchema): string {
+/** Kinds of value a property accepts: one, or one per member of a union (e.g. shader `uniforms`). */
+function valueKinds(schema: TSchema): string[] {
   const s = schema as SchemaNode
   const kind = kindOf(s)
-  if (kind === 'String' && typeof s.pattern === 'string' && s.pattern.startsWith('^#(')) return 'Color'
-  if (kind === 'Tuple') return (s.items as unknown[]).length === 2 ? 'Vec2' : 'Vec3'
-  if (kind === 'Union') return valueKind((s.anyOf as TSchema[])[0]!)
-  return kind
+  if (kind === 'String' && typeof s.pattern === 'string' && s.pattern.startsWith('^#(')) return ['Color']
+  if (kind === 'Tuple') return [(s.items as unknown[]).length === 2 ? 'Vec2' : 'Vec3']
+  if (kind === 'Union') return (s.anyOf as TSchema[]).flatMap(valueKinds)
+  return [kind]
 }
 
 function isBinding(v: unknown): v is { param?: string; bind?: string } {
@@ -295,7 +297,7 @@ function checkAssetRef(ctx: Ctx, ref: string, path: string) {
 }
 
 function checkBinding(ctx: Ctx, b: { param?: string; bind?: string }, valueSchema: TSchema, path: string) {
-  const expected = valueKind(valueSchema)
+  const expected = valueKinds(valueSchema)
   if (b.param !== undefined) {
     const def = ctx.manifest.params?.[b.param]
     if (!def) {
@@ -303,7 +305,7 @@ function checkBinding(ctx: Ctx, b: { param?: string; bind?: string }, valueSchem
         'Declare it in "params".')
       return
     }
-    const ok = PARAM_COMPAT[expected]
+    const ok = expected.every((k) => PARAM_COMPAT[k]) ? [...new Set(expected.flatMap((k) => PARAM_COMPAT[k]!))] : undefined
     if (ok && !ok.includes(def.type as ParamTypeName)) {
       err(ctx, 'param-type-mismatch', `${path}/param`,
         `Parameter "${b.param}" has type "${def.type}", which does not fit this property.`,
@@ -324,7 +326,7 @@ function checkBinding(ctx: Ctx, b: { param?: string; bind?: string }, valueSchem
     if (b.bind.startsWith('face.')) ctx.usesFace = true
     if (b.bind.startsWith('face.blendshapes.')) ctx.usesBlendshapes = true
     const m = b as { map?: unknown; range?: unknown; to?: unknown }
-    if (d.type === 'string' && m.map === undefined && expected !== 'String') {
+    if (d.type === 'string' && m.map === undefined && !expected.includes('String')) {
       err(ctx, 'binding-map-required', path, `"${b.bind}" is a string: add "map" to convert it.`)
     }
     if ((m.range === undefined) !== (m.to === undefined)) {
@@ -479,9 +481,25 @@ function checkLayers(ctx: Ctx) {
   })
 }
 
-/** Shader layers (spec §11): the face stage and declared anchors need face tracking; only face anchors make sense. */
+/**
+ * Shader layers (spec §11): the face stage and declared anchors need face tracking; only face anchors make sense;
+ * uniform and texture names become GLSL names.
+ */
 function checkShader(ctx: Ctx, layer: TShaderLayer, path: string) {
-  if (layer.stage === 'face') ctx.usesFace = true
+  if (layer.stage === 'face' || layer.anchors?.length) ctx.usesFace = true
+  const names = new Set<string>()
+  for (const [what, table] of [['uniforms', layer.uniforms], ['textures', layer.textures]] as const) {
+    for (const name of Object.keys(table ?? {})) {
+      const problem = shaderNameProblem(name)
+      if (problem) {
+        err(ctx, 'shader-name', `${path}/${what}/${name}`, `"${name}" ${problem}: it cannot name a GLSL ${what === 'uniforms' ? 'uniform' : 'sampler2D'}.`,
+          'Use a GLSL identifier, e.g. "amount" or "noiseTex".')
+      } else if (names.has(name)) {
+        err(ctx, 'shader-name', `${path}/${what}/${name}`, `"${name}" is declared both in "uniforms" and in "textures".`)
+      }
+      names.add(name)
+    }
+  }
   layer.anchors?.forEach((name, i) => {
     const a = ctx.reg.anchors.get(name)
     if (a && a.subject !== 'face') {

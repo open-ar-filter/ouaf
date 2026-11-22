@@ -300,4 +300,39 @@ describe('script API and shaders (spec §11, §12, #66)', () => {
       expect(codes(validateManifest(m).errors)).toContain('requires-face@/requires')
     }
   })
+
+  it('needs GLSL names for uniforms and textures (#24)', () => {
+    const r = validateManifest({
+      ...base,
+      requires: {},
+      layers: [
+        shader({
+          uniforms: { 'my-amount': 1, ouaf_x: 1, float: 1, ok: 1, both: 1 },
+          textures: { gl_tex: 'assets/a.png', both: 'assets/a.png', noise: 'assets/a.png' },
+        }),
+      ],
+    })
+    expect(codes(r.errors)).toEqual([
+      'shader-name@/layers/0/uniforms/my-amount',
+      'shader-name@/layers/0/uniforms/ouaf_x',
+      'shader-name@/layers/0/uniforms/float',
+      'shader-name@/layers/0/textures/gl_tex',
+      'shader-name@/layers/0/textures/both',
+    ])
+  })
+
+  it('binds uniforms to number, boolean, color and vector params, not to strings (#24)', () => {
+    const params = {
+      n: { type: 'number', default: 1 },
+      b: { type: 'boolean', default: true },
+      c: { type: 'color', default: '#ff0000' },
+      v2: { type: 'vec2', default: [0, 0] },
+      v3: { type: 'vec3', default: [0, 0, 0] },
+      s: { type: 'string', default: 'x' },
+    }
+    const uniforms = Object.fromEntries(Object.keys(params).map((k) => [k, { param: k }]))
+    const r = validateManifest({ ...base, requires: {}, params, layers: [shader({ uniforms })] })
+    expect(codes(r.errors)).toEqual(['param-type-mismatch@/layers/0/uniforms/s/param'])
+    expect(r.errors[0]!.hint).toBe('Parameter types accepted here: "number", "boolean", "vec2", "vec3", "color".')
+  })
 })

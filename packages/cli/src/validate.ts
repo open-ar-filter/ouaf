@@ -5,7 +5,7 @@
  * Every issue names the file it is about and, when it relates to the manifest, the JSON pointer of the element;
  * line and column are given when known, so humans and AI agents can go straight to the fix.
  */
-import { assetKind, closest, createRegistry, kindFromPath, validateManifest } from '@ouaf/spec'
+import { assetKind, checkShaderSource, closest, createRegistry, kindFromPath, validateManifest } from '@ouaf/spec'
 import type { Issue, Severity, SpecRegistry, TAssetEntry, TAssetKind } from '@ouaf/spec'
 import type { TSchema } from 'typebox'
 import { Value } from 'typebox/value'
@@ -78,9 +78,9 @@ export interface ShaderDiagnostic {
 }
 
 /**
- * Compiles the `effect()` source of a shader asset (spec §11). Hook for a GLSL ES 3.00 compiler: none ships yet,
- * because compiling needs the engine's shader wrapper (the inputs `ouaf_sample`, `ouaf_time`… and the uniforms
- * declared by the layer).
+ * Compiles the `effect()` source of a shader asset (spec §11). Hook for a GLSL ES 3.00 compiler: none ships yet, as
+ * Node has no WebGL. A compiler wraps the source with `wrapShader` (`@ouaf/spec`, the engine's own wrapper) and maps
+ * its log with `parseShaderLog`, which gives lines in the author's file.
  */
 export type ShaderCompiler = (source: string, file: string) => ShaderDiagnostic[] | Promise<ShaderDiagnostic[]>
 
@@ -565,11 +565,6 @@ function checkCube(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array) {
   }
 }
 
-/** Replaces comments with spaces, keeping line numbers. */
-function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (c) => c.replace(/[^\n]/g, ' '))
-}
-
 async function checkShader(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array) {
   const src = text(bytes)
   if (src === undefined) {
@@ -577,21 +572,9 @@ async function checkShader(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array) 
     return
   }
   // Static checks of spec §11 (the author only writes effect(); the engine provides #version and main()).
-  const code = stripComments(src)
-  const lineOf = (index: number) => code.slice(0, index).split('\n').length
-  const version = /^[ \t]*#[ \t]*version\b/m.exec(code)
-  if (version) {
-    add(ctx, 'error', 'shader-version', { ...loc, line: lineOf(version.index) }, 'Shaders must not contain a #version directive: the engine adds it (spec §11).',
-      'Remove the #version line.')
-  }
-  const main = /\bvoid\s+main\s*\(/.exec(code)
-  if (main) {
-    add(ctx, 'error', 'shader-main', { ...loc, line: lineOf(main.index) }, 'Shaders must not define main(): the engine provides it and calls effect() (spec §11).',
-      'Move the body of main() into vec4 effect(vec2 uv) and return the color instead of writing an output.')
-  }
-  if (!/\bvec4\s+effect\s*\(\s*(in\s+)?vec2\s+\w+\s*\)\s*\{/.test(code)) {
-    add(ctx, 'error', 'shader-no-effect', loc, `"${path}" does not define vec4 effect(vec2 uv).`,
-      'Define it, e.g. vec4 effect(vec2 uv) { return ouaf_sample(uv); } (spec §11).')
+  for (const issue of checkShaderSource(src)) {
+    const message = issue.code === 'shader-no-effect' ? `"${path}" does not define vec4 effect(vec2 uv).` : issue.message
+    add(ctx, 'error', issue.code, issue.line !== undefined ? { ...loc, line: issue.line } : loc, message, issue.hint)
   }
   if (!ctx.options.compileShader) {
     ctx.shaders.push(path)
@@ -637,7 +620,7 @@ export async function validatePackage(source: PackageSource, options: ValidateOp
       ctx.skipped.push({
         check: 'glsl-compile',
         files: ctx.shaders,
-        reason: 'GLSL compilation is not available yet: it needs the engine shader wrapper (spec §11). Only static checks ran.',
+        reason: 'GLSL compilation is not available yet: Node has no GLSL compiler (the engine compiles shaders when it loads the filter). Only static checks ran.',
       })
     }
     return {
