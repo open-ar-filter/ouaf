@@ -13,6 +13,8 @@ import { ParamStore, type ParamChange, type ParamValue, type SelectOptions, type
 import { parsePluginRequirement } from './plugin.ts'
 import type { WebGLRenderer } from 'three'
 import { deriveSeed, SeededRandom } from '../random.ts'
+import { ScriptOverrides } from '../script/overrides.ts'
+import type { ScriptHost } from '../script/host.ts'
 
 /** Events of a filter handle. */
 export interface FilterEvents extends Record<string, unknown> {
@@ -24,6 +26,8 @@ export interface FilterEvents extends Record<string, unknown> {
    * them, e.g. to react in their own UI.
    */
   expression: ExpressionEventPayload
+  /** `f.emit(name, data)` from the filter's script (spec §12.4): `on('filter:<name>', (data) => …)`. */
+  [event: `filter:${string}`]: unknown
 }
 
 export interface ExpressionEventPayload {
@@ -64,6 +68,11 @@ export interface FilterHandle {
   setOptions(name: string, options: Readonly<Record<string, string | Readonly<Record<string, string>>>> | readonly string[]): void
   /** Current options of a `select` parameter. */
   optionsOf(name: string): SelectOptions | undefined
+  /**
+   * Sends a message to this filter's script, received as the `message:<name>` event (spec §13). `data` must be
+   * structured-cloneable. Ignored when the filter has no script or its script does not handle the event.
+   */
+  send(name: string, data?: unknown): void
   /** Moves the filter to `index` in the stack (clamped). */
   moveTo(index: number): void
   /** Removes the filter from the stack and frees it. */
@@ -119,6 +128,10 @@ export class FilterInstance {
   readonly random: SeededRandom
   readonly layerRandom: readonly SeededRandom[]
   #seed = 0
+  /** The script (spec §12): its source and the values it gives the layers. Its host is started by the engine. */
+  readonly script: { readonly code: string; readonly overrides: ScriptOverrides } | undefined
+  /** Set by the engine while the script runs. */
+  host: ScriptHost | undefined
   enabled = true
   disposed = false
 
@@ -135,6 +148,7 @@ export class FilterInstance {
     seed: number
     random: SeededRandom
     layerRandom: readonly SeededRandom[]
+    script?: { code: string; overrides: ScriptOverrides }
   }) {
     this.key = init.key
     this.manifest = init.manifest
@@ -151,6 +165,7 @@ export class FilterInstance {
     this.random = init.random
     this.layerRandom = init.layerRandom
     this.reseed(init.seed)
+    this.script = init.script
     // Changes are committed by `params.beginFrame`, at the start of a frame (spec §9).
     this.params.onChange((change) => this.events.emit('paramChange', change))
   }
@@ -165,6 +180,8 @@ export class FilterInstance {
     this.#seed = seed >>> 0
     this.random.reseed(deriveSeed(seed, 'filter'))
     this.layerRandom.forEach((r, i) => r.reseed(deriveSeed(seed, 'layer', i)))
+    // The script's `f.random()` runs in its sandbox: it gets the new seed with the next frame it receives.
+    this.host?.reseed(scriptSeed(seed))
   }
 
   /** Layers of a stage, in layer order. */
@@ -175,6 +192,8 @@ export class FilterInstance {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.host?.dispose()
+    this.host = undefined
     for (const l of this.layers) {
       try {
         l.instance.dispose()
@@ -211,8 +230,15 @@ export async function loadFilter(
 
   const range = manifest.engine ?? '^1'
   if (!satisfies(env.engineVersion, range)) throw new IncompatibleEngineError(manifest.id, range, env.engineVersion)
+  let script: { code: string; overrides: ScriptOverrides } | undefined
   if (manifest.script) {
-    warnings.push(`${source.label}/script: scripts are not supported by this engine version yet (#26); the script is ignored.`)
+    let code: string
+    try {
+      code = await (await source.file('script.js')).text()
+    } catch (cause) {
+      throw new OuafError('filter-load', `Filter "${manifest.id}": the manifest declares a script but script.js could not be read.`, { cause })
+    }
+    script = { code, overrides: new ScriptOverrides() }
   }
 
   // `apply: "reload"` parameters are applied at the next frame like live ones until the engine preloads and swaps
@@ -253,20 +279,23 @@ export async function loadFilter(
   const seed = env.seed(manifest.id)
   const random = new SeededRandom(deriveSeed(seed, 'filter'))
   const layerRandom = decls.map((_, i) => new SeededRandom(deriveSeed(seed, 'layer', i)))
-  const ctx: Omit<LayerContext, 'random'> = {
+  const reader = bindingParams(params)
+  // With a script, each layer gets its own registry of the properties the script can set (spec §12.4).
+  const ctxOf = (i: number): LayerContext => ({
+    random: layerRandom[i]!.next,
     filterId: manifest.id,
     renderer: env.renderer,
     view: env.view,
     assets,
     params,
-    bindings: { data: env.bindingData, params: bindingParams(params) },
+    bindings: script ? { data: env.bindingData, params: reader, overrides: script.overrides.forLayer(i) } : { data: env.bindingData, params: reader },
     maxFaces: env.maxFaces,
     warn: (message) => env.warn(`Filter "${manifest.id}": ${message}`),
-  }
+  })
   const layers: LoadedLayer[] = []
   try {
     for (let i = 0; i < decls.length; i++) {
-      const instance = await impls[i]!.create(decls[i]!, { ...ctx, random: layerRandom[i]!.next })
+      const instance = await impls[i]!.create(decls[i]!, ctxOf(i))
       layers.push({ decl: decls[i]!, instance })
     }
   } catch (error) {
@@ -288,6 +317,7 @@ export async function loadFilter(
     seed,
     random,
     layerRandom,
+    ...(script ? { script } : {}),
   })
 }
 
@@ -325,6 +355,11 @@ function checkPlugins(raw: unknown, registry: SpecRegistry): void {
   }
 }
 
+/** Seed of the script's `f.random()` for a filter activation seeded with `seed` (spec §12.5). */
+export function scriptSeed(seed: number): number {
+  return deriveSeed(seed, 'script')
+}
+
 /** A `face.blendshapes.*` binding anywhere in the layers, or a script reading them (spec §16.2). */
 function usesBlendshapes(manifest: TManifest): boolean {
   const script = manifest.script
@@ -335,7 +370,13 @@ function usesBlendshapes(manifest: TManifest): boolean {
 /** Implements the public handle over a `FilterInstance`; stack operations go through the engine. */
 export function createHandle(
   filter: FilterInstance,
-  stack: { indexOf(f: FilterInstance): number; move(f: FilterInstance, index: number): void; remove(f: FilterInstance): void; changed(): void },
+  stack: {
+    indexOf(f: FilterInstance): number
+    move(f: FilterInstance, index: number): void
+    remove(f: FilterInstance): void
+    changed(): void
+    send(f: FilterInstance, name: string, data: unknown): void
+  },
 ): FilterHandle {
   return {
     key: filter.key,
@@ -373,6 +414,9 @@ export function createHandle(
     },
     optionsOf(name) {
       return filter.params.optionsOf(name)
+    },
+    send(name, data) {
+      stack.send(filter, name, data)
     },
     moveTo(index) {
       stack.move(filter, index)
