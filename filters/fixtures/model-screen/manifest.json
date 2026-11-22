@@ -1,0 +1,35 @@
+{
+  "ouaf": "1",
+  "id": "model-screen",
+  "name": "Screen models (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Model layer (#21) on the screen for pixel checks: plain, Draco and meshopt GLB, colors, fit, animation, shapes. Synthetic models (../make-model-assets.ts).",
+  "requires": {},
+  "params": {
+    "contrast": { "type": "number", "default": 0, "min": -1, "max": 1, "step": 0.001, "label": { "en": "Contrast (makes the color pass active)" } }
+  },
+  "assets": {
+    "red": "assets/red.glb",
+    "gray": "assets/gray.glb",
+    "green": "assets/green-draco.glb",
+    "blue": "assets/blue-meshopt.glb",
+    "lift": "assets/lift.glb"
+  },
+  "layers": [
+    { "id": "red", "type": "model", "src": "red", "anchor": "screen", "offset": [-0.15, 0.3, 0], "scale": 0.08 },
+    { "id": "green", "type": "model", "src": "green", "anchor": "screen", "offset": [0, 0.3, 0], "scale": 0.08 },
+    { "id": "blue", "type": "model", "src": "blue", "anchor": "screen", "offset": [0.15, 0.3, 0], "scale": 0.08 },
+    { "id": "gray", "type": "model", "src": "gray", "anchor": "screen", "offset": [-0.15, 0.12, 0], "scale": 0.08 },
+    { "id": "fit", "type": "model", "src": "gray", "anchor": "screen", "offset": [0.1, 0.12, 0], "fit": { "width": 0.16 } },
+    { "id": "lift", "type": "model", "src": "lift", "anchor": "screen", "offset": [-0.15, -0.1, 0], "scale": 0.06, "animation": "lift" },
+    { "id": "box", "type": "model", "src": { "shape": "box", "color": "#ff00ff" }, "anchor": "screen", "offset": [-0.24, -0.3, 0], "scale": 0.06 },
+    { "id": "sphere", "type": "model", "src": { "shape": "sphere", "color": "#ff00ff" }, "anchor": "screen", "offset": [-0.16, -0.3, 0], "scale": 0.06 },
+    { "id": "torus", "type": "model", "src": { "shape": "torus", "color": "#ff00ff" }, "anchor": "screen", "offset": [-0.08, -0.3, 0], "scale": 0.06 },
+    { "id": "ring", "type": "model", "src": { "shape": "ring", "color": "#ff00ff" }, "anchor": "screen", "offset": [0, -0.3, 0], "scale": 0.06 },
+    { "id": "cone", "type": "model", "src": { "shape": "cone", "color": "#ff00ff" }, "anchor": "screen", "offset": [0.08, -0.3, 0], "scale": 0.06 },
+    { "id": "cylinder", "type": "model", "src": { "shape": "cylinder", "color": "#ff00ff" }, "anchor": "screen", "offset": [0.16, -0.3, 0], "scale": 0.06 },
+    { "id": "plane", "type": "model", "src": { "shape": "plane", "color": "#ff00ff", "emissive": "#400040" }, "anchor": "screen", "offset": [0.24, -0.3, 0], "scale": 0.06 },
+    { "type": "color", "contrast": { "param": "contrast" } }
+  ]
+}

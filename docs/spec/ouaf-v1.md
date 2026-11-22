@@ -200,7 +200,12 @@ Normative behavior:
   the layer, read for its first selected face. `{ pick }`: see 10.1.
 - `model.occlusion: "head"`: the part of the object hidden by the head is not drawn (hat, glasses temples).
 - `model.fit`: the object is rescaled so its bounding box has the requested width or height.
-- `model.src: { shape }`: primitives `box`, `sphere`, `torus`, `ring`, `cone`, `cylinder`, `plane`, of size 1, usable without any file.
+- `model.src: { shape }`: primitives `box`, `sphere`, `torus`, `ring`, `cone`, `cylinder`, `plane`, of size 1, usable
+  without any file, centred on the anchor: `box` 1 × 1 × 1; `sphere` diameter 1; `cylinder` diameter 1 and height 1,
+  and `cone` base diameter 1 and height 1 (tip up), both with their axis along y; `plane` 1 × 1 and `torus` and
+  `ring` of outer diameter 1, in the xy plane (facing the camera when `orient` and `rotation` leave them so).
+  `thickness` applies to `torus` and `ring` only: the width of their band (outer minus inner radius). Other
+  proportions (a disc, a rod) are made with `scale`.
 - `warp` deforms the image **and** whatever was painted on the face before it (section 7). Each anchor of each
   selected face is the center of a disc of `radius` face units (screen heights with `anchor: "screen"`), so the
   deformation keeps its size relative to the face at any distance; discs stay round on screen. The effect is

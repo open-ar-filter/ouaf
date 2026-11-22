@@ -63,6 +63,8 @@ export interface EngineOptions {
    * Base URL of the engine's self-hosted files: tracking models and wasm, built-in fonts and LUTs. Nothing is fetched
    * from anywhere else (docs/privacy.md). Relative URLs resolve against the page. Built-in resources (`builtin:…`) are
    * the `assets/` folder of `@ouaf/builtins`, served under `<assetsBaseUrl>builtins/` (`builtins/fonts/sans.woff2`).
+   * The Draco decoder of the model layer is `<assetsBaseUrl>draco/draco_wasm_wrapper.js` and `draco_decoder.wasm`
+   * (from `three/examples/jsm/libs/draco/gltf/`), fetched only when a filter has a Draco-compressed model.
    */
   assetsBaseUrl: string
   /** Maximum number of tracked faces (spec §5.4). Default: 1. */
@@ -819,6 +821,7 @@ export class Engine {
       layerTypes: this.#layerTypes,
       loaders: this.#loaders,
       builtinUrl: (name) => resolveBuiltin(name, new URL('builtins/', this.assetsBaseUrl)).href,
+      assetsBaseUrl: this.assetsBaseUrl,
       fetchImpl: this.#fetch,
       renderer: this.#compositor.renderer,
       view: this.#compositor,

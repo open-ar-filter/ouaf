@@ -168,6 +168,13 @@ export class Compositor implements ObjectsView {
       target.texture.colorSpace = SRGBColorSpace
       // Plain RGBA8 storage (no hardware sRGB decode on sampling): passes read the encoded bytes, as for the video.
       target.texture.internalFormat = 'RGBA8'
+      // three's built-in materials (lit models, text) encode their output to the canvas's sRGB, but write linear
+      // values into an ordinary render target. three uses the target's color space as output only for XR targets
+      // (three.js#27868), so the targets are flagged as such: objects then get the same sRGB encoding, hence the same
+      // bytes, whether they render to a target (a pass is active) or to the canvas. With `NoToneMapping` the flag
+      // changes nothing else here (it would apply tone mapping, and a multisampled target's format). Raw shaders
+      // (passes, stickers) are not affected. Checked by e2e/model.spec.ts (a mid-gray model with and without a pass).
+      ;(target as WebGLRenderTarget & { isXRRenderTarget: boolean }).isXRRenderTarget = true
       target.texture.generateMipmaps = false
       return target
     }

@@ -868,7 +868,7 @@
           "exclusiveMinimum": 0,
           "maximum": 1,
           "default": 0.2,
-          "description": "Relative thickness (torus, ring, cylinder)."
+          "description": "Torus and ring: width of the band (outer minus inner radius), the outer diameter being 1."
         }
       },
       "additionalProperties": false,

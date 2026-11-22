@@ -121,7 +121,7 @@ export const Shape = Type.Object(
     metalness: Type.Optional(Type.Number({ minimum: 0, maximum: 1, default: 0 })),
     roughness: Type.Optional(Type.Number({ minimum: 0, maximum: 1, default: 0.5 })),
     emissive: Type.Optional(Color),
-    thickness: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 1, default: 0.2, description: 'Relative thickness (torus, ring, cylinder).' })),
+    thickness: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 1, default: 0.2, description: 'Torus and ring: width of the band (outer minus inner radius), the outer diameter being 1.' })),
   },
   { additionalProperties: false, description: 'Shape generated without a file, e.g. { "shape": "torus", "color": "#ff00cc" }.' },
 )
