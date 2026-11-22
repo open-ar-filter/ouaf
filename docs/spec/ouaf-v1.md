@@ -193,9 +193,12 @@ Normative behavior:
   one device to another. A host MAY provide a reference emoji set; the engine then SHOULD draw emoji from it, so
   they look the same on every device.
 - `sticker`: `size` is the height in anchor units, the width follows the asset's aspect ratio. Animated assets
-  (spritesheets, videos) play from their first frame each time the layer becomes visible: when the filter is
-  activated, when `visible` turns true, or when the first selected face appears after none was; a face that appears
-  while the layer is shown joins the running animation. They advance with the media time times `rate`; with
+  (spritesheets, videos) play from their first frame when the filter is activated and when the first selected face
+  appears after none was (a screen sticker: at activation only); a face that appears while another is selected joins
+  the running animation. While the layer is hidden by `visible` (or `opacity` 0) they keep advancing, as an animation
+  under CSS `visibility: hidden`, and resume where they are when it is shown again. This holds for every animated
+  layer type (a `model`'s `animation` too, which starts at activation and for each face that appears): hiding a
+  layer neither pauses nor restarts its animations. They advance with the media time times `rate`; with
   `autoplay: false` they stay on the first frame; without `loop` they hold the last frame. `rate` is one value for
   the layer, read for its first selected face. `{ pick }`: see 10.1.
 - `model.occlusion: "head"`: the part of the object hidden by the head is not drawn (hat, glasses temples).

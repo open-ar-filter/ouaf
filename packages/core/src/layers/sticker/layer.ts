@@ -8,13 +8,14 @@
  * height in anchor units, the width follows the asset's aspect ratio. Bindable properties (`visible`, `opacity`,
  * `size`, `offset`, `rotation`) are evaluated per face; `rate` once per layer, for the first selected face.
  *
- * Playback (spritesheets, videos) follows the layer's clock (`playback.ts`): it starts from the first frame each time
- * the layer becomes visible (no quad shown on the previous frame: activation, `visible` turning true, the first face
- * appearing; faces that appear while it is shown join the running animation), advances with the frame time times
- * `rate`, stays on the first frame with `autoplay: false` (a script will start it,
- * #26) and holds the last frame at the end without `loop`. A video plays natively at `rate` and is re-synchronized to
- * the clock when it drifts by more than `VIDEO_SYNC_TOLERANCE`; it is paused while no quad has shown it for
- * `VIDEO_IDLE_PAUSE_MS` (spec §10.4 recommends at most two videos playing at once on mobile).
+ * Playback (spritesheets, videos) follows the layer's clock (`playback.ts`): it starts from the first frame when the
+ * layer is activated and, for a face sticker, when the first selected face appears after none was; faces that appear
+ * while one is selected join the running animation. The clock keeps advancing while the layer is hidden by `visible`
+ * or `opacity` 0 (as CSS `visibility: hidden`), so it resumes where it is when shown again. It advances with the frame
+ * time times `rate`, stays on the first frame with `autoplay: false` (a script will start it, #26) and holds the last
+ * frame at the end without `loop`. A video plays natively at `rate` and is re-synchronized to the clock when it drifts
+ * by more than `VIDEO_SYNC_TOLERANCE` (so also when shown again after a pause); it is paused while no quad has shown it
+ * for `VIDEO_IDLE_PAUSE_MS` (spec §10.4 recommends at most two videos playing at once on mobile).
  *
  * `update` allocates nothing in the steady state.
  */
@@ -198,8 +199,8 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
   // Playback state (clock, last frame time, rate) in a typed array: a double in a closure variable is boxed on write.
   const play = new Float64Array(3)
   play[LAST_TIME] = -1
-  // No quad was shown on the previous frame: the next shown frame restarts playback.
-  let hidden = true
+  // A face was selected on the previous frame (face stickers): when none was, the first face to appear restarts playback.
+  let hadFace = false
 
   const pickFor = (inst: Instance, faceId: number) => {
     if (inst.faceId === faceId) return
@@ -262,13 +263,13 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
       rate.write(lead, num, 2)
       const r = autoplay ? Math.max(0, num[2]!) : 0
       play[RATE] = r
-      // Hidden on the previous frame: (re)start from the first frame.
-      if (hidden) play[CLOCK] = 0
+      // (Re)start from the first frame at activation, and when the first selected face appears after none was; hidden
+      // by `visible` or `opacity`, the clock keeps running (spec §6.3).
+      if (play[LAST_TIME]! < 0 || (!screen && selected > 0 && !hadFace)) play[CLOCK] = 0
       else play[CLOCK]! += clockStep(play[LAST_TIME]!, frame.time) * r
       play[LAST_TIME] = frame.time
 
       shownVideos.fill(0)
-      let any = false
       for (let i = 0; i < instances.length; i++) {
         const inst = instances[i]!
         let shown = false
@@ -281,14 +282,13 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
           shown = place(inst, face, frame)
         }
         inst.mesh.visible = shown
-        if (shown) any = true
         if (shown && players.length > 0) {
           const asset = inst.mesh.material.asset
           for (let p = 0; p < players.length; p++) if (players[p]!.asset === asset) shownVideos[p] = 1
         }
       }
       for (let p = 0; p < players.length; p++) players[p]!.sync(play, shownVideos[p] === 1, frame)
-      hidden = !any
+      hadFace = selected > 0
     },
     dispose() {
       for (const p of players) p.release()

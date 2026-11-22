@@ -14,8 +14,9 @@
  *   `orient: "screen"` keeps the anchor's position and scale but not its rotation.
  * - **Animation**: `animation` names a glTF clip, played from its start when the layer is activated and on each face
  *   that appears (a new id); it advances with the frame time (the media time for a video file, so it is the same on
- *   every run, spec §12.5), repeats with `loop` (default) or holds its last pose. `play(name, faceId?)` starts another
- *   clip from its start: the entry point of the script API (`f.layer(id, face?).play(name)`, #26).
+ *   every run, spec §12.5), also while the face's copy is hidden by `visible` or `opacity` (spec §6.3), and repeats
+ *   with `loop` (default) or holds its last pose. `play(name, faceId?)` starts another clip from its start: the entry
+ *   point of the script API (`f.layer(id, face?).play(name)`, #26).
  * - **Occlusion**: `occlusion: "head"` adds a head occluder per face (`occluder.ts`), which hides the parts of the
  *   model behind the head. It writes depth for the whole objects stage, so it hides any object behind the head.
  * - **Lighting**: image-based, the same for every model (`environment.ts`).
@@ -307,9 +308,15 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
       m.multiplyMatrices(anchorMatrix, local)
     }
     setAlpha(copy, alpha < 1 ? alpha : 1)
+    return true
+  }
+
+  /** Advances the animation of `inst`'s face, shown or hidden by `visible` / `opacity` (spec §6.3). */
+  const advance = (inst: Instance) => {
+    const copy = inst.current
+    if (!copy) return
     if (copy.started) copy.started = false
     else if (copy.mixer && copy.action) copy.mixer.update(clock[STEP]!)
-    return true
   }
 
   const layer: ModelLayerInstance = {
@@ -339,10 +346,12 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
         let face = NO_FACE
         if (screen) {
           pickFor(inst, lead === NO_FACE ? 0 : anchors.id(lead))
+          advance(inst)
           shown = place(inst, lead, frame)
         } else if (i < selected) {
           face = slots[i]!
           pickFor(inst, ids[face]!)
+          advance(inst)
           shown = place(inst, face, frame)
         }
         inst.holder.visible = shown
