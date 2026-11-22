@@ -306,3 +306,40 @@ test('a context loss without author shaders disables nothing; layers render agai
   // The LUT and the render targets are rebuilt: black and white video again.
   await expect.poll(async () => check((await means(page, [ALL]))[0]!, (s) => s.chroma < 2 && s.r > 10), POLL).toBe(true)
 })
+
+// --- File regime (#32): pushFrame ---------------------------------------------------------------------------------
+
+test('in the file regime, ouaf_time and ouaf_dt follow the media time, and ouaf_prevFrame each pushed frame', async ({ page }) => {
+  await page.goto('/engine.html')
+  await page.waitForFunction(() => !!window.ouaf)
+  const run = (filter: string, times: number[]) =>
+    page.evaluate(
+      async ([filter, times]) => {
+        const { engine } = window.ouaf!
+        for (const f of engine.filters) f.remove()
+        await engine.addFilter(filter)
+        // A synthetic frame: flat green 200.
+        const canvas = new OffscreenCanvas(64, 64)
+        const c = canvas.getContext('2d')!
+        c.fillStyle = 'rgb(0, 200, 0)'
+        c.fillRect(0, 0, 64, 64)
+        const out = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true })!
+        const pixels: number[][] = []
+        for (const t of times) {
+          await engine.pushFrame(canvas, t)
+          // Drawn when the promise resolves: read the canvas in the same task.
+          out.drawImage(engine.canvas, 0, 0, 1, 1)
+          pixels.push([...out.getImageData(0, 0, 1, 1).data.slice(0, 3)])
+        }
+        return pixels
+      },
+      [filter, times] as const,
+    )
+  const time = await run(`${F}/shader-time/`, [0.25, 0.75, 0.875])
+  const near = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]!) <= 2)
+  expect(time.map((p, i) => near(p, [[64, 0, 200], [191, 128, 200], [223, 32, 200]][i]!)), JSON.stringify(time)).toEqual([true, true, true])
+  // +1/16 per frame from black: one step per pushed frame, whatever the wall clock.
+  const feedback = await run(`${F}/shader-feedback/`, [0, 1 / 30, 2 / 30])
+  expect(feedback.map((p) => Math.round(p[0]! / 16))).toEqual([1, 2, 3])
+  expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
+})
