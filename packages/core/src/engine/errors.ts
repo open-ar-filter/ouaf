@@ -15,6 +15,8 @@ export type OuafErrorCode =
   | 'asset'
   | 'invalid-param'
   | 'filter-load'
+  | 'shader'
+  | 'gpu-context-lost'
   | 'disposed'
 
 export class OuafError extends Error {
@@ -113,6 +115,47 @@ export class InvalidParamError extends OuafError {
     this.param = details.param
     this.preset = details.preset
     this.reason = details.reason
+  }
+}
+
+/** A diagnostic of the GLSL compiler, with its line in the author's file (spec §11). */
+export interface ShaderErrorDetail {
+  severity: 'error' | 'warning'
+  /** Line in the shader file (1-based), when the message points at one. */
+  line?: number
+  message: string
+}
+
+/**
+ * A shader layer's GLSL does not compile or link (spec §11), or its declarations cannot become GLSL. Lines are
+ * counted in the author's file, without the engine's wrapper.
+ */
+export class ShaderCompileError extends OuafError {
+  override name = 'ShaderCompileError'
+  /** The `src` reference of the layer (asset name or `assets/…` path). */
+  readonly src: string
+  readonly details: readonly ShaderErrorDetail[]
+
+  constructor(filterId: string, src: string, details: readonly ShaderErrorDetail[], options?: { cause?: unknown }) {
+    const lines = details.map((d) => `  ${d.line !== undefined ? `line ${d.line}: ` : ''}${d.message}`)
+    super('shader', `Filter "${filterId}": shader "${src}" does not compile:\n${lines.join('\n')}`, options)
+    this.src = src
+    this.details = details
+  }
+}
+
+/**
+ * The GPU context was lost while a filter's shader was being drawn (spec §11, §15.5): the engine disabled that
+ * filter. Emitted on `engine.on('error')`; the host may re-enable it (`handle.enabled = true`) or remove it.
+ */
+export class GpuContextLostError extends OuafError {
+  override name = 'GpuContextLostError'
+  /** The filter disabled (manifest id). */
+  readonly filter: string
+
+  constructor(filterId: string) {
+    super('gpu-context-lost', `Filter "${filterId}" was disabled: the GPU context was lost while its shader was drawn (spec §11).`)
+    this.filter = filterId
   }
 }
 

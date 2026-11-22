@@ -1,0 +1,12 @@
+{
+  "ouaf": "1",
+  "id": "shader-feedback",
+  "name": "Feedback shader (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Shader test fixture: each frame adds 1/16 to this shader's previous output (ouaf_prevFrame), ignoring the image: black at the first frame, white after 16 frames.",
+  "requires": {},
+  "layers": [
+    { "type": "shader", "src": "assets/feedback.frag" }
+  ]
+}

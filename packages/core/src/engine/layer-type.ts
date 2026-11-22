@@ -96,6 +96,11 @@ export interface LayerContext {
 
 interface LayerInstanceBase {
   readonly stage: Stage
+  /**
+   * The layer runs GPU code written by the filter's author (`shader` layers, spec §11). When the GPU context is lost,
+   * the engine disables the filters whose author code was drawn just before (spec §11, §15.5).
+   */
+  readonly authorShader?: boolean
   /** Called once per rendered frame before rendering. */
   update(frame: FrameContext): void
   /** Frees GPU and other resources. Called once, when the filter is removed or the engine disposed. */

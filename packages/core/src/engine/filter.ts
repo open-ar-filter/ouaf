@@ -106,6 +106,10 @@ export class FilterInstance {
   readonly events: Emitter<FilterEvents>
   /** Expression detectors with the filter's tuning (spec §13); only for face filters. */
   readonly expressions: ExpressionEventDetector | undefined
+  /** A layer runs GPU code written by the filter's author (`LayerInstance.authorShader`). */
+  readonly authorShader: boolean
+  /** When that code was last drawn (`performance.now()`), or added to the stack: context loss suspects (spec §11). */
+  lastAuthorDraw = -Infinity
   enabled = true
   disposed = false
 
@@ -129,6 +133,7 @@ export class FilterInstance {
     this.warnings = init.warnings
     this.needsFace = !!init.manifest.requires.face
     this.needsBlendshapes = this.needsFace && (!!init.manifest.requires.blendshapes || usesBlendshapes(init.manifest))
+    this.authorShader = init.layers.some((l) => l.instance.authorShader === true)
     this.events = new Emitter(init.onListenerError)
     this.expressions = this.needsFace ? new ExpressionEventDetector({ maxFaces: init.maxFaces, events: init.manifest.events }) : undefined
     // Changes are committed by `params.beginFrame`, at the start of a frame (spec §9).

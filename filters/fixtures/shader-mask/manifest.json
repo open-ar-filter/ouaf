@@ -1,0 +1,12 @@
+{
+  "ouaf": "1",
+  "id": "shader-mask",
+  "name": "Face mask shader (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Shader test fixture: shows ouaf_faceMask (white on the faces, black elsewhere) in the blue channel over a darkened image.",
+  "requires": { "face": true },
+  "layers": [
+    { "type": "shader", "src": "assets/mask.frag" }
+  ]
+}

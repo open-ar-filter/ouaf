@@ -1,0 +1,13 @@
+{
+  "ouaf": "1",
+  "id": "shader-anchors",
+  "name": "Shader anchors (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Shader test fixture: a post shader draws a red disc of 0.3 face units at ouaf_anchor_noseTip of every face; the playground dot draws a green disc of 0.6 units on the same anchor, under it.",
+  "requires": { "face": true, "plugins": ["playground@^1"] },
+  "layers": [
+    { "type": "playground:dot", "anchor": "noseTip", "color": "#00ff00", "size": 0.6 },
+    { "type": "shader", "src": "assets/nose.frag", "anchors": ["noseTip"] }
+  ]
+}

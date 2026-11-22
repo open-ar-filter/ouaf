@@ -1,0 +1,15 @@
+{
+  "ouaf": "1",
+  "id": "shader-face",
+  "name": "Face shader (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Shader test fixture: a face-stage shader painting horizontal stripes on the face mesh (strength param).",
+  "requires": { "face": true },
+  "params": {
+    "strength": { "type": "number", "default": 1, "min": 0, "max": 1, "label": { "en": "Strength" } }
+  },
+  "layers": [
+    { "type": "shader", "src": "assets/stripes.frag", "stage": "face", "opacity": { "param": "strength" } }
+  ]
+}
