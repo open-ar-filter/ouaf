@@ -41,7 +41,7 @@ async function shot(page: Page, name: string, strength: number, time: number): P
   const png = await page.locator('#canvas').screenshot()
   const mean = await page.evaluate(
     async ([bytes, key]) => {
-      const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+      const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
       const c = new OffscreenCanvas(bitmap.width, bitmap.height)
       const ctx = c.getContext('2d')!
       ctx.drawImage(bitmap, 0, 0)
@@ -53,7 +53,7 @@ async function shot(page: Page, name: string, strength: number, time: number): P
       for (let i = 0; i < image.data.length; i += 4) red += image.data[i]!
       return red / (image.data.length / 4)
     },
-    [[...png], name] as const,
+    [png.toString('base64'), name] as const,
   )
   expect(mean, `shot ${name} shows the video`).toBeGreaterThan(10)
 }
