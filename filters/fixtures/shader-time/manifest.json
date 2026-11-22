@@ -1,0 +1,12 @@
+{
+  "ouaf": "1",
+  "id": "shader-time",
+  "name": "Shader time (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Shader test fixture: writes fract(ouaf_time) in red, ouaf_dt (s) in green and the image's green channel in blue.",
+  "requires": {},
+  "layers": [
+    { "type": "shader", "src": "assets/time.frag" }
+  ]
+}

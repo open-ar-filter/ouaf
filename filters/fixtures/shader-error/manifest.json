@@ -1,0 +1,12 @@
+{
+  "ouaf": "1",
+  "id": "shader-error",
+  "name": "Broken shader (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Shader test fixture: line 4 of the shader uses an undeclared identifier; loading the filter must fail with that line.",
+  "requires": {},
+  "layers": [
+    { "type": "shader", "src": "assets/broken.frag" }
+  ]
+}

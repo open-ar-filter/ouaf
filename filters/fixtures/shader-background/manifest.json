@@ -1,0 +1,12 @@
+{
+  "ouaf": "1",
+  "id": "shader-background",
+  "name": "Background shader (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Shader test fixture: a background-stage shader filling the background with red (covered by the opaque video until segmentation).",
+  "requires": {},
+  "layers": [
+    { "type": "shader", "src": "assets/red.frag", "stage": "background" }
+  ]
+}

@@ -34,7 +34,7 @@ import { CORE_LOADERS, memorySource, urlSource, type AssetLoader, type FilterSou
 import { builtinPlugins } from './builtin.ts'
 import { Compositor, type StagePasses } from './compositor.ts'
 import { Emitter } from './emitter.ts'
-import { IncompatibleSourceError, OuafError, disposedError } from './errors.ts'
+import { GpuContextLostError, IncompatibleSourceError, OuafError, disposedError } from './errors.ts'
 import { FilterInstance, bindingParams, createHandle, loadFilter, type FilterHandle, type FilterLoadEnv } from './filter.ts'
 import type { FrameContext, LayerContext, LayerInstance, LayerTypeImpl, ObjectLayer, PassLayer } from './layer-type.ts'
 import { FaceBindingData } from '../bindings/index.ts'
@@ -55,6 +55,12 @@ import { TrackingHub } from './tracking.ts'
  * range on it (`"engine": "^1"`, the default). Distinct from the package version.
  */
 export const ENGINE_VERSION = '1.0.0'
+
+/**
+ * When the GPU context is lost, filters whose author shader was drawn within this delay (ms) are disabled (spec §11).
+ * A GPU hang is detected by the browser's watchdog seconds after the draw that caused it.
+ */
+export const CONTEXT_LOSS_WINDOW_MS = 5000
 
 export interface EngineOptions {
   /** Canvas the engine renders into (it creates a WebGL2 context on it). Size it with CSS. */
@@ -228,6 +234,9 @@ export class Engine {
   #statsFrames = 0
   #statsMs = 0
   #disposed = false
+  #contextLost = false
+  #onContextLost = (event: Event) => this.#contextLostHandler(event)
+  #onContextRestored = () => this.#contextRestoredHandler()
 
   constructor(options: EngineOptions) {
     const maxFaces = options.maxFaces ?? 1
@@ -256,6 +265,10 @@ export class Engine {
       modifiers: this.#modifiers,
       onError: (error) => this.#error(error),
     })
+    // GPU context loss (spec §11, §15.5). three.js listens too: it stops drawing while lost and rebuilds its GPU
+    // resources on restore.
+    options.canvas.addEventListener('webglcontextlost', this.#onContextLost as EventListener)
+    options.canvas.addEventListener('webglcontextrestored', this.#onContextRestored)
     this.#frame = {
       time: 0,
       now: 0,
@@ -270,6 +283,11 @@ export class Engine {
 
   get disposed(): boolean {
     return this.#disposed
+  }
+
+  /** The GPU context is lost: nothing is drawn until the browser restores it. */
+  get contextLost(): boolean {
+    return this.#contextLost
   }
 
   /** The canvas rendered into. */
@@ -434,6 +452,7 @@ export class Engine {
       filter.dispose()
       throw disposedError('The engine')
     }
+    filter.lastAuthorDraw = filter.authorShader ? performance.now() : -Infinity
     this.#stack.push(filter)
     this.#handles.set(filter, this.#handleFor(filter))
     this.#stackChanged()
@@ -456,6 +475,7 @@ export class Engine {
       throw failed ? failed.reason : disposedError('The engine')
     }
     const old = this.#stack
+    for (const f of loaded) if (f.authorShader) f.lastAuthorDraw = performance.now()
     this.#stack = loaded
     for (const f of loaded) this.#handles.set(f, this.#handleFor(f))
     this.#stackChanged()
@@ -480,6 +500,9 @@ export class Engine {
     this.#stack = []
     for (const p of this.#renderPasses) p.dispose()
     this.#tracking.dispose()
+    const canvas = this.#compositor.renderer.domElement as EventTarget
+    canvas.removeEventListener('webglcontextlost', this.#onContextLost as EventListener)
+    canvas.removeEventListener('webglcontextrestored', this.#onContextRestored)
     this.#compositor.dispose()
     this.#events.clear()
   }
@@ -739,9 +762,55 @@ export class Engine {
     }
     for (let i = 0; i < this.#renderPasses.length; i++) this.#renderPasses[i]!.update(frame)
 
+    if (this.#contextLost) return
+    this.#markAuthorShaders(start)
     compositor.render(this.#passes as StagePasses)
     const end = performance.now()
     this.#recordStats(end, end - start, faces.count)
+  }
+
+  /** Records which filters draw author shader code this frame (context loss suspects, spec §11). */
+  #markAuthorShaders(now: number): void {
+    for (let i = 0; i < this.#stack.length; i++) {
+      const filter = this.#stack[i]!
+      if (!filter.authorShader || !filter.enabled) continue
+      const layers = filter.layers
+      for (let l = 0; l < layers.length; l++) {
+        const instance = layers[l]!.instance
+        if (instance.authorShader && instance.kind === 'pass' && instance.active) {
+          filter.lastAuthorDraw = now
+          break
+        }
+      }
+    }
+  }
+
+  /**
+   * GPU context lost (spec §11, §15.5): disables the filters whose author shader was drawn within
+   * `CONTEXT_LOSS_WINDOW_MS`, the likely cause, and reports each one (`error`: `GpuContextLostError`). A loss while
+   * the page is hidden is the system's (mobile browsers drop background contexts): no filter is blamed then.
+   */
+  #contextLostHandler(event: Event): void {
+    event.preventDefault() // allows the browser to restore the context
+    if (this.#contextLost || this.#disposed) return
+    this.#contextLost = true
+    const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
+    const since = performance.now() - CONTEXT_LOSS_WINDOW_MS
+    const suspects = hidden ? [] : this.#stack.filter((f) => f.enabled && f.authorShader && f.lastAuthorDraw >= since)
+    for (const f of suspects) f.enabled = false
+    if (suspects.length) {
+      this.#stackChanged()
+      void this.#updateTracking()
+    }
+    this.#warn(
+      `The GPU context was lost${suspects.length ? `; disabled ${suspects.map((f) => `"${f.manifest.id}"`).join(', ')}, whose shader was drawing` : ''}. Rendering resumes when the browser restores the context.`,
+    )
+    for (const f of suspects) this.#error(new GpuContextLostError(f.manifest.id))
+  }
+
+  #contextRestoredHandler(): void {
+    if (this.#disposed) return
+    this.#contextLost = false
   }
 
   /**

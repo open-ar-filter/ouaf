@@ -1,0 +1,23 @@
+{
+  "ouaf": "1",
+  "id": "shader-post",
+  "name": "Post shader (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Shader test fixture: a post shader mixing the image with a tint uniform by amount; showTexture draws a texture (red top, blue bottom) in the bottom-left quarter.",
+  "requires": {},
+  "params": {
+    "amount": { "type": "number", "default": 1, "min": 0, "max": 1, "label": { "en": "Amount" } },
+    "tint": { "type": "color", "default": "#ff00ff", "label": { "en": "Tint" } },
+    "showTexture": { "type": "boolean", "default": false, "label": { "en": "Texture" } }
+  },
+  "assets": { "tint": "assets/tint.frag", "halves": "assets/halves.png" },
+  "layers": [
+    {
+      "type": "shader",
+      "src": "tint",
+      "uniforms": { "amount": { "param": "amount" }, "tint": { "param": "tint" }, "showTexture": { "param": "showTexture" }, "offset": [0, 0] },
+      "textures": { "halves": "halves" }
+    }
+  ]
+}

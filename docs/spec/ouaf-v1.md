@@ -369,7 +369,10 @@ vec4 effect(vec2 uv) {
 
 - **Fragment only**, GLSL ES 3.0, **without** a `#version` directive or `main()`: the engine provides the wrapper.
 - Each `uniforms` entry becomes a uniform of the same name (number → `float`, boolean → `bool`, `vec2`, `vec3`,
-  color → `vec4`); each `textures` entry a `sampler2D` of the same name.
+  color → `vec4`); each `textures` entry a `sampler2D` of the same name. These names MUST therefore be GLSL
+  identifiers (letters, digits and `_`, not starting with a digit) that are not GLSL keywords or built-in names
+  (`float`, `texture`…), do not start with `gl_` or contain `__` (reserved by GLSL), are not `main` or `effect`, and
+  are not used in both `uniforms` and `textures`; a validator reports any other name.
 - `stage`: `background`, `face` (limited to the face mesh) or `post` (full screen, default).
 - Names starting with `ouaf_` or `OUAF_` are reserved for the engine.
 
