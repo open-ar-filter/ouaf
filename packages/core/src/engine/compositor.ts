@@ -9,6 +9,9 @@
  *   or an image read directly (canvas, `<img>`, `ImageBitmap`, `VideoFrame`, #32).
  * - `objects` renders one scene shared by the whole stack, depth-sorted, with a perspective camera matched to the
  *   tracker (`ObjectsView.camera`); `overlay` renders a second scene after color grading.
+ * - Outputs (#33): overlay layers marked `excludeFromCapture` are a third scene, drawn last, straight into the canvas.
+ *   While an output is in use (`capture`), the canvas is copied into it just before them, so photos, recordings and
+ *   streams leave them out. They are therefore drawn above the other overlay layers.
  * - Fast path: when no pass is active, the video, objects and overlay are drawn straight into the canvas, with no
  *   render target and no copy (the common case: stickers, text, models).
  *
@@ -98,6 +101,12 @@ export interface CompositorOptions {
   height?: number
 }
 
+/** Receives each rendered frame, without the excluded overlays (`Outputs`). */
+export interface CaptureSink {
+  readonly active: boolean
+  capture(canvas: HTMLCanvasElement | OffscreenCanvas, width: number, height: number): void
+}
+
 /** Passes of one frame, by stage, in stack then layer order. Inactive passes may be included; they are skipped. */
 export interface StagePasses {
   background: readonly PassLayer[]
@@ -113,6 +122,10 @@ export class Compositor implements ObjectsView {
   readonly objects = new Scene()
   /** Scene of the `overlay` stage. */
   readonly overlay = new Scene()
+  /** Overlay layers left out of photos, recordings and the output stream (`excludeFromCapture`, spec §6.2). */
+  readonly excludedOverlay = new Scene()
+  /** Gets the frame before the excluded overlays, while it is `active` (the engine's outputs). */
+  capture: CaptureSink | undefined
 
   #targets: [WebGLRenderTarget, WebGLRenderTarget]
   #image: SourceImage | undefined
@@ -342,6 +355,7 @@ export class Compositor implements ObjectsView {
         renderer.clearDepth()
         renderer.render(this.overlay, this.camera)
       }
+      this.#finish(showFilters)
       return
     }
 
@@ -367,6 +381,17 @@ export class Compositor implements ObjectsView {
     this.#fsMesh.material = this.#copy
     renderer.setRenderTarget(null)
     renderer.render(this.#fsScene, this.#fsCamera)
+    this.#finish(showFilters)
+  }
+
+  /** Hands the canvas to the outputs, then draws the overlays they leave out. */
+  #finish(showFilters: boolean): void {
+    const capture = this.capture
+    if (capture?.active) capture.capture(this.renderer.domElement, this.#size.width, this.#size.height)
+    if (showFilters && this.excludedOverlay.children.length > 0) {
+      this.renderer.clearDepth()
+      this.renderer.render(this.excludedOverlay, this.camera)
+    }
   }
 
   /**

@@ -5,6 +5,12 @@ landmarks, blendshapes or any other data anywhere, and filters run without netwo
 
 There is one exception, coming from a third-party dependency, that hosts embedding `@ouaf/core` should know about.
 
+## Photos, videos and streams
+
+`engine.snapshot()`, `engine.record()` and `engine.outputStream()` hand the composited image to the host, in memory
+(a `Blob`, a `MediaStream`). The engine stores and uploads nothing: what happens to them is the host's decision. The
+engine never opens the microphone; a recording has sound only when the host passes its own audio tracks.
+
 ## Filter scripts
 
 A filter's script (spec §12) is untrusted code: the engine runs it in a sandbox that cannot reach the network, the

@@ -34,6 +34,7 @@ import { CORE_LOADERS, memorySource, urlSource, type AssetLoader, type FilterSou
 import { builtinPlugins } from './builtin.ts'
 import { Compositor, type StagePasses } from './compositor.ts'
 import { Emitter } from './emitter.ts'
+import { Outputs, type OutputStreamOptions, type RecordOptions, type Recording, type SnapshotOptions } from './outputs.ts'
 import { GpuContextLostError, IncompatibleSourceError, OuafError, disposedError } from './errors.ts'
 import { FilterInstance, bindingParams, createHandle, loadFilter, scriptSeed, type FilterHandle, type FilterLoadEnv } from './filter.ts'
 import type { FrameContext, LayerContext, LayerInstance, LayerTypeImpl, ObjectLayer, PassLayer } from './layer-type.ts'
@@ -197,6 +198,7 @@ export class Engine {
 
   #events = new Emitter<EngineEvents>((error) => this.#warn(`An event listener threw: ${String(error)}`))
   #compositor: Compositor
+  #outputs = new Outputs()
   #anchors: FaceAnchors
   /** Stable face ids (spec §5.4), smoothing and prediction of the tracking results (#13). */
   #identity: FaceIdentityTracker
@@ -257,6 +259,7 @@ export class Engine {
     this.#seedOption = options.seed === undefined ? undefined : checkSeed(options.seed)
     this.registry = createRegistry()
     this.#compositor = new Compositor({ canvas: options.canvas, fit: options.fit, scale: options.scale, width: options.width, height: options.height })
+    this.#compositor.capture = this.#outputs
     this.#anchors = new FaceAnchors(createFaceFrame(1), this.#compositor.camera)
     this.#identity = new FaceIdentityTracker({ maxFaces })
     this.#smoother = new FaceSmoother(this.#identity)
@@ -465,6 +468,37 @@ export class Engine {
   }
 
   /**
+   * A photo of the next rendered frame (#33), as the user sees it (mirroring included) without the overlay layers
+   * marked `excludeFromCapture`, at the internal render size. PNG by default. Resolves once a frame is rendered: not
+   * while there is no source or a video is paused. Rejects if the engine is disposed first.
+   */
+  snapshot(options?: SnapshotOptions): Promise<Blob> {
+    this.#assertAlive()
+    return this.#outputs.snapshot(options)
+  }
+
+  /**
+   * Records the output in real time with `MediaRecorder` (#33), like `snapshot` (excluded overlays left out). H.264
+   * MP4 where the browser can encode it, else WebM (`RECORDING_TYPES`); `audio` adds tracks the host opened. Stop it
+   * with `recording.stop()`, which resolves with the video. Throws `OuafError` (`unsupported`) without
+   * `MediaRecorder` or for a type the browser cannot record.
+   */
+  record(options?: RecordOptions): Recording {
+    this.#assertAlive()
+    return this.#outputs.record(options)
+  }
+
+  /**
+   * A live `MediaStream` of the output (#33), like `snapshot` (excluded overlays left out), e.g. for a video call
+   * (WebRTC) or a `<video>`. Each call gives a new stream with one video track; the copy into it stops once every
+   * stream's track is stopped (`track.stop()`). The tracks end when the engine is disposed.
+   */
+  outputStream(options?: OutputStreamOptions): MediaStream {
+    this.#assertAlive()
+    return this.#outputs.outputStream(options)
+  }
+
+  /**
    * Loads a filter and adds it on top of the stack. Rejects with `InvalidManifestError`, `IncompatibleEngineError`,
    * `MissingPluginError`, `AssetError`, `InvalidParamError` (initial params): the stack is then unchanged.
    */
@@ -528,6 +562,7 @@ export class Engine {
     this.#stack = []
     for (const p of this.#renderPasses) p.dispose()
     this.#tracking.dispose()
+    this.#outputs.dispose()
     const canvas = this.#compositor.renderer.domElement as EventTarget
     canvas.removeEventListener('webglcontextlost', this.#onContextLost as EventListener)
     canvas.removeEventListener('webglcontextrestored', this.#onContextRestored)
@@ -1069,7 +1104,8 @@ export class Engine {
         if (stage === 'background' && filter && filter !== backgroundOwner) return
         passes[stage].push(instance)
       } else {
-        ;(instance.stage === 'overlay' ? this.#compositor.overlay : this.#compositor.objects).add(instance.object)
+        const c = this.#compositor
+        ;(instance.stage === 'overlay' ? (instance.excludeFromCapture ? c.excludedOverlay : c.overlay) : c.objects).add(instance.object)
         this.#objects.push(instance)
       }
     }

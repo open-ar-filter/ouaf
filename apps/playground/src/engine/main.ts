@@ -99,4 +99,33 @@ const onVideoFrame = (_now: number, meta: VideoFrameCallbackMetadata) => {
 if ('requestVideoFrameCallback' in video) video.requestVideoFrameCallback(onVideoFrame)
 
 startButton.addEventListener('click', () => void start())
+
+// Outputs (#33): the last photo or video, as a download link (nothing leaves the page).
+const output = document.getElementById('output') as HTMLAnchorElement
+const recordButton = document.getElementById('record') as HTMLButtonElement
+const offer = (blob: Blob, name: string) => {
+  if (output.href) URL.revokeObjectURL(output.href)
+  output.href = URL.createObjectURL(blob)
+  output.download = `${name}.${blob.type.includes('mp4') ? 'mp4' : blob.type.includes('webm') ? 'webm' : (blob.type.split('/')[1] ?? 'bin')}`
+  output.textContent = `${output.download} (${blob.type}, ${Math.round(blob.size / 1024)} KB)`
+  output.hidden = false
+}
+const outputError = (error: unknown) => show('output error', error instanceof Error ? error.message : String(error))
+document.getElementById('snapshot')!.addEventListener('click', () => engine.snapshot().then((b) => offer(b, 'snapshot'), outputError))
+let recording: ReturnType<Engine['record']> | undefined
+recordButton.addEventListener('click', () => {
+  if (recording) {
+    void recording.stop().then((b) => offer(b, 'recording'), outputError)
+    recording = undefined
+    recordButton.textContent = 'Record'
+    return
+  }
+  try {
+    recording = engine.record()
+    recordButton.textContent = 'Stop'
+    show('recording', recording.mimeType)
+  } catch (error) {
+    outputError(error)
+  }
+})
 if (params.has('autostart') && SOURCE) void start()
