@@ -52,6 +52,11 @@ export function stickerRefs(decl: LayerDecl): string[] {
 export interface StickerOptions {
   /** Random draws in [0, 1) for `{ pick, by: "random" }`, one per face. Default: the seeded `ctx.random` (spec §12.5). */
   random?: () => number
+  /**
+   * What the quads show instead of the declaration's `src` (other object layers placed like stickers: `canvas`).
+   * Several assets are picked from as with `{ pick, by: "face" }`.
+   */
+  assets?: readonly StickerAsset[]
 }
 
 /** Playback of a video asset by the layer that owns it. */
@@ -124,13 +129,14 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
   const d = decl as unknown as TStickerLayer
   const path = (name: string) => `${decl.id ? `layer "${decl.id}"` : 'sticker'}.${name}`
 
-  const refs = stickerRefs(decl)
-  const assets: StickerAsset[] = refs.map((ref) => {
-    const value = ctx.assets.get(ref)
-    if (!isStickerAsset(value)) throw new OuafError('asset', `Filter "${ctx.filterId}": asset "${ref}" is not an image, spritesheet or video, so a sticker cannot show it.`)
-    return value
-  })
-  const by: PickMode = typeof d.src === 'object' && d.src.by === 'random' ? 'random' : 'face'
+  const assets: readonly StickerAsset[] =
+    options.assets ??
+    stickerRefs(decl).map((ref) => {
+      const value = ctx.assets.get(ref)
+      if (!isStickerAsset(value)) throw new OuafError('asset', `Filter "${ctx.filterId}": asset "${ref}" is not an image, spritesheet or video, so a sticker cannot show it.`)
+      return value
+    })
+  const by: PickMode = !options.assets && typeof d.src === 'object' && d.src.by === 'random' ? 'random' : 'face'
   const random = options.random ?? ctx.random
 
   const anchor = d.anchor ?? 'head'

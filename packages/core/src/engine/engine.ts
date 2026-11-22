@@ -52,6 +52,7 @@ import { TrackingHub } from './tracking.ts'
 import { FrameDataBuilder, type FrameDataSource } from '../script/frame-data.ts'
 import { ScriptHost } from '../script/host.ts'
 import { openSandbox } from '../script/sandbox.ts'
+import { scriptImages } from '../layers/canvas/script-images.ts'
 
 /**
  * Version used for compatibility checks (spec §17): the format level this engine implements. Filters declare a
@@ -1010,6 +1011,18 @@ export class Engine {
       connect: () => this.#openSandbox(`Filter "${id}"`),
       warn: (message) => this.#warn(message, id),
       error: (error) => this.#error(error),
+      // Canvas layers drawn by the script (spec §12.6), and the image assets it draws them with.
+      canvases: (decl.draw ?? []).flatMap((drawId) => {
+        const layer = filter.manifest.layers.findIndex((l) => l.id === drawId && l.type === 'canvas')
+        const l = filter.manifest.layers[layer] as { width?: number; height?: number; fps?: number } | undefined
+        return l && typeof l.width === 'number' && typeof l.height === 'number' ? [{ layer, width: l.width, height: l.height, fps: l.fps ?? 30 }] : []
+      }),
+      images: () => scriptImages(filter.assets, script.images),
+      drawn: (layer, image) => {
+        const instance = filter.layers[layer]?.instance as (LayerInstance & { setImage?: (image: ImageBitmap) => void }) | undefined
+        if (typeof instance?.setImage === 'function') instance.setImage(image)
+        else image.close()
+      },
       play: (layer, face, animation) => {
         const instance = filter.layers[layer]?.instance as (LayerInstance & { play?: (name: string, faceId?: number) => boolean }) | undefined
         if (typeof instance?.play !== 'function') return 'unsupported'

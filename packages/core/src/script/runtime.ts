@@ -10,13 +10,19 @@
  *    the Worker's own `postMessage` (defense in depth: the sandbox CSP already blocks the network, spec §15);
  * 2. imports `script.js` (an ES module whose default export holds `state`, `setup`, `update`, `on`, `draw`);
  * 3. answers every message of the engine with the commands the script produced (spec §12.1): `init` runs `setup`,
- *    each `frame` runs the due timers, then the queued events in order, then `update`.
+ *    each `frame` runs the due timers, then the queued events in order, then `update`, then the `draw` functions of
+ *    the canvas layers that are due (spec §12.6).
+ *
+ * Canvas layers (spec §12.6): one `OffscreenCanvas` per drawn canvas layer, in the Worker. A canvas is drawn at the
+ * first frame, then when `fps` allows it (in media time: at most `fps` draws per second of `frame.time`) or after
+ * `.invalidate()`. Each draw starts from a transparent canvas; its image goes to the engine as an `ImageBitmap`
+ * (transferred, not copied), which the layer uploads to the GPU.
  *
  * Messages (structured clone over the port):
- * - engine → runtime: `{ t: 'init', code, layers, params, seed, clock, assets }`, `{ t: 'frame', seq, time, dt,
- *   clock, faces, pairs?, params?, events }`.
- * - runtime → engine: `{ t: 'done', seq, commands, emits, warnings }` (`seq` 0 answers `init`), `{ t: 'fatal',
- *   message }` when `script.js` cannot be loaded.
+ * - engine → runtime: `{ t: 'init', code, layers, canvases, params, seed, clock, assets }`, `{ t: 'frame', seq,
+ *   time, dt, clock, faces, pairs?, params?, events }`.
+ * - runtime → engine: `{ t: 'done', seq, commands, emits, warnings, bitmaps? }` (`seq` 0 answers `init`),
+ *   `{ t: 'fatal', message }` when `script.js` cannot be loaded.
  */
 
 /** A face as sent by the engine; the runtime adds `state`. */
@@ -50,8 +56,20 @@ export interface WireInit {
   /** Script clock (s) and media time (s) at activation. */
   clock: number
   time: number
-  /** Image assets by name, for `f.asset()`. */
+  /** Image assets by name, for `f.asset()` (`ImageBitmap`s, transferred). */
   assets: Record<string, unknown>
+  /** The canvas layers drawn by the script (`script.draw`). */
+  canvases: WireCanvas[]
+}
+
+/** A canvas layer drawn by the script (spec §12.6). */
+export interface WireCanvas {
+  /** Layer index. */
+  layer: number
+  width: number
+  height: number
+  /** Maximum draws per second of media time; 0: only at the first frame and after `.invalidate()`. */
+  fps: number
 }
 
 export interface WireFrame {
@@ -75,7 +93,6 @@ export type WireCommand =
   | ['set', number, number | null, Record<string, unknown>]
   | ['animate', number, number | null, Record<string, unknown>, Record<string, unknown>]
   | ['play', number, number | null, string]
-  | ['invalidate', number]
 
 export interface WireDone {
   t: 'done'
@@ -84,6 +101,8 @@ export interface WireDone {
   /** `f.emit()` calls: `[name, data]`. */
   emits: Array<[string, unknown]>
   warnings: string[]
+  /** Canvas images drawn for this answer: `[layer index, image]` (transferred). */
+  bitmaps?: Array<[number, ImageBitmap]>
 }
 
 /** What the runtime needs from its global scope (the Worker's `self`, or a test double). */
@@ -101,6 +120,16 @@ export interface RuntimeOptions {
    * code (Vite wraps them with a helper of its own, which does not exist in the Worker).
    */
   load: (code: string) => Promise<{ default?: unknown }>
+  /** Creates a canvas of canvas layers (default: `new OffscreenCanvas`; the Node tests pass a fake one). */
+  canvas?: (width: number, height: number) => RuntimeCanvas
+}
+
+/** What the runtime uses of an `OffscreenCanvas`. */
+export interface RuntimeCanvas {
+  width: number
+  height: number
+  getContext(type: '2d'): unknown
+  transferToImageBitmap(): unknown
 }
 
 /**
@@ -108,13 +137,32 @@ export interface RuntimeOptions {
  * port in `ports[0]`, or in `data.port`); every other message goes through that port.
  */
 export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): void {
-  type Port = { postMessage(message: unknown): void; addEventListener?: unknown; start?(): void; onmessage: ((e: { data: unknown }) => void) | null }
+  type Port = { postMessage(message: unknown, transfer?: unknown[]): void; addEventListener?: unknown; start?(): void; onmessage: ((e: { data: unknown }) => void) | null }
   type Obj = Record<string, unknown>
   type Def = {
     state?: unknown
     setup?: (f: unknown) => void
     update?: (f: unknown, frame: unknown) => void
     on?: Record<string, ((f: unknown, payload: unknown) => void) | undefined>
+    draw?: Record<string, ((ctx: unknown, f: unknown, frame: unknown) => void) | undefined>
+  }
+  type Context2D = {
+    save(): void
+    restore(): void
+    setTransform(a: number, b: number, c: number, d: number, e: number, f: number): void
+    clearRect(x: number, y: number, w: number, h: number): void
+  }
+  interface Canvas {
+    layer: number
+    id: string
+    width: number
+    height: number
+    fps: number
+    canvas: RuntimeCanvas
+    ctx: Context2D
+    /** Media time of the last draw (s), or -1: never drawn. */
+    last: number
+    invalid: boolean
   }
   interface Timer {
     due: number
@@ -147,12 +195,20 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
   }
 
   const load = options.load
+  // Captured before hardening, like everything the runtime itself needs.
+  const OC = (globalThis as unknown as { OffscreenCanvas?: new (w: number, h: number) => RuntimeCanvas }).OffscreenCanvas
+  const makeCanvas = options.canvas ?? ((w: number, h: number): RuntimeCanvas => {
+    if (!OC) throw new Error('OffscreenCanvas is not available in this browser, so canvas layers cannot be drawn.')
+    return new OC(w, h)
+  })
 
   let port: Port | undefined
   let def: Def = {}
   let layerIds: string[] = []
   let params: Obj = {}
   let assets: Obj = {}
+  let canvases: Canvas[] = []
+  let bitmaps: Array<[number, unknown]> = []
   let state: unknown
   let clock = 0
   let commands: unknown[] = []
@@ -238,7 +294,9 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
           commands.push(['play', index, key, name])
         },
         invalidate() {
-          commands.push(['invalidate', index])
+          const c = canvases.find((c) => c.layer === index)
+          if (c) c.invalid = true
+          else warn(`f.layer("${id}").invalidate(): only canvas layers drawn by the script (draw.${id}) are redrawn; ignored.`)
         },
       })
       handles.set(cacheKey, h)
@@ -271,8 +329,9 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
       emits.push([name, data])
     },
     asset(name: unknown) {
-      if (typeof name !== 'string' || !(name in assets)) {
-        throw new Error(`f.asset(${JSON.stringify(name)}): ${Object.keys(assets).length ? 'no image asset has this name' : 'image assets are not available to scripts yet (they come with canvas layers, #25)'}.`)
+      if (typeof name !== 'string' || !Object.hasOwn(assets, name)) {
+        const why = canvases.length > 0 ? 'no image asset (image, spritesheet, SVG or emoji) of the manifest has this name' : 'image assets are given to scripts that draw canvas layers only'
+        throw new Error(`f.asset(${JSON.stringify(name)}): ${why}.`)
       }
       return assets[name]
     },
@@ -319,16 +378,56 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
     timers = timers.filter((t) => !t.cancelled)
   }
 
+  /** Runs the `draw` function of each canvas that is due (spec §12.6). */
+  function draw(time: number, frameData: Obj): void {
+    // Which canvases are due is settled first: an invalidate() from a draw function redraws at the next frame.
+    const due = canvases.filter((c) => c.last < 0 || c.invalid || (c.fps > 0 && (time < c.last || time - c.last >= 1 / c.fps - 1e-6)))
+    for (const c of due) {
+      c.last = time
+      c.invalid = false
+    }
+    for (const c of due) {
+      const fn = def.draw?.[c.id]
+      if (typeof fn !== 'function') continue
+      // Each draw starts from a transparent canvas, whatever transform the previous one left.
+      c.ctx.save()
+      c.ctx.setTransform(1, 0, 0, 1, 0, 0)
+      c.ctx.clearRect(0, 0, c.width, c.height)
+      c.ctx.restore()
+      let ok = true
+      try {
+        fn(c.ctx, f, frameData)
+      } catch (error) {
+        ok = false
+        warn(`draw.${c.id} threw ${describe(error)}; the layer keeps its previous image`)
+      }
+      if (c.canvas.width !== c.width || c.canvas.height !== c.height) {
+        // The script resized `ctx.canvas`: its size is the manifest's (spec §12.6).
+        warn(`draw.${c.id} resized its canvas to ${c.canvas.width}×${c.canvas.height}; it keeps its declared ${c.width}×${c.height} px`)
+        c.canvas.width = c.width
+        c.canvas.height = c.height
+        continue
+      }
+      if (ok) bitmaps.push([c.layer, c.canvas.transferToImageBitmap()])
+    }
+  }
+
   function answer(seq: number): void {
-    const message = { t: 'done', seq, commands, emits, warnings }
+    const message: Obj = { t: 'done', seq, commands, emits, warnings }
+    const images = bitmaps
+    if (images.length > 0) message.bitmaps = images
     commands = []
     emits = []
     warnings = []
+    bitmaps = []
     try {
-      port!.postMessage(message)
+      port!.postMessage(message, images.map(([, b]) => b))
     } catch (error) {
-      // A value the script passed cannot be cloned (a function, a DOM object…): report it without the payload.
-      port!.postMessage({ t: 'done', seq, commands: [], emits: [], warnings: [`The script's commands or messages cannot be sent: ${describe(error)}`] })
+      // A value the script passed cannot be cloned (a function, a DOM object…): report it without the payload. The
+      // canvas images were not transferred (cloning failed first): they still go.
+      const fallback: Obj = { t: 'done', seq, commands: [], emits: [], warnings: [`The script's commands or messages cannot be sent: ${describe(error)}`] }
+      if (images.length > 0) fallback.bitmaps = images
+      port!.postMessage(fallback, images.map(([, b]) => b))
     }
   }
 
@@ -336,6 +435,18 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
     layerIds = m.layers as string[]
     params = Object.freeze({ ...(m.params as Obj) })
     assets = (m.assets as Obj) ?? {}
+    canvases = []
+    for (const w of (m.canvases as WireCanvas[] | undefined) ?? []) {
+      const id = layerIds[w.layer] ?? ''
+      try {
+        const canvas = makeCanvas(w.width, w.height)
+        const ctx = canvas.getContext('2d') as Context2D | null
+        if (!ctx) throw new Error('no 2D context')
+        canvases.push({ layer: w.layer, id, width: w.width, height: w.height, fps: w.fps, canvas, ctx, last: -1, invalid: false })
+      } catch (error) {
+        warn(`canvas layer "${id}" cannot be drawn: ${describe(error)}`)
+      }
+    }
     clock = m.clock as number
     seedRandom(m.seed as number)
     let mod: { default?: unknown }
@@ -378,6 +489,7 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
     runTimers()
     for (const e of m.events as Array<Parameters<typeof deliver>[0]>) deliver(e)
     if (typeof def.update === 'function') run('update', () => def.update!(f, frameData))
+    draw(m.time as number, frameData)
     answer(m.seq as number)
   }
 

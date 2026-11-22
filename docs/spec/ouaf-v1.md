@@ -463,7 +463,7 @@ export default defineFilter({
 | `f.state` / `face.state` | Global state / per-face state (reset when the face leaves). Plain data. |
 | `f.params` | Parameters, **read-only**, updated at each frame. |
 | `f.emit(name, data?)` | Message to the host: `handle.on('filter:<name>', data)` and `engine.on('filter:<name>', { filter, data })`. |
-| `f.asset(name)` | Image asset, as an `ImageBitmap` drawable in a canvas (a spritesheet gives its first frame). Synchronous: assets are preloaded (10.4). |
+| `f.asset(name)` | Image asset (image, SVG, emoji, spritesheet) declared in `assets`, by name, as an `ImageBitmap` drawable in a canvas (a spritesheet gives its first frame). Synchronous: assets are preloaded (10.4). Only scripts that draw canvas layers get them. |
 | `f.sound(name)` | `.play()`, `.stop()` *(reserved)*. |
 | `f.random()` | Number in [0, 1) from the filter's seeded generator (12.5). |
 | `f.after(ms, fn)`, `f.every(ms, fn)` | Timers in **media time**: `fn(f)` runs at the first frame whose time reaches the deadline. They return `{ cancel() }` and are all cancelled when the filter is deactivated. |
@@ -520,9 +520,22 @@ frames it skipped, 12.7), `frame.faces` (list) and, with `uses: ["pairs"]`, `fra
 
 ### 12.6 Canvas
 
-`draw.<id>(ctx, f, frame)` receives a standard `CanvasRenderingContext2D` (`OffscreenCanvas`). The engine calls it at most
-`fps` times per second; `fps: 0`: only after `f.layer(id).invalidate()`. The main cost is uploading the image to the GPU:
-keep canvases small.
+`draw.<id>(ctx, f, frame)` receives a standard `CanvasRenderingContext2D` (`OffscreenCanvas`) of `width` × `height`
+pixels, origin at the top left, y down; `frame` is the data of 12.4 (the frame of the call).
+
+- **When.** The engine calls it after `update`: with the first frame the script receives, then at most `fps` times per
+  second of media time (`frame.time`), and after `f.layer(id).invalidate()`, in the same frame when `invalidate()` is
+  called from a timer, an event or `update`, at the next frame when it is called from a `draw` function. `fps: 0`:
+  only the first time and after `invalidate()`.
+- **What.** Each call starts from a transparent canvas; the rest of the context state (transform, styles) carries
+  over from the previous call. The image is shown from the frame that applies the script's answer (12.1), and stays
+  until the next draw. When `draw` throws, the layer keeps its previous image. The canvas keeps the size of the
+  manifest: an engine MUST NOT show an image of another size.
+- **Where.** A canvas layer has one image, shown on every face it selects (`faces`) like a sticker: `size` is its height
+  in anchor units, the width follows `width / height`. Nothing is shown before the first draw.
+- `f.asset(name)` gives the manifest's image assets (12.4) to draw with `ctx.drawImage`.
+
+The main cost is uploading the image to the GPU at each draw: keep canvases small, and `fps` low.
 
 ### 12.7 Limits
 
