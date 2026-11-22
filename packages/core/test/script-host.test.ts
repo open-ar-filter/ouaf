@@ -5,9 +5,9 @@ import { FaceBindingData } from '../src/bindings/face-data.ts'
 import { OuafError } from '../src/engine/errors.ts'
 import { createFaceFrame } from '../src/face.ts'
 import { FrameDataBuilder, type FrameDataSource } from '../src/script/frame-data.ts'
-import { ScriptHost, estimateSize, type ScriptHostOptions } from '../src/script/host.ts'
+import { ScriptHost, estimateSize, type ScriptHostOptions, type ScriptPort } from '../src/script/host.ts'
 import { ScriptOverrides } from '../src/script/overrides.ts'
-import { env, runtime, tick } from './script-helpers.ts'
+import { env, fakeImage, runtime, tick } from './script-helpers.ts'
 
 /** Waits until the host has the script's answer to its last message (or 2 s at most). */
 async function idle(host: ScriptHost): Promise<void> {
@@ -143,6 +143,27 @@ describe('script host', () => {
     expect(s.warnings.join('\n')).toMatch(/more than 60 messages per second/)
   })
 
+  it('sends the canvases and image assets with init, and hands each drawn image to its layer at the next frame', async () => {
+    const drawn: Array<[number, number[]]> = []
+    const star = new Uint16Array([7]).buffer as unknown as ImageBitmap // transferable in Node, like an ImageBitmap
+    const s = hostSetup(`export default { draw: { label(ctx, f) { ctx.fillRect(0, 0, 1, 1); f.emit('star', f.asset('star').byteLength) } } }`, {
+      canvases: [{ layer: 0, width: 16, height: 8, fps: 0 }],
+      images: async () => ({ star }),
+      drawn: (layer, image) => void drawn.push([layer, fakeImage(image)]),
+    })
+    await s.host.start({}, 0)
+    expect((star as unknown as ArrayBuffer).byteLength).toBe(0) // transferred to the sandbox, not copied
+    await idle(s.host)
+    s.host.beginFrame()
+    s.host.endFrame(0, s.source)
+    await idle(s.host)
+    expect(drawn).toEqual([]) // applied with the answer, at the start of the next frame
+    s.host.beginFrame()
+    expect(drawn).toEqual([[0, [1, 16, 8]]])
+    expect(s.emits).toEqual([['star', 2]])
+    expect(s.warnings).toEqual([])
+  })
+
   it('reports a sandbox that does not start', async () => {
     const s = hostSetup('', { connect: () => Promise.reject(new OuafError('script', 'no sandbox')) })
     await s.host.start({}, 0)
@@ -157,5 +178,24 @@ describe('script host', () => {
     const cyclic: Record<string, unknown> = {}
     cyclic.self = cyclic
     expect(estimateSize(cyclic, 1e6)).toBe(8)
+  })
+})
+
+describe('script host: canvas images', () => {
+  it('hands over only images, for layers that exist; the rest of a forged answer is ignored', async () => {
+    const drawn: Array<[number, unknown]> = []
+    const port: ScriptPort = { postMessage: () => {}, onmessage: null }
+    const s = hostSetup('', { connect: async () => ({ port, terminate: () => {} }), drawn: (layer, image) => void drawn.push([layer, image]) })
+    await s.host.start({}, 0)
+    const image = {}
+    // A script shares its Worker with the runtime, so it can rewrite its answers: the host checks what they hold.
+    port.onmessage!({ data: { t: 'done', seq: 0, commands: [], emits: [], warnings: [], bitmaps: [[0, null], 'x', [5, {}], ['0', {}], [0, image]] } })
+    s.host.beginFrame()
+    expect(drawn).toEqual([[0, image]])
+    s.host.endFrame(0, s.source)
+    port.onmessage!({ data: { t: 'done', seq: 1, commands: [], emits: [], warnings: [], bitmaps: 'nope' } })
+    s.host.beginFrame()
+    expect(drawn).toHaveLength(1)
+    expect(s.errors).toEqual([])
   })
 })

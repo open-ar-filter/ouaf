@@ -13,13 +13,16 @@
  *   started keep working; the script stays stopped until the filter is activated again.
  * - **Messages** (`f.emit`): structured-cloneable, at most 64 KB, at most 60 per second; others are dropped with a
  *   warning.
+ * - **Canvas layers** (spec §12.6): the script draws them in its Worker; each answer may carry their new images
+ *   (`ImageBitmap`s, transferred), handed to the layers with the answer's commands (`drawn`). Images nobody takes are
+ *   closed.
  */
 import { SCRIPT_LIMITS, type ScriptUse } from '@ouaf/spec'
 import { OuafError } from '../engine/errors.ts'
 import { isEasing } from './easing.ts'
 import type { FrameDataBuilder, FrameDataSource } from './frame-data.ts'
 import type { OverrideValue, ScriptOverrides } from './overrides.ts'
-import type { WireCommand, WireDone, WireEvent, WireFrame, WireInit } from './runtime.ts'
+import type { WireCanvas, WireCommand, WireDone, WireEvent, WireFrame, WireInit } from './runtime.ts'
 
 /** The engine's end of the channel to a sandbox (a `MessagePort`, or a test double). */
 export interface ScriptPort {
@@ -59,6 +62,15 @@ export interface ScriptHostOptions {
    * model has no such animation) or `'unsupported'` (not a model layer).
    */
   play?(layer: number, face: number | undefined, animation: string): 'played' | 'unknown' | 'unsupported'
+  /** The canvas layers the script draws (`script.draw`, spec §12.6). */
+  canvases?: readonly WireCanvas[]
+  /**
+   * The image assets `f.asset()` gives, made afresh for each activation (they are transferred to the sandbox).
+   * Called only when the script draws canvas layers.
+   */
+  images?(): Promise<Record<string, ImageBitmap>>
+  /** A new image of canvas layer `layer` (index): the callee owns it from then on (and closes it). */
+  drawn?(layer: number, image: ImageBitmap): void
   /** Clock for the watchdog (ms); default `performance.now`. */
   now?(): number
   setTimeout?(fn: () => void, ms: number): unknown
@@ -112,9 +124,11 @@ export class ScriptHost {
   async start(params: Record<string, unknown>, time: number): Promise<void> {
     if (this.#state !== 'idle') return
     this.#state = 'starting'
+    const canvases = this.#o.canvases ?? []
     let connection: ScriptConnection
+    let images: Record<string, ImageBitmap> = {}
     try {
-      connection = await this.#o.connect()
+      ;[connection, images] = await Promise.all([this.#o.connect(), canvases.length > 0 && this.#o.images ? this.#o.images() : {}])
     } catch (error) {
       if ((this.#state as State) === 'disposed') return
       this.#state = 'stopped'
@@ -123,6 +137,7 @@ export class ScriptHost {
     }
     if ((this.#state as State) === 'disposed') {
       connection.terminate()
+      for (const image of Object.values(images)) image.close()
       return
     }
     this.#connection = connection
@@ -137,9 +152,10 @@ export class ScriptHost {
       seed: this.#o.seed >>> 0,
       clock: this.#o.overrides.clock.time,
       time,
-      assets: {},
+      assets: images,
+      canvases: canvases.map((c) => ({ ...c })),
     }
-    this.#send(0, init)
+    this.#send(0, init, Object.values(images))
   }
 
   /** Queues an event for the script (only those it handles). */
@@ -204,13 +220,15 @@ export class ScriptHost {
     if (this.#state === 'disposed') return
     this.#state = 'disposed'
     this.#shutdown()
+    for (const a of this.#answers) closeImages(a)
+    this.#answers = []
   }
 
-  #send(seq: number, message: WireInit | WireFrame): void {
+  #send(seq: number, message: WireInit | WireFrame, images: ImageBitmap[] = []): void {
     this.#inFlight = seq
     const set = this.#o.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms))
     this.#watchdog = set(() => this.#onTimeout(seq), SCRIPT_LIMITS.watchdogMs)
-    const transfer = message.t === 'frame' ? message.faces.flatMap((f) => (f.landmarks ? [f.landmarks.buffer as ArrayBuffer] : [])) : []
+    const transfer: Transferable[] = message.t === 'frame' ? message.faces.flatMap((f) => (f.landmarks ? [f.landmarks.buffer as ArrayBuffer] : [])) : images
     try {
       this.#connection!.port.postMessage(message, transfer)
     } catch (error) {
@@ -219,14 +237,20 @@ export class ScriptHost {
   }
 
   #onMessage(data: unknown): void {
-    if (this.#state !== 'running') return
     const m = data as { t?: unknown; seq?: unknown; message?: unknown } | null
     if (!m || typeof m !== 'object') return
+    if (this.#state !== 'running') {
+      if (m.t === 'done') closeImages(m as WireDone)
+      return
+    }
     if (m.t === 'fatal') {
       this.#stop(String(m.message), 'script')
       return
     }
-    if (m.t !== 'done' || m.seq !== this.#inFlight) return
+    if (m.t !== 'done' || m.seq !== this.#inFlight) {
+      if (m.t === 'done') closeImages(m as WireDone)
+      return
+    }
     this.#clearWatchdog()
     this.#inFlight = -1
     this.#answers.push(m as WireDone)
@@ -275,6 +299,14 @@ export class ScriptHost {
     for (const w of answer.warnings ?? []) this.#o.warn(`Filter "${this.#o.filterId}": script: ${w}`)
     for (const c of answer.commands ?? []) this.#command(c)
     for (const [name, data] of answer.emits ?? []) this.#emit(name, data)
+    // The answer comes from the sandbox, where the script may have rewritten it: check what it holds.
+    if (!Array.isArray(answer.bitmaps)) return
+    for (const entry of answer.bitmaps as unknown[]) {
+      const [layer, image] = Array.isArray(entry) ? (entry as unknown[]) : []
+      if (!isImage(image)) continue
+      if (this.#o.drawn && typeof layer === 'number' && layer in this.#o.layers) this.#o.drawn(layer, image)
+      else release(image)
+    }
   }
 
   #layerName(index: number): string {
@@ -307,7 +339,7 @@ export class ScriptHost {
       const result = this.#o.play?.(layer, c[2] ?? undefined, c[3]) ?? 'unsupported'
       if (result === 'unsupported') this.#warnOnce(`play:${layer}`, `.play() starts model animations: ${this.#layerName(layer)} is not a model layer; ignored.`)
       else if (result === 'unknown') this.#warnOnce(`play:${layer}:${c[3]}`, `.play(${JSON.stringify(c[3])}): ${this.#layerName(layer)} has no such animation.`)
-    } else if (op === 'invalidate') this.#warnOnce('invalidate', '.invalidate() redraws canvas layers, which come with #25; ignored.')
+    }
   }
 
   #animate(layer: number, name: string, face: number | undefined, value: unknown, options: Record<string, unknown>): void {
@@ -376,6 +408,25 @@ function flattenProps(props: Record<string, unknown>): Array<[string, unknown]> 
     } else out.push([name, value])
   }
   return out
+}
+
+/** Closes the canvas images of an answer that will not be applied. */
+function closeImages(answer: WireDone): void {
+  if (!Array.isArray(answer.bitmaps)) return
+  for (const entry of answer.bitmaps as unknown[]) {
+    const image = Array.isArray(entry) ? (entry as unknown[])[1] : undefined
+    if (isImage(image)) release(image)
+  }
+}
+
+/** An `ImageBitmap` (where there is no `ImageBitmap`, in the Node tests: any object). */
+function isImage(value: unknown): value is ImageBitmap {
+  if (typeof ImageBitmap !== 'undefined') return value instanceof ImageBitmap
+  return typeof value === 'object' && value !== null
+}
+
+function release(image: ImageBitmap): void {
+  ;(image as Partial<ImageBitmap>).close?.()
 }
 
 function copy(v: OverrideValue): OverrideValue {

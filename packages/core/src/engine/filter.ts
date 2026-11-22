@@ -15,6 +15,7 @@ import type { WebGLRenderer } from 'three'
 import { deriveSeed, SeededRandom } from '../random.ts'
 import { ScriptOverrides } from '../script/overrides.ts'
 import type { ScriptHost } from '../script/host.ts'
+import { scriptImageRefs } from '../layers/canvas/script-images.ts'
 
 /** Events of a filter handle. */
 export interface FilterEvents extends Record<string, unknown> {
@@ -105,6 +106,14 @@ export interface LoadedLayer {
   readonly instance: LayerInstance
 }
 
+/** A filter's script (spec §12): its source, the values it gives the layers, the image assets of `f.asset()`. */
+export interface FilterScript {
+  readonly code: string
+  readonly overrides: ScriptOverrides
+  /** Names of the preloaded image assets given to the script (canvas layers, spec §12.6). */
+  readonly images: readonly string[]
+}
+
 /** What the engine keeps for each filter of the stack. */
 export class FilterInstance {
   readonly key: number
@@ -129,7 +138,7 @@ export class FilterInstance {
   readonly layerRandom: readonly SeededRandom[]
   #seed = 0
   /** The script (spec §12): its source and the values it gives the layers. Its host is started by the engine. */
-  readonly script: { readonly code: string; readonly overrides: ScriptOverrides } | undefined
+  readonly script: FilterScript | undefined
   /** Set by the engine while the script runs. */
   host: ScriptHost | undefined
   enabled = true
@@ -148,7 +157,7 @@ export class FilterInstance {
     seed: number
     random: SeededRandom
     layerRandom: readonly SeededRandom[]
-    script?: { code: string; overrides: ScriptOverrides }
+    script?: FilterScript
   }) {
     this.key = init.key
     this.manifest = init.manifest
@@ -230,7 +239,7 @@ export async function loadFilter(
 
   const range = manifest.engine ?? '^1'
   if (!satisfies(env.engineVersion, range)) throw new IncompatibleEngineError(manifest.id, range, env.engineVersion)
-  let script: { code: string; overrides: ScriptOverrides } | undefined
+  let script: FilterScript | undefined
   if (manifest.script) {
     let code: string
     try {
@@ -238,7 +247,9 @@ export async function loadFilter(
     } catch (cause) {
       throw new OuafError('filter-load', `Filter "${manifest.id}": the manifest declares a script but script.js could not be read.`, { cause })
     }
-    script = { code, overrides: new ScriptOverrides() }
+    // The image assets `f.asset()` gives to the canvas layers' `draw` functions (spec §12.6).
+    const images = env.layerTypes.has('canvas') ? scriptImageRefs(manifest, (kind) => env.loaders.has(kind as LoaderKind)) : []
+    script = { code, overrides: new ScriptOverrides(), images }
   }
 
   // `apply: "reload"` parameters are applied at the next frame like live ones until the engine preloads and swaps
@@ -261,7 +272,7 @@ export async function loadFilter(
     }
     return impl
   })
-  const refs: string[] = []
+  const refs: string[] = [...(script?.images ?? [])]
   impls.forEach((impl, i) => {
     for (const ref of impl.assets?.(decls[i]!) ?? []) refs.push(ref)
   })

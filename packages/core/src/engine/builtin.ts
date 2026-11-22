@@ -1,12 +1,13 @@
 /**
- * Built-in plugins, installed by default (`EngineOptions.builtins`). The v1 layer types (#19–#25) are added here as
- * they land, each as its own plugin.
+ * Built-in plugins, installed by default (`EngineOptions.builtins`): the face tracker and the v1 layer types, each as
+ * its own plugin.
  *
  * Built-in plugins are official and declare no vocabulary: the v1 vocabulary is already in `createRegistry()`.
  */
 import { createFaceTracker } from '../face-tracker.ts'
 import type { FaceTracker } from '../face.ts'
 import type { FaceTrackerImpl, FrameTracker, OuafPlugin } from './plugin.ts'
+import { canvasPlugin } from '../layers/canvas/index.ts'
 import { colorPlugin } from '../layers/color/index.ts'
 import { shaderPlugin } from '../layers/shader/index.ts'
 import { modelPlugin } from '../layers/model/index.ts'
@@ -69,5 +70,6 @@ export function builtinPlugins(): OuafPlugin[] {
     warpPlugin,
     colorPlugin,
     shaderPlugin,
+    canvasPlugin,
   ]
 }

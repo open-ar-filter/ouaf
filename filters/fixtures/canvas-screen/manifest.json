@@ -1,0 +1,28 @@
+{
+  "ouaf": "1",
+  "id": "canvas-screen",
+  "name": "Screen canvases (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Canvas layer (#25) laid out on the screen for pixel checks: orientation and f.asset, a redraw on invalidate(), an fps cap and premultiplied alpha. Synthetic assets.",
+  "requires": {},
+  "assets": {
+    "star": {
+      "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10' fill='#ffff00'/></svg>"
+    },
+    "black": {
+      "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10' fill='#000000'/></svg>"
+    }
+  },
+  "layers": [
+    { "id": "quads", "type": "canvas", "width": 64, "height": 64, "fps": 0, "anchor": "screen", "offset": [-0.2, 0.2, 0], "size": 0.2 },
+    { "id": "swatch", "type": "canvas", "width": 32, "height": 32, "fps": 0, "anchor": "screen", "offset": [0.2, 0.2, 0], "size": 0.1 },
+    { "type": "sticker", "src": "black", "anchor": "screen", "offset": [0, -0.2, 0], "size": 0.14 },
+    { "id": "ticker", "type": "canvas", "width": 16, "height": 16, "fps": 4, "anchor": "screen", "offset": [0, -0.2, 0.01], "size": 0.1 }
+  ],
+  "script": {
+    "entry": "script.js",
+    "on": ["message:color"],
+    "draw": ["quads", "swatch", "ticker"]
+  }
+}
