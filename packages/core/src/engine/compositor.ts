@@ -116,6 +116,8 @@ export class Compositor implements ObjectsView {
   #video: HTMLVideoElement | undefined
   #mirrored = false
   #texture: VideoTexture | undefined
+  /** The texture holds a frame of the current video. */
+  #uploaded = false
   #videoMesh: Mesh<BufferGeometry, RawShaderMaterial>
   #videoScene = new Scene()
   #uVideoToClip = { value: new Vector4() }
@@ -239,6 +241,7 @@ export class Compositor implements ObjectsView {
     if (video !== this.#video) {
       this.#texture?.dispose()
       this.#texture = undefined
+      this.#uploaded = false
       this.#video = video
       if (video) {
         // As in the phase 0 renderer: `VideoTexture` is three's upload path that works for a <video>; uploads are
@@ -282,8 +285,15 @@ export class Compositor implements ObjectsView {
     const renderer = this.renderer
     const video = this.#video
     const hasFrame = !!video && video.videoWidth > 0 && video.readyState >= HAVE_CURRENT_DATA
-    this.#videoMesh.visible = hasFrame
-    if (hasFrame && this.#texture) this.#texture.needsUpdate = true
+    // While a paused video seeks, Chromium presents the frame (requestVideoFrameCallback) with readyState still at
+    // HAVE_METADATA, and presents nothing more once the seek completes on the same frame: keep drawing the last
+    // uploaded frame then, instead of a black image (#116).
+    const seeking = !hasFrame && !!video && video.seeking && this.#uploaded
+    this.#videoMesh.visible = hasFrame || seeking
+    if (hasFrame && this.#texture) {
+      this.#texture.needsUpdate = true
+      this.#uploaded = true
+    }
 
     const anyPass = showFilters && (hasActive(passes.background) || hasActive(passes.face) || hasActive(passes.warp) || hasActive(passes.color))
     if (!anyPass) {
