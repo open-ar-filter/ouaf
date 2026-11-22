@@ -44,7 +44,7 @@ interface Sample {
 async function sample(page: Page): Promise<Sample> {
   const png = await page.locator('#canvas').screenshot()
   return page.evaluate(async (bytes) => {
-    const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
     const c = new OffscreenCanvas(bitmap.width, bitmap.height)
     const ctx = c.getContext('2d')!
     ctx.drawImage(bitmap, 0, 0)
@@ -84,7 +84,7 @@ async function sample(page: Page): Promise<Sample> {
       greenWidth: green ? (x1 - x0 + 1) / c.width : 0,
       greenHeight: green ? (y1 - y0 + 1) / c.height : 0,
     }
-  }, [...png])
+  }, png.toString('base64'))
 }
 
 test('a built-in LUT grades the image, mixed by its intensity', async ({ page }) => {
