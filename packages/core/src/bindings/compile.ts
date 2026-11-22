@@ -119,6 +119,13 @@ type NumberReader = Extract<DataReader, { type: 'number' }>
 type OtherReader = Exclude<DataReader, NumberReader>
 
 function compile(value: unknown, property: BindableProperty<ValueType>, env: BindingEnv): Evaluator {
+  const evaluator = compileValue(value, property, env)
+  if (!env.overrides || property.name === undefined) return evaluator
+  const types: readonly ValueType[] = typeof property.type === 'string' ? [property.type] : property.type
+  return env.overrides.wrap(property.name, types, evaluator)
+}
+
+function compileValue(value: unknown, property: BindableProperty<ValueType>, env: BindingEnv): Evaluator {
   const types: readonly ValueType[] = typeof property.type === 'string' ? [property.type] : property.type
   const path = property.path
   const fits = (v: unknown) => types.some((t) => isOfType(v, t))

@@ -83,14 +83,14 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
   const env = ctx.bindings
   const at = (p: string) => (decl.id ? `${decl.id}.${p}` : p)
 
-  const text: CompiledBinding<string> = compileBinding(decl.text, { type: 'string', fallback: '', path: at('text') }, env)
-  const color: CompiledBinding<string> = compileBinding(decl.color ?? '#ffffff', { type: 'color', fallback: '#ffffff', path: at('color') }, env)
-  const size: NumberBinding = compileNumberBinding(decl.size ?? 0.3, { fallback: 0.3, path: at('size') }, env)
-  const opacity: NumberBinding = compileNumberBinding(decl.opacity ?? 1, { fallback: 1, path: at('opacity') }, env)
-  const visible: CompiledBinding<boolean> = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: at('visible') }, env)
+  const text: CompiledBinding<string> = compileBinding(decl.text, { type: 'string', fallback: '', path: at('text'), name: 'text' }, env)
+  const color: CompiledBinding<string> = compileBinding(decl.color ?? '#ffffff', { type: 'color', fallback: '#ffffff', path: at('color'), name: 'color' }, env)
+  const size: NumberBinding = compileNumberBinding(decl.size ?? 0.3, { fallback: 0.3, path: at('size'), name: 'size' }, env)
+  const opacity: NumberBinding = compileNumberBinding(decl.opacity ?? 1, { fallback: 1, path: at('opacity'), name: 'opacity' }, env)
+  const visible: CompiledBinding<boolean> = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: at('visible'), name: 'visible' }, env)
   const zero = [0, 0, 0] as const
-  const offset = compileBinding(decl.offset ?? zero, { type: 'vec3', fallback: zero, path: at('offset') }, env)
-  const rotation = compileBinding(decl.rotation ?? zero, { type: 'vec3', fallback: zero, path: at('rotation') }, env)
+  const offset = compileBinding(decl.offset ?? zero, { type: 'vec3', fallback: zero, path: at('offset'), name: 'offset' }, env)
+  const rotation = compileBinding(decl.rotation ?? zero, { type: 'vec3', fallback: zero, path: at('rotation'), name: 'rotation' }, env)
 
   const anchor = typeof decl.anchor === 'string' ? decl.anchor : 'head'
   const onScreen = anchor === 'screen'

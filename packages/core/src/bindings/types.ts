@@ -98,6 +98,17 @@ export interface ParamsReader {
 export interface BindingEnv {
   data: BindingDataSource
   params: ParamsReader
+  /**
+   * Set for the layers of a filter with a script (spec §12.4): every property compiled with a `name` is wrapped so
+   * that the script's `.set()` and `.animate()` values replace it.
+   */
+  overrides?: PropertyOverrides
+}
+
+/** Where a layer's bindable properties register, so that a script can set them (`ScriptOverrides.forLayer`). */
+export interface PropertyOverrides {
+  /** Wraps the compiled value of property `name` (accepting `types`); the wrapper reports `perFace`. */
+  wrap<T extends CompiledBinding<unknown>>(name: string, types: readonly ValueType[], binding: T): T
 }
 
 /** The property a value is compiled for. */
@@ -111,4 +122,6 @@ export interface BindableProperty<K extends ValueType> {
   fallback: ValueTypes[K]
   /** Location of the value in the manifest, for error messages (e.g. `/layers/1/opacity`). */
   path?: string
+  /** Property name as a script sets it (`opacity`, `offset`); needed for the script to set the property. */
+  name?: string
 }

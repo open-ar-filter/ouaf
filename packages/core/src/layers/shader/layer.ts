@@ -235,8 +235,8 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
   const usesSizes = /\bouaf_faceSize\b/.test(source)
   const anchors = decl.anchors ?? []
   const inputs = anchors.length > 0 || usesSizes ? new ShaderFaceInputs(ctx.maxFaces, anchors, usesSizes) : undefined
-  const visible = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: 'visible' }, env)
-  const opacity = compileNumberBinding(decl.opacity ?? 1, { fallback: 1, path: 'opacity' }, env)
+  const visible = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: 'visible', name: 'visible' }, env)
+  const opacity = compileNumberBinding(decl.opacity ?? 1, { fallback: 1, path: 'opacity', name: 'opacity' }, env)
 
   // Engine inputs (spec §11.1) and the layer's uniforms and textures.
   const uInput: { value: Texture | null } = { value: null }

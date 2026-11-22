@@ -79,17 +79,19 @@ export class ShaderUniforms {
     for (const [name, value] of Object.entries(values ?? {})) {
       const type = resolveUniformType(name, value, env)
       const at = `${path}/${name}`
+      // Settable by a script as `uniforms.<name>` (`.set({ uniforms: { name: value } })`, spec §12.4).
+      const prop = `uniforms.${name}`
       declarations.push([name, type])
       let slot: Slot
       if (type === 'float') {
-        slot = { type, binding: compileNumberBinding(value, { fallback: 0, path: at }, env), uniform: new FloatUniform() }
+        slot = { type, binding: compileNumberBinding(value, { fallback: 0, path: at, name: prop }, env), uniform: new FloatUniform() }
       } else if (type === 'bool') {
-        slot = { type, binding: compileBinding(value, { type: 'boolean', fallback: false, path: at }, env), uniform: { value: false } }
+        slot = { type, binding: compileBinding(value, { type: 'boolean', fallback: false, path: at, name: prop }, env), uniform: { value: false } }
       } else if (type === 'vec4') {
-        slot = { type, binding: compileBinding(value, { type: 'color', fallback: '#000000', path: at }, env), uniform: { value: new Float32Array(4) }, last: undefined }
+        slot = { type, binding: compileBinding(value, { type: 'color', fallback: '#000000', path: at, name: prop }, env), uniform: { value: new Float32Array(4) }, last: undefined }
       } else {
         const fallback = FALLBACK[type] as readonly [number, number] & readonly [number, number, number]
-        slot = { type, binding: compileBinding(value, { type: BINDING_TYPE[type], fallback, path: at }, env), uniform: { value: new Float32Array(type === 'vec2' ? 2 : 3) } }
+        slot = { type, binding: compileBinding(value, { type: BINDING_TYPE[type], fallback, path: at, name: prop }, env), uniform: { value: new Float32Array(type === 'vec2' ? 2 : 3) } }
       }
       this.#slots.push(slot)
       uniforms[name] = slot.uniform
