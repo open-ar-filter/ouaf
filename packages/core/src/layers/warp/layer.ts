@@ -45,11 +45,11 @@ export function createWarpLayer(layer: LayerDecl, ctx: LayerContext): PassLayer 
   const packer = new WarpPacker(wanted)
 
   const env = ctx.bindings
-  const radius = compileNumberBinding(decl.radius ?? DEFAULT_RADIUS, { fallback: DEFAULT_RADIUS, path: 'radius' }, env)
-  const strength = compileNumberBinding(decl.strength ?? DEFAULT_STRENGTH, { fallback: DEFAULT_STRENGTH, path: 'strength' }, env)
-  const opacity = compileNumberBinding(decl.opacity ?? 1, { fallback: 1, path: 'opacity' }, env)
-  const visible = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: 'visible' }, env)
-  const direction = compileBinding(decl.direction ?? DEFAULT_DIRECTION, { type: 'vec2', fallback: DEFAULT_DIRECTION, path: 'direction' }, env)
+  const radius = compileNumberBinding(decl.radius ?? DEFAULT_RADIUS, { fallback: DEFAULT_RADIUS, path: 'radius', name: 'radius' }, env)
+  const strength = compileNumberBinding(decl.strength ?? DEFAULT_STRENGTH, { fallback: DEFAULT_STRENGTH, path: 'strength', name: 'strength' }, env)
+  const opacity = compileNumberBinding(decl.opacity ?? 1, { fallback: 1, path: 'opacity', name: 'opacity' }, env)
+  const visible = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: 'visible', name: 'visible' }, env)
+  const direction = compileBinding(decl.direction ?? DEFAULT_DIRECTION, { type: 'vec2', fallback: DEFAULT_DIRECTION, path: 'direction', name: 'direction' }, env)
 
   const uInput: { value: Texture | null } = { value: null }
   const uAspect = { value: 1 }

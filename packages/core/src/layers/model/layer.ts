@@ -170,10 +170,10 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
   if (d.occlusion === 'head' && screen) ctx.warn(`${path('occlusion')}: "head" has no effect with anchor "screen".`)
 
   const env = ctx.bindings
-  const visible: CompiledBinding<boolean> = compileBinding(d.visible ?? true, { type: 'boolean', fallback: true, path: path('visible') }, env)
-  const opacity: NumberBinding = compileNumberBinding(d.opacity ?? 1, { fallback: 1, path: path('opacity') }, env)
-  const offset: CompiledBinding<Vec3> = compileBinding(d.offset ?? [0, 0, 0], { type: 'vec3', fallback: [0, 0, 0], path: path('offset') }, env)
-  const rotation: CompiledBinding<Vec3> = compileBinding(d.rotation ?? [0, 0, 0], { type: 'vec3', fallback: [0, 0, 0], path: path('rotation') }, env)
+  const visible: CompiledBinding<boolean> = compileBinding(d.visible ?? true, { type: 'boolean', fallback: true, path: path('visible'), name: 'visible' }, env)
+  const opacity: NumberBinding = compileNumberBinding(d.opacity ?? 1, { fallback: 1, path: path('opacity'), name: 'opacity' }, env)
+  const offset: CompiledBinding<Vec3> = compileBinding(d.offset ?? [0, 0, 0], { type: 'vec3', fallback: [0, 0, 0], path: path('offset'), name: 'offset' }, env)
+  const rotation: CompiledBinding<Vec3> = compileBinding(d.rotation ?? [0, 0, 0], { type: 'vec3', fallback: [0, 0, 0], path: path('rotation'), name: 'rotation' }, env)
   const scale = compileScale(d.scale ?? 1, path('scale'), ctx)
 
   const renderer = ctx.renderer
@@ -392,7 +392,7 @@ function compileScale(value: unknown, path: string, ctx: LayerContext): ScaleBin
     (typeof value === 'object' && value !== null && !Array.isArray(value) &&
       (('bind' in value && !('map' in value)) || ('param' in value && env.params.type(String((value as { param: unknown }).param)) === 'number')))
   if (isNumber) {
-    const n = compileNumberBinding(value, { fallback: 1, path }, env)
+    const n = compileNumberBinding(value, { fallback: 1, path, name: 'scale' }, env)
     return {
       write(face, out, index) {
         n.write(face, out, index)
@@ -403,7 +403,7 @@ function compileScale(value: unknown, path: string, ctx: LayerContext): ScaleBin
       },
     }
   }
-  const b = compileBinding(value, { type: ['number', 'vec3'], fallback: 1, path }, env)
+  const b = compileBinding(value, { type: ['number', 'vec3'], fallback: 1, path, name: 'scale' }, env)
   return {
     write(face, out, index) {
       const v = b.evaluate(face)

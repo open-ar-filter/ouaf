@@ -143,12 +143,12 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
   const autoplay = d.autoplay ?? true
 
   const env = ctx.bindings
-  const visible: CompiledBinding<boolean> = compileBinding(d.visible ?? true, { type: 'boolean', fallback: true, path: path('visible') }, env)
-  const opacity: NumberBinding = compileNumberBinding(d.opacity ?? 1, { fallback: 1, path: path('opacity') }, env)
-  const size: NumberBinding = compileNumberBinding(d.size ?? 1, { fallback: 1, path: path('size') }, env)
-  const rate: NumberBinding = compileNumberBinding(d.rate ?? 1, { fallback: 1, path: path('rate') }, env)
-  const offset: CompiledBinding<Vec3> = compileBinding(d.offset ?? [0, 0, 0], { type: 'vec3', fallback: [0, 0, 0], path: path('offset') }, env)
-  const rotation: CompiledBinding<Vec3> = compileBinding(d.rotation ?? [0, 0, 0], { type: 'vec3', fallback: [0, 0, 0], path: path('rotation') }, env)
+  const visible: CompiledBinding<boolean> = compileBinding(d.visible ?? true, { type: 'boolean', fallback: true, path: path('visible'), name: 'visible' }, env)
+  const opacity: NumberBinding = compileNumberBinding(d.opacity ?? 1, { fallback: 1, path: path('opacity'), name: 'opacity' }, env)
+  const size: NumberBinding = compileNumberBinding(d.size ?? 1, { fallback: 1, path: path('size'), name: 'size' }, env)
+  const rate: NumberBinding = compileNumberBinding(d.rate ?? 1, { fallback: 1, path: path('rate'), name: 'rate' }, env)
+  const offset: CompiledBinding<Vec3> = compileBinding(d.offset ?? [0, 0, 0], { type: 'vec3', fallback: [0, 0, 0], path: path('offset'), name: 'offset' }, env)
+  const rotation: CompiledBinding<Vec3> = compileBinding(d.rotation ?? [0, 0, 0], { type: 'vec3', fallback: [0, 0, 0], path: path('rotation'), name: 'rotation' }, env)
 
   const root = new Group()
   root.name = decl.id ?? 'sticker'

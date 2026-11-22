@@ -101,11 +101,11 @@ function createColorLayer(decl: LayerDecl, ctx: LayerContext): PassLayer {
   const lut = typeof decl.lut === 'string' ? ctx.assets.get<LoadedLut>(decl.lut) : undefined
   const faceRegion = decl.region === 'face'
 
-  const visible = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: 'visible' }, ctx.bindings)
-  const tint = compileBinding(decl.tint ?? '#ffffff', { type: 'color', fallback: '#ffffff', path: 'tint' }, ctx.bindings)
+  const visible = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: 'visible', name: 'visible' }, ctx.bindings)
+  const tint = compileBinding(decl.tint ?? '#ffffff', { type: 'color', fallback: '#ffffff', path: 'tint', name: 'tint' }, ctx.bindings)
   const amounts: NumberBinding[] = AMOUNT_NAMES.map((name) => {
     const { fallback } = AMOUNT_DEFS[name]
-    return compileNumberBinding(decl[name] ?? fallback, { fallback, path: name }, ctx.bindings)
+    return compileNumberBinding(decl[name] ?? fallback, { fallback, path: name, name }, ctx.bindings)
   })
   const values = new Float64Array(AMOUNT_COUNT)
   const tintRgba = new Float64Array(4)
