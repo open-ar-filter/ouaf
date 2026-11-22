@@ -18,6 +18,8 @@ export type OuafErrorCode =
   | 'shader'
   | 'gpu-context-lost'
   | 'disposed'
+  /** `send(name, data)`: an invalid message name, or data that is not structured-cloneable. */
+  | 'invalid-message'
   /** The browser lacks what an output needs (`MediaRecorder`, a codec, `captureStream` in a worker). */
   | 'unsupported'
   /** A filter's script could not start (sandbox, `script.js`). */
