@@ -62,6 +62,10 @@ The `ouaf pack` tool runs this file **once, in a sandbox**, separates data from 
 (filling in the `ouaf` field and the `script` section), bundles the functions into `script.js` and zips everything.
 The engine reads the manifest **without running any code**.
 
+The data MUST be plain JSON values (objects, lists, strings, finite numbers, booleans, `null`): a function anywhere
+else than `setup`, `update`, `on.<event>` and `draw.<layer>` is an error. Of the `script` section, the author only
+writes `uses` (12.2); `ouaf pack` fills in the rest from the functions.
+
 ## 4. Manifest
 
 | Field | Type | Req. | Description |
@@ -430,7 +434,8 @@ vec4 effect(vec2 uv) {
 "script": { "entry": "script.js", "setup": true, "update": true, "on": ["smile", "message:startGame"], "draw": ["bubble"], "uses": ["face.pose"] }
 ```
 
-`uses` lists the data the script receives (12.4); when omitted, `["face.pose", "face.blendshapes"]`.
+`uses` lists the data the script receives (12.4); when omitted, `["face.pose", "face.blendshapes"]`. It is the one
+field the author writes in `filter.js` (`script: { uses: ["face.anchors"] }`); the others describe the functions.
 
 `script.js` is a self-contained ES module (no `import`): its default export is an object with the functions of
 `filter.js` and the initial state (`state`, `setup`, `update`, `on`, `draw`; other keys are ignored). The engine

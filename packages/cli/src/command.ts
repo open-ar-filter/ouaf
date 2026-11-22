@@ -1,6 +1,6 @@
 /**
  * Shape of a CLI command. Each command lives in `commands/<name>.ts` and is listed in `commands/index.ts`;
- * `validate` is the first, `pack`, `preview` and `pack-alpha` follow the same pattern.
+ * `validate`, `pack` and `pack-alpha` (and `preview`, later) follow the same pattern.
  */
 
 /** Exit codes shared by every command. */

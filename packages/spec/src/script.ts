@@ -191,6 +191,11 @@ export type FilterDefinition<L extends readonly LayerDecl[] = readonly LayerDecl
     /** Filled in by `ouaf pack`. */
     ouaf?: '1'
     layers: L
+    /**
+     * `ouaf pack` fills in the manifest's `script` section from the functions below; the author only chooses the data
+     * the script receives (spec §12.2, §12.4). Default: `["face.pose", "face.blendshapes"]`.
+     */
+    script?: { readonly uses?: ReadonlyArray<ScriptUse | (string & {})> }
     /** Initial global state. */
     state?: S
     setup?(f: FilterApi<IdsOf<L>, S, FS>): void
