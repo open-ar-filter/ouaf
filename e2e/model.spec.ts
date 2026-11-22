@@ -105,16 +105,43 @@ test('screen models: GLB, Draco, meshopt, sRGB output with and without a pass, f
   ]
   await expect.poll(async () => (await colorsAt(page, shapes)).map((c, i) => (magenta(c) ? 'ok' : `${i}: ${c.join(',')}`)), POLL).toEqual(Array(7).fill('ok'))
 
-  // The yellow cube's `lift` animation moves it up 0.12 screen heights and back every 2 s.
-  const seen = new Set<string>()
+  // The yellow cube's `lift` animation moves it up 0.12 screen heights and back every 2 s: its centre moves.
+  const yellowCentre = async () => {
+    const png = await page.locator('#canvas').screenshot()
+    return page.evaluate(async (bytes) => {
+      const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+      const c = new OffscreenCanvas(bitmap.width, bitmap.height)
+      const ctx = c.getContext('2d')!
+      ctx.drawImage(bitmap, 0, 0)
+      // The left half, below the gray cube: only the yellow cube is there.
+      const x0 = 0, x1 = Math.round(c.width / 2), y0 = Math.round(c.height * 0.4)
+      const d = ctx.getImageData(x0, y0, x1 - x0, c.height - y0).data
+      let n = 0
+      let sum = 0
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i]! > 200 && d[i + 1]! > 200 && d[i + 2]! < 80) {
+          n++
+          sum += Math.floor(i / 4 / (x1 - x0))
+        }
+      }
+      // In screen units (+y up, origin at the centre).
+      return n > 50 ? 0.5 - (y0 + sum / n) / c.height : Number.NaN
+    }, [...png])
+  }
+  let low = Infinity
+  let high = -Infinity
   await expect
     .poll(async () => {
-      const [low, high] = await colorsAt(page, [[-0.15, -0.12], [-0.15, 0.04]])
-      if (near(low!, [255, 255, 0], 10) && !near(high!, [255, 255, 0], 60)) seen.add('low')
-      if (near(high!, [255, 255, 0], 10) && !near(low!, [255, 255, 0], 60)) seen.add('high')
-      return [...seen].sort()
-    }, { timeout: 30_000, intervals: [150] })
-    .toEqual(['high', 'low'])
+      const y = await yellowCentre()
+      if (Number.isFinite(y)) {
+        low = Math.min(low, y)
+        high = Math.max(high, y)
+      }
+      return Math.round((high - low) * 100) / 100
+    }, { timeout: 30_000, intervals: [100] })
+    .toBeGreaterThan(0.07)
+  expect(low).toBeGreaterThan(-0.14)
+  expect(high).toBeLessThan(0.06)
 })
 
 test('a model on the face: head occlusion hides what is behind the head, not what is in front', async ({ page }) => {
