@@ -132,7 +132,10 @@ export interface ObjectLayer extends LayerInstanceBase {
    * sets `visible`. The root's own matrix is managed by the engine (identity): do not move it.
    */
   readonly object: Object3D
-  /** The layer is left out of photos, recordings and the output stream (`excludeFromCapture`, spec §6.2). */
+  /**
+   * The layer is left out of photos, recordings and the output stream (`excludeFromCapture`, spec §6.2). Only read
+   * for `overlay` layers, which then go to a scene drawn after the other overlays (#33).
+   */
   readonly excludeFromCapture?: boolean
 }
 

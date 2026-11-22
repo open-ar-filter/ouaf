@@ -174,7 +174,7 @@ where they are when the layer is shown again. When they start is given by each t
 | `follow` | `auto` | What the anchor **position** follows: `rigid`: the head pose only (stable, ignores expressions); `expression`: the live landmarks (moves with the mouth, brows, cheeks); `auto`: the anchor's default (5.3). Rotation always follows the head. No effect with `anchor: "screen"`. |
 | `faces` | `all` | Faces affected (5.4). |
 | `overlay` | `false` | Drawn last, after color grading (UI, score). |
-| `excludeFromCapture` | `false` | With `overlay`: left out of photos, videos and the output stream. |
+| `excludeFromCapture` | `false` | With `overlay`: left out of photos, videos and the output stream. Drawn above the other overlay layers, whatever the stack and layer order. |
 
 ### 6.3 v1 types
 

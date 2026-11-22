@@ -18,6 +18,8 @@ export type OuafErrorCode =
   | 'shader'
   | 'gpu-context-lost'
   | 'disposed'
+  /** The browser lacks what an output needs (`MediaRecorder`, a codec, `captureStream` in a worker). */
+  | 'unsupported'
   /** A filter's script could not start (sandbox, `script.js`). */
   | 'script'
   /** A filter's script did not answer within 1 s and was stopped (spec §12.7); the rest of the filter keeps working. */

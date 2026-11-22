@@ -15,6 +15,9 @@ crown.on('paramChange', (c) => …)
 crown.moveTo(0); crown.enabled = false; crown.remove()
 await engine.setFilters(['/filters/a/', { src: '/filters/b/', params: {…} }])  // atomic swap, no empty frame
 engine.on('stats' | 'warning' | 'error' | 'performance' | 'filter:<name>', …)
+const photo = await engine.snapshot({ type: 'image/jpeg' })      // Blob of the next frame (#33)
+const rec = engine.record({ audio: micStream }); const video = await rec.stop()
+const stream = engine.outputStream()                             // MediaStream, e.g. for WebRTC
 engine.dispose()
 ```
 
@@ -116,6 +119,28 @@ encodes its built-in materials' output to the target's color space for XR target
 were written linear (darker) whenever a pass was active. They now get the same bytes whether they render to a target
 or to the canvas (checked by `e2e/model.spec.ts`, #21).
 
+## Outputs (#33)
+
+`engine.snapshot()`, `engine.record()` and `engine.outputStream()` give the host the composited image as the user sees
+it (mirrored for a front camera, spec §5.1), at the internal render size, minus the overlay layers marked
+`excludeFromCapture` (spec §6.2). Code: `outputs.ts`.
+
+- **Capture surface**: overlay layers with `excludeFromCapture` are a third scene (`Compositor.excludedOverlay`),
+  drawn last, straight into the canvas. While an output is in use, the compositor copies the canvas into a hidden 2D
+  canvas (`drawImage`, in the task that rendered it) just before drawing them. With no output in use nothing is
+  copied; the excluded overlays are drawn last either way, so the screen does not change when a recording starts.
+  Consequence: they are drawn above the other overlay layers, whatever the stack and layer order (spec §6.2).
+- **`snapshot({ type, quality })`**: resolves with the next rendered frame, encoded by the browser (`toBlob`; PNG by
+  default). It waits while nothing is rendered (no source, a paused video) and rejects if the engine is disposed.
+- **`outputStream({ frameRate })`**: `captureStream()` of the capture surface, a new stream per call, one video track,
+  a frame per rendered frame. The copy runs until the host stops every track it was given; `dispose()` ends them.
+- **`record(options)`**: `MediaRecorder` on such a track plus the audio tracks the host passes (`audio`: the engine
+  never opens the microphone and never stops the host's tracks). Real time: an `OfflineVideoSource` at `rate: Infinity`
+  is not recorded frame by frame. Type: `mimeType` if given (refused when unsupported), else the first supported of
+  `RECORDING_TYPES`: H.264 MP4 (plays everywhere, iOS and messaging apps included, hardware-encoded on most devices),
+  then WebM VP9, VP8, then the bare `video/mp4` / `video/webm`. Chunks every second; `stop()` and `done` resolve with
+  one `Blob`. Errors: `OuafError` with code `unsupported` (no `MediaRecorder`, type, `captureStream` in a worker).
+
 ## Spaces and anchors
 
 Objects use a perspective camera matched to the tracker: camera space in cm, +x right, +y up, looking down -z,
@@ -166,6 +191,7 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
 | Head occluder (`model.occlusion: "head"`) | an ellipsoid of an average head on the `head` anchor | a head mesh fitted to the landmarks |
 | Model animations | three's `AnimationMixer` (boxes a few numbers per animated face and frame) | an allocation-free sampler, if profiles show GC |
+| Frame-exact video export | `record()`: `MediaRecorder`, real time; WebM without duration in its header (not seekable until remuxed) | WebCodecs `VideoEncoder` + an MP4 muxer, driven by file-regime frames (#137) |
 | glTF limits | 32 MB per file, textures not size-checked, no KTX2 textures | the limits of spec Appendix C; KTX2 with #116 |
 
 ## Testing a layer type
