@@ -112,8 +112,15 @@ async function start() {
     startButton.disabled = false
     return
   }
+  // A file is held at its start until the pipeline is ready: loading the tracker can take longer than a short clip
+  // lasts, and a clip played to its end before the scheduler starts gives no frame at all (#124).
+  const file = camera instanceof VideoFileSource
+  if (file) {
+    video.pause()
+    video.currentTime = 0
+  }
   stopButton.disabled = false
-  flipButton.disabled = camera instanceof VideoFileSource
+  flipButton.disabled = file
   const mirror = camera.mirrored ? 'mirrored' : 'not mirrored'
   if (camera instanceof CameraSource) {
     cameraRow.textContent = `${camera.width}×${camera.height}, facing ${camera.facingMode ?? 'unknown'}, ${mirror}`
@@ -173,6 +180,12 @@ async function start() {
   })
   schedulerRow.textContent = scheduler.mode === 'video-frame' ? 'requestVideoFrameCallback' : 'requestAnimationFrame (fallback)'
   scheduler.start()
+  if (file) {
+    video.play().catch((err: unknown) => {
+      cameraRow.textContent = `cannot play the file: ${err instanceof Error ? err.message : String(err)}`
+      if (testHook) testHook.hook.error = cameraRow.textContent
+    })
+  }
 }
 
 startButton.addEventListener('click', () => void start())
