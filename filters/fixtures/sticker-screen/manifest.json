@@ -4,7 +4,7 @@
   "name": "Screen stickers (engine test fixture)",
   "version": "1.0.0",
   "license": "CC0-1.0",
-  "description": "Sticker layer (#20) laid out on the screen for pixel checks: each image format, the blend modes, a packed-alpha video, a spritesheet. Synthetic assets (../make-sticker-assets.sh).",
+  "description": "Sticker layer (#20) laid out on the screen for pixel checks: image formats, blend modes, packed-alpha videos (one from ouaf pack-alpha), a spritesheet. Synthetic assets.",
   "requires": {},
   "assets": {
     "yellow": {
@@ -12,6 +12,10 @@
     },
     "flame": {
       "src": "assets/flame.mp4",
+      "alpha": "packed"
+    },
+    "ring": {
+      "src": "assets/ring.mp4",
       "alpha": "packed"
     },
     "walk": {
@@ -39,6 +43,8 @@
     {"id": "blend-screen", "type": "sticker", "src": "assets/gray.png", "anchor": "screen", "offset": [0.18, 0.1, 0.01], "size": 0.05, "blend": "screen"},
     {"type": "sticker", "src": "assets/white.png", "anchor": "screen", "offset": [-0.12, -0.2, 0], "size": 0.2},
     {"id": "video", "type": "sticker", "src": "flame", "anchor": "screen", "offset": [-0.12, -0.2, 0.01], "size": 0.18},
+    {"type": "sticker", "src": "assets/white.png", "anchor": "screen", "offset": [0, -0.38, 0], "size": 0.16},
+    {"id": "pack-alpha", "type": "sticker", "src": "ring", "anchor": "screen", "offset": [0, -0.38, 0.01], "size": 0.14},
     {"id": "spritesheet", "type": "sticker", "src": "walk", "anchor": "screen", "offset": [0.12, -0.2, 0], "size": 0.18}
   ]
 }

@@ -160,7 +160,7 @@ implementation are listed in Appendix D (informative).
 |---|---|---|
 | `anchor` | `head` | Anchor (section 5). |
 | `offset` | `[0,0,0]` | Offset in the anchor frame, *bindable*. |
-| `rotation` | `[0,0,0]` | Rotation in degrees, *bindable*. |
+| `rotation` | `[0,0,0]` | Rotation in degrees around the x, y, z axes of the anchor frame, *bindable*. Euler order XYZ: the rotation matrix is Rx · Ry · Rz, so z is applied first, then y, then x. |
 | `scale` | `1` | Size multiplier, a number or `[x, y, z]`, *bindable*; e.g. animated by a script for a "pop" (12.4). |
 | `orient` | `face` | `face`: follows the head; `screen`: keeps facing the screen (readable text). |
 | `follow` | `auto` | What the anchor **position** follows: `rigid`: the head pose only (stable, ignores expressions); `expression`: the live landmarks (moves with the mouth, brows, cheeks); `auto`: the anchor's default (5.3). Rotation always follows the head. No effect with `anchor: "screen"`. |
@@ -184,10 +184,20 @@ implementation are listed in Appendix D (informative).
 
 Normative behavior:
 
-- `text`: the engine SHOULD rasterize text once and redraw it only when its content or style changes.
+- `text`: `size` is the font size (em) in anchor units and `lineHeight` the line spacing as a multiple of it;
+  `outline.width`, `shadow.blur` and `shadow.offset` are relative to the font size, the offset with +y up (defaults
+  in the schema). The anchor point is on the alignment edge of the text block (its left edge with `align: "left"`,
+  its centre with `center`, its right edge with `right`), at the vertical middle of the block; `maxWidth` wraps the
+  lines. The engine SHOULD rasterize text once and redraw it only when its content or style changes.
   Emoji (in text and `{ "emoji": … }` assets) are drawn with the platform's emoji font, so they look different from
   one device to another. A host MAY provide a reference emoji set; the engine then SHOULD draw emoji from it, so
   they look the same on every device.
+- `sticker`: `size` is the height in anchor units, the width follows the asset's aspect ratio. Animated assets
+  (spritesheets, videos) play from their first frame each time the layer becomes visible: when the filter is
+  activated, when `visible` turns true, or when the first selected face appears after none was; a face that appears
+  while the layer is shown joins the running animation. They advance with the media time times `rate`; with
+  `autoplay: false` they stay on the first frame; without `loop` they hold the last frame. `rate` is one value for
+  the layer, read for its first selected face. `{ pick }`: see 10.1.
 - `model.occlusion: "head"`: the part of the object hidden by the head is not drawn (hat, glasses temples).
 - `model.fit`: the object is rescaled so its bounding box has the requested width or height.
 - `model.src: { shape }`: primitives `box`, `sphere`, `torus`, `ring`, `cone`, `cylinder`, `plane`, of size 1, usable without any file.
@@ -196,19 +206,19 @@ Normative behavior:
   deformation keeps its size relative to the face at any distance; discs stay round on screen. The effect is
   strongest at the center and fades smoothly to none at the radius. `strength` goes from -1 to 1, a negative value
   inverting the effect, 0 none: `bulge` magnifies the disc (negative: shrinks it), `pinch` is the opposite of
-  `bulge`, `swirl` turns it counter-clockwise as seen on screen (negative: clockwise), `stretch` drags it along
+  `bulge` (the same deformation with the opposite strength, kept as its own kind so that a filter reads as what it
+  does), `swirl` turns it counter-clockwise as seen on screen (negative: clockwise), `stretch` drags it along
   `direction` (negative: against it). `direction` is in the anchor frame (5.1: as seen on screen, turning with the
   head); only its orientation counts; default `[0, 1]` (up). `opacity` scales the strength. The deformation SHOULD
   never fold the image over itself. In the reference implementation, at strength 1, `bulge` magnifies the center 4×,
   `swirl` turns it half a turn and `stretch` moves it by 0.6 radius.
 - `color` works on the sRGB-encoded values of the image (what `.cube` LUTs for photo and video expect), in this
-  order, on each channel c in 0–1: `lut` (input mapped from `DOMAIN_MIN`–`DOMAIN_MAX`; `LUT_3D_SIZE` or
-  `LUT_1D_SIZE`); `brightness` b: c^(2^−b), black and white unchanged; `contrast` k: (c − ½)(1 + k) + ½;
-  `saturation` s: Y + (c − Y)(1 + s), Y the Rec. 709 luma; `temperature` t: red × (1 + 0.2t), blue × (1 − 0.2t);
-  `tint`: multiplied by the color, its alpha being the strength; `vignette` v: × (1 − v·smoothstep(0.35, 1, r)), r
-  from 0 at the centre to 1 in the corners; `grain` g: monochrome noise of amplitude ±0.1g whose pattern depends
+  order: `lut`, `brightness`, `contrast`, `saturation`, `temperature`, `tint`, `vignette`, `grain`. `intensity` is
+  the strength of the LUT only: 0 leaves the image as it was before the LUT, and the other adjustments still apply.
+  `tint` multiplies the image by the color, its alpha being the strength (white: no change). `grain` MUST depend
   only on the pixel and the frame time (12.5). The result is clamped to 0–1 and mixed with the image below by
-  `intensity` × `opacity`. `region: "face"` limits it to the face ovals, with a soft edge; it uses face tracking.
+  `opacity`. `region: "face"` limits it to the face ovals, with a soft edge; it uses face tracking. The reference
+  formulas are in Appendix E (informative); another engine MAY use other curves with the same meaning.
 - `canvas`: see 12.6.
 
 ### 6.4 Reserved types (later versions)
@@ -306,6 +316,13 @@ An asset reference (`src`, `font`, `lut`, `textures`…) is one of:
 - a **built-in resource** `builtin:…`.
 
 **Remote URLs are forbidden** (`http:`, `https:`, `data:`…): a remote asset would be a way to leak data.
+
+**Picking.** A `src` of `{ "pick": [...], "by": "face" | "random" }` (`sticker`, `model`) gives each selected face
+one asset of the list, kept while the face keeps its stable id (5.4); a face that leaves and comes back gets a new
+pick. `by: "face"` (default) takes entry (id − 1) mod n, so successive faces get successive assets and the result
+is the same on every run; `by: "random"` draws an entry when the face gets its id (seed: 12.5). A layer with
+`anchor: "screen"` picks for its first selected face, or for id 0 while no face is tracked (the first entry with
+`by: "face"`).
 
 ### 10.2 Formats
 
@@ -718,3 +735,22 @@ model, which does not change with expressions.
 - `follow: rigid`: the landmarks are taken on the canonical model and transformed by the head pose.
 - `follow: expression`: the live landmarks of the current frame are used (then smoothed).
 - In both cases the anchor orientation is the `head` orientation.
+
+## Appendix E — Reference color grading (informative)
+
+The formulas of the reference implementation for the `color` layer (6.3), on each channel c of the sRGB-encoded
+image, in 0–1, in this order:
+
+| Step | Property | Formula |
+|---|---|---|
+| LUT | `lut`, `intensity` i | c = mix(c, lut(c), i); the LUT's input is mapped from `DOMAIN_MIN`–`DOMAIN_MAX`, `LUT_3D_SIZE` (trilinear) or `LUT_1D_SIZE` |
+| Brightness | `brightness` b | c = c^(2^−b): a midtone curve, black and white unchanged |
+| Contrast | `contrast` k | c = (c − ½)(1 + k) + ½ (−1: flat grey) |
+| Saturation | `saturation` s | c = Y + (c − Y)(1 + s), Y the Rec. 709 luma (−1: black and white) |
+| Temperature | `temperature` t | red × (1 + 0.2t), blue × (1 − 0.2t) |
+| Tint | `tint` (color, alpha a) | c = mix(c, c × tint, a) |
+| Vignette | `vignette` v | c × (1 − v · smoothstep(0.35, 1, r)), r from 0 at the centre to 1 in the corners |
+| Grain | `grain` g | c + 0.2g(n − ½), n a monochrome noise in 0–1 whose pattern depends on the pixel and changes 24 times per second of media time |
+
+The result is clamped to 0–1, then mixed with the image below: mix(image, result, `opacity` × mask), the mask being
+1 everywhere, or the soft face ovals with `region: "face"`.

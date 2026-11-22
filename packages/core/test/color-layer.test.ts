@@ -114,14 +114,15 @@ describe('writeGradeUniforms', () => {
 
   it('maps the defaults to a neutral grade', () => {
     writeGradeUniforms(amounts({}), WHITE, 0, out)
-    expect([...out]).toEqual([1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0])
+    expect([...out]).toEqual([1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1])
     expect(isNeutral(out, false)).toBe(true)
     expect(isNeutral(out, true)).toBe(false)
   })
 
   it('maps each property', () => {
     writeGradeUniforms(amounts({ intensity: 0.5, opacity: 0.5, brightness: 1, contrast: -0.5, saturation: -1, temperature: 1, vignette: 0.3, grain: 1 }), [1, 0.5, 0, 0.25], 2, out)
-    expect(out[U.mix]).toBe(0.25)
+    expect(out[U.mix]).toBe(0.5)
+    expect(out[U.lut]).toBe(0.5)
     expect(out[U.gamma]).toBe(0.5)
     expect(out[U.contrast]).toBe(0.5)
     expect(out[U.saturation]).toBe(0)
@@ -143,8 +144,11 @@ describe('writeGradeUniforms', () => {
     expect(out[U.saturation]).toBe(1)
   })
 
-  it('is neutral at zero mix, or with a white or transparent tint only', () => {
-    expect(isNeutral(writeGradeUniforms(amounts({ intensity: 0, saturation: 1 }), WHITE, 0, out), true)).toBe(true)
+  it('is neutral at zero opacity, with a LUT at zero intensity, or with a white or transparent tint only', () => {
+    expect(isNeutral(writeGradeUniforms(amounts({ opacity: 0, saturation: 1 }), WHITE, 0, out), true)).toBe(true)
+    expect(isNeutral(writeGradeUniforms(amounts({ intensity: 0 }), WHITE, 0, out), true)).toBe(true)
+    // intensity only weakens the LUT: the other adjustments still apply.
+    expect(isNeutral(writeGradeUniforms(amounts({ intensity: 0, saturation: 1 }), WHITE, 0, out), true)).toBe(false)
     expect(isNeutral(writeGradeUniforms(amounts({}), [1, 0, 0, 0], 0, out), false)).toBe(true)
     expect(isNeutral(writeGradeUniforms(amounts({}), [1, 0, 0, 0.5], 0, out), false)).toBe(false)
   })
@@ -159,6 +163,9 @@ describe('writeGradeUniforms', () => {
 
   it('does not allocate', () => {
     const a = amounts({ saturation: 0.3 })
+    // Until V8 optimizes it, the function boxes the numbers it returns (16 bytes a call). Under the load of the whole
+    // suite the optimizing compiler can lag behind heapGrowth's own warm-up, so warm up longer first.
+    for (let i = 0; i < 200_000; i++) writeGradeUniforms(a, WHITE, 1.5, out)
     expect(heapGrowth(() => writeGradeUniforms(a, WHITE, 1.5, out))).toBeLessThan(32 * 1024)
   })
 })

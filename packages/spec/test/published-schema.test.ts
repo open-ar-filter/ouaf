@@ -16,6 +16,9 @@ const draft07 = 'http://json-schema.org/draft-07/schema#'
 const inlined = JSON.parse(JSON.stringify({ $schema: draft07, ...buildManifestSchema(createRegistry()) }))
 const checkInlined = new Ajv({ strict: false, allErrors: true }).compile(inlined)
 
+/** Size budget of the published schema, in characters (48 kB in November 2026). */
+const SCHEMA_BUDGET = 64 * 1024
+
 const base = { ouaf: '1', id: 'demo', name: 'Demo', version: '1.0.0', license: 'CC0-1.0', requires: { face: true } }
 
 describe('published JSON Schema', () => {
@@ -41,8 +44,10 @@ describe('published JSON Schema', () => {
     expect(text).toBe(formatJson(buildPublishedSchema(createRegistry())) + '\n')
   })
 
-  it('is at least 5 times smaller than the inlined schema as published before (#40)', () => {
-    expect(text.length * 5).toBeLessThanOrEqual(JSON.stringify(inlined, null, 2).length)
+  // A fixed budget rather than a ratio to the inlined schema (#40, #116): adding a default or a description should not
+  // fail the test, but a change that inlines shared definitions again (about 250 kB) should.
+  it('stays within its size budget (#40)', () => {
+    expect(text.length).toBeLessThanOrEqual(SCHEMA_BUDGET)
   })
 
   it('accepts and rejects exactly what the inlined schema does', () => {

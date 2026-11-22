@@ -5,7 +5,7 @@
  * - `lut`: a `.cube` file (asset name, `assets/…` path or `builtin:lut/…`), as a 3D texture with trilinear filtering.
  * - `brightness`, `contrast`, `saturation`, `temperature`, `tint`, `vignette`, `grain`: see `grade.ts` for the math,
  *   done on the sRGB-encoded values of the image buffers.
- * - `intensity` × `opacity`: mix of the graded image with the layer's input.
+ * - `intensity`: strength of the LUT only; `opacity`: mix of the graded image with the layer's input.
  * - `region: "face"`: only inside the face ovals, with a soft edge (`face-mask.ts`); the pass is skipped with no face.
  *
  * Every property but `lut` and `region` is bindable (spec §8). A full-screen pass has one value per frame: bindings
@@ -117,10 +117,11 @@ function createColorLayer(decl: LayerDecl, ctx: LayerContext): PassLayer {
   const uGrade2 = { value: new Vector4() }
   const uTint = { value: new Vector4() }
   const uSeed = { value: 0 }
+  const uLutMix = { value: 1 }
   const uniforms: Record<string, { value: unknown }> = { uInput, uGrade, uGrade2, uTint, uSeed }
   const defines: Record<string, string> = {}
   if (lut) {
-    Object.assign(uniforms, { uLut: { value: lut.texture }, uLutScale: { value: lut.scale }, uLutOffset: { value: lut.offset }, uLutSize: { value: lut.size } })
+    Object.assign(uniforms, { uLut: { value: lut.texture }, uLutScale: { value: lut.scale }, uLutOffset: { value: lut.offset }, uLutSize: { value: lut.size }, uLutMix })
     defines.HAS_LUT = ''
   }
 
@@ -167,6 +168,7 @@ function createColorLayer(decl: LayerDecl, ctx: LayerContext): PassLayer {
       uGrade2.value.set(u[U.redGain]!, u[U.blueGain]!, u[U.vignette]!, u[U.grain]!)
       uTint.value.set(u[U.tintR]!, u[U.tintG]!, u[U.tintB]!, u[U.tintA]!)
       uSeed.value = u[U.seed]!
+      uLutMix.value = u[U.lut]!
       if (face) {
         const projection = ctx.view.camera.projectionMatrix.elements
         const out = face.positions.array as Float32Array

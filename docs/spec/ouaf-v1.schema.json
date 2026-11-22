@@ -241,7 +241,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "Picks one asset from the list: stable per face (\"face\") or on each activation (\"random\")."
+      "description": "Picks one asset from the list for each face: by its stable id (\"face\") or at random (\"random\"), and keeps it while the face is tracked."
     },
     "AssetRef": {
       "type": "string",
@@ -344,11 +344,11 @@
               "minimum": 0,
               "maximum": 1,
               "default": 1,
-              "description": "Mix with the original image."
+              "description": "Strength of the LUT (mix with the image before it)."
             },
             { "$ref": "#/$defs/Binding" }
           ],
-          "description": "Mix with the original image.",
+          "description": "Strength of the LUT (mix with the image before it).",
           "x-bindable": true,
           "x-hint": "Fixed value, { \"param\": \"name\" } or { \"bind\": \"face.…\" }."
         },
@@ -975,10 +975,15 @@
         },
         "size": {
           "anyOf": [
-            { "type": "number", "exclusiveMinimum": 0, "default": 0.3, "description": "Line height, in anchor units." },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "default": 0.3,
+              "description": "Font size (em), in anchor units."
+            },
             { "$ref": "#/$defs/Binding" }
           ],
-          "description": "Line height, in anchor units.",
+          "description": "Font size (em), in anchor units.",
           "x-bindable": true,
           "x-hint": "Fixed value, { \"param\": \"name\" } or { \"bind\": \"face.…\" }."
         },
@@ -1023,10 +1028,24 @@
           "required": ["color"],
           "properties": {
             "color": { "$ref": "#/$defs/Color" },
-            "blur": { "type": "number", "minimum": 0, "maximum": 1 },
-            "offset": { "$ref": "#/$defs/Vec2" }
+            "blur": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.1,
+              "description": "Blur radius, relative to the font size."
+            },
+            "offset": {
+              "type": "array",
+              "additionalItems": false,
+              "items": [{ "type": "number" }, { "type": "number" }],
+              "minItems": 2,
+              "description": "Offset relative to the font size, +y up.",
+              "default": [0.04, -0.04]
+            }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "description": "Drop shadow of the text and its outline."
         },
         "align": {
           "anyOf": [
@@ -1041,7 +1060,13 @@
           "exclusiveMinimum": 0,
           "description": "Maximum width before wrapping (anchor units)."
         },
-        "lineHeight": { "type": "number", "minimum": 0.5, "maximum": 3, "default": 1.2 }
+        "lineHeight": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 3,
+          "default": 1.2,
+          "description": "Line spacing, as a multiple of the font size."
+        }
       },
       "additionalProperties": false,
       "description": "Text attached to an anchor. Rasterized once into a texture, redrawn only when it changes."
@@ -1156,11 +1181,12 @@
               "additionalItems": false,
               "items": [{ "type": "number" }, { "type": "number" }],
               "minItems": 2,
-              "description": "Direction (stretch), in the anchor frame."
+              "description": "Direction (stretch), in the anchor frame; only its orientation counts.",
+              "default": [0, 1]
             },
             { "$ref": "#/$defs/Binding" }
           ],
-          "description": "Direction (stretch), in the anchor frame.",
+          "description": "Direction (stretch), in the anchor frame; only its orientation counts.",
           "x-bindable": true,
           "x-hint": "Fixed value, { \"param\": \"name\" } or { \"bind\": \"face.…\" }."
         },
