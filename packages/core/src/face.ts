@@ -121,10 +121,10 @@ export function blendshapeIndex(name: BlendshapeName): number {
 }
 
 /**
- * Frames a tracker accepts: the camera `<video>` (main thread), or a frame captured from it and sent elsewhere, e.g.
- * to a worker (`VideoFrame`, `ImageBitmap`).
+ * Frames a tracker accepts: the camera `<video>` (main thread), a frame captured from it and sent elsewhere, e.g.
+ * to a worker (`VideoFrame`, `ImageBitmap`), or an image the host gives the engine directly (canvas, `<img>`, #32).
  */
-export type TrackerInput = HTMLVideoElement | VideoFrame | ImageBitmap
+export type TrackerInput = HTMLVideoElement | VideoFrame | ImageBitmap | HTMLCanvasElement | OffscreenCanvas | HTMLImageElement
 
 /** Inference backend actually in use. */
 export type Delegate = 'GPU' | 'CPU'
@@ -143,5 +143,22 @@ export interface FaceTracker {
    * of `out`. A captured frame is not closed: the caller owns it.
    */
   detect(source: TrackerInput, timestampMs: number, mediaTime: number, out: FaceFrame): void
+  /**
+   * Tracks a still image (MediaPipe IMAGE mode: every call detects from scratch, no state is carried over from the
+   * previous frame). Writes `out` like `detect`. A later `detect` switches back to video mode first, which
+   * `setRunningMode('VIDEO')` does ahead of time.
+   */
+  detectImage(source: TrackerInput, mediaTime: number, out: FaceFrame): Promise<void>
+  /** Current running mode: `VIDEO` (`detect`) or `IMAGE` (`detectImage`). */
+  readonly runningMode: RunningMode
+  /** Switches the running mode; `detect` requires `VIDEO`. Resolves once the landmarker is reconfigured. */
+  setRunningMode(mode: RunningMode): Promise<void>
+  /**
+   * Forgets the temporal state (the face regions carried from frame to frame in VIDEO mode), so that the next frame
+   * is tracked as if it were the first: each run of a file source then gives the same result (spec §12.5).
+   */
+  resetState(): Promise<void>
   dispose(): void
 }
+
+export type RunningMode = 'VIDEO' | 'IMAGE'

@@ -229,6 +229,7 @@ describe('shader layer', () => {
       params: {} as LayerContext['params'],
       bindings: bindingEnv(options.params ?? {}, options.types ?? {}, faces),
       maxFaces: 2,
+      random: Math.random,
       warn: () => {},
     } satisfies LayerContext
     const layer = (await createShaderLayer({ type: 'shader', src: 'assets/fx.frag', ...decl } as LayerDecl, ctx)) as PassLayer

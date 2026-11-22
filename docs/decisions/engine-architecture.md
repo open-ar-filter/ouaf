@@ -8,7 +8,7 @@ on; read it before adding a layer type.
 
 ```ts
 const engine = createEngine({ canvas, assetsBaseUrl: '/ouaf/', maxFaces: 1, plugins: [myPlugin] })
-await engine.setSource(await CameraSource.open({ facingMode: 'user' }))   // or VideoFileSource, a <video>
+await engine.setSource(await CameraSource.open({ facingMode: 'user' }))   // or a video, canvas, image, OfflineVideoSource
 const crown = await engine.addFilter('/filters/crown/', { size: 1.2 })     // folder URL, or memorySource({...})
 crown.setParam('size', 1.5)          // validated now, applied at the start of the next frame (spec §9)
 crown.on('paramChange', (c) => …)
@@ -38,6 +38,34 @@ camera frame (FrameScheduler, requestVideoFrameCallback)
 
 Tracking results are double-buffered (`TrackingHub`): an asynchronous tracker (worker) writes into the back buffer;
 layers read the latest completed result. The tracking rate (spec §16.1) is measured there.
+
+## Sources (#32, spec §12.1, §12.5)
+
+`engine.setSource(input)` takes, by regime:
+
+| Input | Regime | Frames | Time | Tracking |
+|---|---|---|---|---|
+| `CameraSource`, `VideoFileSource`, a playing `<video>`, plugin sources | live | each new video frame (`FrameScheduler`) | clock (camera) or media time (file) | eager, latest result |
+| `HTMLCanvasElement`, `OffscreenCanvas` | live | every animation frame, read directly | clock | eager, latest result |
+| `HTMLImageElement`, `ImageBitmap`, `VideoFrame` (still) | file | every animation frame | time since shown | once, MediaPipe IMAGE mode (again if the tracking config changes) |
+| `OfflineVideoSource` (WebCodecs) | file | every frame of the file, paced by `rate` (`Infinity`: as fast as possible) | media time | each frame waits for its own result |
+| `engine.pushFrame(frame, time)` | file | each pushed frame; resolves once drawn | `time` | each frame waits for its own result |
+
+- **File regime**: a frame is rendered only once its own tracking result is in (`TrackingHub.track`), `frame.time`,
+  `frame.now` and `frame.dt` follow the media time, and every run starts afresh: a new source, a loop or a time going
+  back resets face identity, the tracker's temporal state (`FrameTracker.reset`: MediaPipe rebuilds its graph) and the
+  seeds. Two runs of the same input give the same images (`e2e/sources.spec.ts`).
+- **Seeds**: every layer gets `ctx.random()`, its own `SeededRandom` (mulberry32), seeded from
+  `deriveSeed(base, filterId, 'layer', index)`; the filter keeps one more for its script (#26). `base` is
+  `createEngine({ seed })` when set, else a fixed constant for file sources, else random per activation. Filters are
+  reseeded at activation and on every new source run.
+- **Offline video**: `OfflineVideoSource.open(url | Blob | bytes)` reads the whole file, demuxes it with the built-in
+  MP4 / MOV demuxer (`mp4.ts`: H.264, H.265, VP9, AV1; edit list and rotation applied; no fragmented MP4) and decodes it
+  with `VideoDecoder`, a few frames ahead. `engine.on('sourceEnd')` fires after the last frame (without `loop`).
+- **Errors** (`IncompatibleSourceError`): the engine's own canvas, an image without pixels, a tainted image or canvas
+  (checked by reading one pixel back; a live canvas is checked again once a second, since it can become tainted).
+- **Compositor**: the `video` stage draws any of these images. While a paused `<video>` seeks it has no frame to upload;
+  the last uploaded one is drawn instead of nothing (the black frames noted in #116).
 
 ## Plugins (spec §14)
 
@@ -83,8 +111,10 @@ Stack rules: within a stage, stack order then layer order; passes are chained; o
 exclusive (last enabled filter wins, with a warning). The per-stage lists are rebuilt only when the stack changes.
 
 Image buffers hold **sRGB-encoded bytes**, like the camera texture and the canvas: raw shader passes read and write
-them unchanged. Render targets are tagged sRGB with an RGBA8 internal format, so lit three.js materials are encoded the
-same way whether they render to a target or to the canvas (to verify with the model layer, #21).
+them unchanged. Render targets are tagged sRGB with an RGBA8 internal format, and flagged `isXRRenderTarget`: three only
+encodes its built-in materials' output to the target's color space for XR targets, so without it lit models and text
+were written linear (darker) whenever a pass was active. They now get the same bytes whether they render to a target
+or to the canvas (checked by `e2e/model.spec.ts`, #21).
 
 ## Spaces and anchors
 
@@ -109,6 +139,9 @@ the age of a worker tracker's results. Layers and bindings read these predicted 
 | Face tracker | MediaPipe tasks-vision, main thread | LiteRT.js pipeline in a worker (face-runtime.md, tracking-worker.md) |
 | Scripts, `send`, `filter:<name>` | warning, no-op | #26 sandbox |
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
+| Head occluder (`model.occlusion: "head"`) | an ellipsoid of an average head on the `head` anchor | a head mesh fitted to the landmarks |
+| Model animations | three's `AnimationMixer` (boxes a few numbers per animated face and frame) | an allocation-free sampler, if profiles show GC |
+| glTF limits | 32 MB per file, textures not size-checked, no KTX2 textures | the limits of spec Appendix C; KTX2 with #116 |
 
 ## Testing a layer type
 

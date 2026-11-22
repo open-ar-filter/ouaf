@@ -9,6 +9,7 @@ import type { FaceTracker } from '../face.ts'
 import type { FaceTrackerImpl, FrameTracker, OuafPlugin } from './plugin.ts'
 import { colorPlugin } from '../layers/color/index.ts'
 import { shaderPlugin } from '../layers/shader/index.ts'
+import { modelPlugin } from '../layers/model/index.ts'
 import { stickerPlugin } from '../layers/sticker/index.ts'
 import { textPlugin } from '../layers/text/index.ts'
 import { warpPlugin } from '../layers/warp/index.ts'
@@ -35,7 +36,13 @@ export const mediaPipeFaceTracker: FaceTrackerImpl = {
     })
     const frameTracker: FrameTracker = {
       description: `MediaPipe ${tracker.delegate}, main thread`,
-      track: (input, timestampMs, mediaTime, out) => tracker.detect(input, timestampMs, mediaTime, out),
+      // After a still image the landmarker is in IMAGE mode: switch back once (asynchronous), then track.
+      track: (input, timestampMs, mediaTime, out) =>
+        tracker.runningMode === 'VIDEO'
+          ? tracker.detect(input, timestampMs, mediaTime, out)
+          : tracker.setRunningMode('VIDEO').then(() => tracker.detect(input, timestampMs, mediaTime, out)),
+      trackImage: (input, mediaTime, out) => tracker.detectImage(input, mediaTime, out),
+      reset: () => tracker.resetState(),
       configure: () => {},
       dispose: () => tracker.dispose(),
     }
@@ -58,6 +65,7 @@ export function builtinPlugins(): OuafPlugin[] {
     facePlugin,
     textPlugin,
     stickerPlugin,
+    modelPlugin,
     warpPlugin,
     colorPlugin,
     shaderPlugin,

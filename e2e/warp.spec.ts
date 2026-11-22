@@ -22,41 +22,40 @@ async function open(page: Page, query: string): Promise<void> {
  */
 async function shot(page: Page, name: string, strength: number, time: number): Promise<void> {
   await page.evaluate((s) => window.ouaf!.engine.filters[0]!.setParam('strength', s), strength)
-  // A frame drawn while a seek completes can miss the video (black but for the dots): seek and shoot again then.
-  for (let attempt = 0; attempt < 5; attempt++) {
-    for (let i = 0; i < 3; i++) {
-      await page.evaluate(
-        (t) =>
-          new Promise<void>((resolve) => {
-            const video = document.getElementById('video') as HTMLVideoElement
-            video.pause()
-            video.addEventListener('seeked', () => resolve(), { once: true })
-            setTimeout(resolve, 3000) // in case the seek never completes
-            video.currentTime = t
-          }),
-        time + i * 0.001, // the same frame of the clip (mid-frame), but a new seek each time
-      )
-      await page.waitForTimeout(300)
-    }
-    const png = await page.locator('#canvas').screenshot()
-    const mean = await page.evaluate(
-      async ([bytes, key]) => {
-        const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
-        const c = new OffscreenCanvas(bitmap.width, bitmap.height)
-        const ctx = c.getContext('2d')!
-        ctx.drawImage(bitmap, 0, 0)
-        const w = window as unknown as { shots?: Record<string, ImageData> }
-        w.shots ??= {}
-        const image = ctx.getImageData(0, 0, c.width, c.height)
-        w.shots[key] = image
-        let red = 0
-        for (let i = 0; i < image.data.length; i += 4) red += image.data[i]!
-        return red / (image.data.length / 4)
-      },
-      [[...png], name] as const,
+  // Each seek presents the frame again; while a seek runs, the engine keeps drawing the last frame it uploaded
+  // (before #32 it drew a black frame then, and this test had to retry).
+  for (let i = 0; i < 3; i++) {
+    await page.evaluate(
+      (t) =>
+        new Promise<void>((resolve) => {
+          const video = document.getElementById('video') as HTMLVideoElement
+          video.pause()
+          video.addEventListener('seeked', () => resolve(), { once: true })
+          setTimeout(resolve, 3000) // in case the seek never completes
+          video.currentTime = t
+        }),
+      time + i * 0.001, // the same frame of the clip (mid-frame), but a new seek each time
     )
-    if (mean > 10) return
+    await page.waitForTimeout(300)
   }
+  const png = await page.locator('#canvas').screenshot()
+  const mean = await page.evaluate(
+    async ([bytes, key]) => {
+      const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+      const c = new OffscreenCanvas(bitmap.width, bitmap.height)
+      const ctx = c.getContext('2d')!
+      ctx.drawImage(bitmap, 0, 0)
+      const w = window as unknown as { shots?: Record<string, ImageData> }
+      w.shots ??= {}
+      const image = ctx.getImageData(0, 0, c.width, c.height)
+      w.shots[key] = image
+      let red = 0
+      for (let i = 0; i < image.data.length; i += 4) red += image.data[i]!
+      return red / (image.data.length / 4)
+    },
+    [[...png], name] as const,
+  )
+  expect(mean, `shot ${name} shows the video`).toBeGreaterThan(10)
 }
 
 interface FaceDiff {

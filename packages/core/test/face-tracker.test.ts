@@ -48,17 +48,19 @@ interface FakeOptions {
 
 /** Fake MediaPipe backend recording every created landmarker and call. */
 function fakeBackend({ failCreate = [], failWarmup = [], results = [] }: FakeOptions = {}) {
-  const created: Array<{ options: FaceLandmarkerOptions; loader: string; closed: number; calls: Array<{ frame: unknown; ts: number }> }> = []
+  const created: Array<{ options: FaceLandmarkerOptions; loader: string; closed: number; calls: Array<{ frame: unknown; ts: number }>; images: unknown[]; modes: string[] }> = []
   const loadModel = vi.fn(async (_url: string) => MODEL)
   const backend: LandmarkerBackend = {
     loadModel,
     async createLandmarker(_wasm, options, loader) {
       const delegate = options.baseOptions?.delegate ?? 'CPU'
-      const record = { options, loader, closed: 0, calls: [] as Array<{ frame: unknown; ts: number }> }
+      const record = { options, loader, closed: 0, calls: [] as Array<{ frame: unknown; ts: number }>, images: [] as unknown[], modes: [] as string[] }
+      let mode = options.runningMode ?? 'IMAGE'
       created.push(record)
       if (failCreate.includes(delegate)) throw new Error(`${delegate} create failed`)
       const landmarker: Landmarker = {
         detectForVideo(frame, ts) {
+          if (mode !== 'VIDEO') throw new Error('not in VIDEO mode')
           record.calls.push({ frame, ts })
           if (frame === WARMUP) {
             if (failWarmup.includes(delegate)) throw new Error(`${delegate} warm-up failed`)
@@ -67,6 +69,17 @@ function fakeBackend({ failCreate = [], failWarmup = [], results = [] }: FakeOpt
           const next = results.shift() ?? EMPTY
           if (next instanceof Error) throw next
           return next
+        },
+        detect(image) {
+          if (mode !== 'IMAGE') throw new Error('not in IMAGE mode')
+          record.images.push(image)
+          const next = results.shift() ?? EMPTY
+          if (next instanceof Error) throw next
+          return next
+        },
+        async setOptions(o) {
+          await Promise.resolve()
+          if (o.runningMode) record.modes.push((mode = o.runningMode))
         },
         close() {
           record.closed++
@@ -295,6 +308,24 @@ describe('FaceTracker.detect', () => {
     expect(() => tracker.detect(video, 100, 2, out)).toThrow(/inference failed/)
     expect(out.count).toBe(0)
     expect(out.mediaTime).toBe(2)
+  })
+
+  it('tracks a still image in IMAGE mode and switches back to VIDEO mode', async () => {
+    const { backend, created } = fakeBackend({ results: [result([fakeFace(0)]), result([fakeFace(1)])] })
+    const tracker = await createFaceTrackerWith(base, backend)
+    const image = { naturalWidth: 800, naturalHeight: 600, width: 10, height: 10 } as HTMLImageElement
+    const out = createFaceFrame(1)
+    expect(tracker.runningMode).toBe('VIDEO')
+    await tracker.detectImage(image, 0, out)
+    expect(tracker.runningMode).toBe('IMAGE')
+    expect(created[0]!.images).toEqual([image])
+    expect(out.count).toBe(1)
+    expect([out.width, out.height]).toEqual([800, 600]) // intrinsic size of an <img>
+    expect(() => tracker.detect(video, 100, 1, out)).toThrow(/IMAGE mode/)
+    await tracker.setRunningMode('VIDEO')
+    tracker.detect(video, 100, 1, out)
+    expect(out.count).toBe(1)
+    expect(created[0]!.modes).toEqual(['IMAGE', 'VIDEO'])
   })
 
   it('dispose() closes the landmarker once; detect then yields empty frames', async () => {

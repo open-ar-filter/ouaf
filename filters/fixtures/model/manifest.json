@@ -1,0 +1,27 @@
+{
+  "ouaf": "1",
+  "id": "model",
+  "name": "Models on a face (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Model layer (#21) on a face: head occlusion (a sphere inside the head, one in front, a halo) and an animated GLB (../make-model-assets.ts).",
+  "requires": { "face": true },
+  "params": {
+    "occluded": { "type": "boolean", "default": true, "label": { "en": "Occluded models", "fr": "Modèles occultés" } },
+    "plain": { "type": "boolean", "default": false, "label": { "en": "Sphere without occlusion", "fr": "Sphère sans occultation" } }
+  },
+  "assets": {
+    "cube": "assets/lift.glb"
+  },
+  "layers": [
+    { "id": "inside", "type": "model", "src": { "shape": "sphere", "color": "#ff00ff", "emissive": "#ff00ff" },
+      "anchor": "head", "offset": [0, 0, -0.3], "scale": 1.2, "occlusion": "head", "visible": { "param": "occluded" } },
+    { "id": "inside-plain", "type": "model", "src": { "shape": "sphere", "color": "#ff00ff", "emissive": "#ff00ff" },
+      "anchor": "head", "offset": [0, 0, -0.3], "scale": 1.2, "visible": { "param": "plain" } },
+    { "id": "front", "type": "model", "src": { "shape": "sphere", "color": "#00ff00", "emissive": "#00ff00" },
+      "anchor": "noseTip", "offset": [0, 0, 0.4], "scale": 0.4, "occlusion": "head", "visible": { "param": "occluded" } },
+    { "id": "halo", "type": "model", "src": { "shape": "torus", "color": "#ff0000", "emissive": "#800000", "thickness": 0.1 },
+      "anchor": "head", "offset": [0, 1.4, 0], "rotation": [90, 0, 0], "scale": 3.4, "occlusion": "head", "visible": { "param": "occluded" } },
+    { "id": "cube", "type": "model", "src": "cube", "anchor": "forehead", "offset": [0, 1.2, 0], "scale": 0.4, "animation": "spin" }
+  ]
+}

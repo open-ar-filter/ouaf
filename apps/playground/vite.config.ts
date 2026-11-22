@@ -27,6 +27,13 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
     files: /^litert_wasm(_threaded|_jspi|_compat)?_internal\.(js|wasm)$/,
   },
   {
+    // Draco decoder of the model layer (#21), fetched by the engine from `<assetsBaseUrl>draco/` the first time a
+    // Draco-compressed model loads (packages/core/src/layers/model/assets.ts).
+    prefix: 'draco/',
+    dir: dirname(require.resolve('three/examples/jsm/libs/draco/gltf/draco_decoder.wasm')),
+    files: /^draco_(wasm_wrapper\.js|decoder\.wasm)$/,
+  },
+  {
     // Test clips (#77), committed at the repository root; played with `?source=<clip>`.
     prefix: 'test-media/',
     dir: resolve(here, '../../test-media'),

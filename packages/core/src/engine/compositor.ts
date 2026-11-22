@@ -5,7 +5,8 @@
  *
  * - `background`, `face`, `warp`, `color` are chains of full-screen passes (`PassLayer`): each reads the image so far
  *   and writes the next one, ping-ponging between two render targets.
- * - `video` draws the source frame (cover fit, mirroring), as the phase 0 renderer did.
+ * - `video` draws the source frame (cover fit, mirroring), as the phase 0 renderer did. The source is a `<video>`
+ *   or an image read directly (canvas, `<img>`, `ImageBitmap`, `VideoFrame`, #32).
  * - `objects` renders one scene shared by the whole stack, depth-sorted, with a perspective camera matched to the
  *   tracker (`ObjectsView.camera`); `overlay` renders a second scene after color grading.
  * - Fast path: when no pass is active, the video, objects and overlay are drawn straight into the canvas, with no
@@ -28,14 +29,15 @@ import {
   SRGBColorSpace,
   Scene,
   Sphere,
+  Texture,
   Vector3,
   Vector4,
   VideoTexture,
   WebGLRenderTarget,
   WebGLRenderer,
   type Material,
-  type Texture,
 } from 'three'
+import { imageHeight, imageWidth, type SourceImage } from '../frame-image.ts'
 import { computeVideoToClip, createVideoToClip, resolveRenderSize, type FitMode, type Size, type VideoToClip } from '../viewport.ts'
 import { TRACKER_FOV_Y } from './anchor-provider.ts'
 import type { ObjectsView, PassContext, PassLayer } from './layer-type.ts'
@@ -113,11 +115,15 @@ export class Compositor implements ObjectsView {
   readonly overlay = new Scene()
 
   #targets: [WebGLRenderTarget, WebGLRenderTarget]
-  #video: HTMLVideoElement | undefined
+  #image: SourceImage | undefined
   #mirrored = false
-  #texture: VideoTexture | undefined
-  /** A frame of the current video has been uploaded to `#texture`. */
+  #texture: Texture | undefined
+  /** The texture holds a frame of the current source (drawn even while a paused video seeks, #116). */
   #uploaded = false
+  /** A non-video image changed since its last upload. */
+  #dirty = false
+  #textureWidth = 0
+  #textureHeight = 0
   #videoMesh: Mesh<BufferGeometry, RawShaderMaterial>
   #videoScene = new Scene()
   #uVideoToClip = { value: new Vector4() }
@@ -162,6 +168,13 @@ export class Compositor implements ObjectsView {
       target.texture.colorSpace = SRGBColorSpace
       // Plain RGBA8 storage (no hardware sRGB decode on sampling): passes read the encoded bytes, as for the video.
       target.texture.internalFormat = 'RGBA8'
+      // three's built-in materials (lit models, text) encode their output to the canvas's sRGB, but write linear
+      // values into an ordinary render target. three uses the target's color space as output only for XR targets
+      // (three.js#27868), so the targets are flagged as such: objects then get the same sRGB encoding, hence the same
+      // bytes, whether they render to a target (a pass is active) or to the canvas. With `NoToneMapping` the flag
+      // changes nothing else here (it would apply tone mapping, and a multisampled target's format). Raw shaders
+      // (passes, stickers) are not affected. Checked by e2e/model.spec.ts (a mid-gray model with and without a pass).
+      ;(target as WebGLRenderTarget & { isXRRenderTarget: boolean }).isXRRenderTarget = true
       target.texture.generateMipmaps = false
       return target
     }
@@ -236,24 +249,57 @@ export class Compositor implements ObjectsView {
     return this.#disposed
   }
 
-  /** Sets (or clears) the video drawn by the `video` stage. */
-  setVideo(video: HTMLVideoElement | undefined, mirrored: boolean): void {
-    if (video !== this.#video) {
-      this.#texture?.dispose()
-      this.#texture = undefined
-      this.#uploaded = false
-      this.#video = video
-      if (video) {
-        // As in the phase 0 renderer: `VideoTexture` is three's upload path that works for a <video>; uploads are
-        // flagged by `render`, so the drawn frame is the one that was just processed.
-        this.#texture = new VideoTexture(video)
-        this.#texture.colorSpace = SRGBColorSpace
-        this.#texture.flipY = false
-      }
-      this.#uMap.value = this.#texture ?? null
+  /** Sets (or clears) the image drawn by the `video` stage: a `<video>`, or an image read directly. */
+  setSource(image: SourceImage | undefined, mirrored: boolean): void {
+    if (image !== this.#image) {
+      this.#releaseTexture()
+      this.#image = image
+      this.#dirty = true
     }
     this.#mirrored = mirrored
     this.#updateLayout()
+  }
+
+  /**
+   * The source image changed (a canvas the host drew into) or is replaced by the next frame (`pushFrame`, offline
+   * video): it is uploaded at the next `render`. The image must stay readable until then.
+   */
+  setFrame(image: SourceImage): void {
+    if (image !== this.#image) {
+      const texture = this.#texture
+      // Same kind and size: reuse the texture storage (three allocates it once per size).
+      const previous = this.#image
+      if (texture && previous && !isVideo(image) && !isVideo(previous) && imageWidth(image) === this.#textureWidth && imageHeight(image) === this.#textureHeight) texture.image = image
+      else this.#releaseTexture()
+      this.#image = image
+    }
+    this.#dirty = true
+  }
+
+  #releaseTexture(): void {
+    this.#texture?.dispose()
+    this.#texture = undefined
+    this.#uMap.value = null
+    this.#uploaded = false
+  }
+
+  /** Creates the texture of the current image at its current size. */
+  #ensureTexture(image: SourceImage, width: number, height: number): Texture {
+    if (this.#texture && width === this.#textureWidth && height === this.#textureHeight) return this.#texture
+    this.#releaseTexture()
+    // `VideoTexture` is three's upload path that works for a <video> (its size may change, e.g. a phone rotating);
+    // other images use immutable storage of their size. Both hold the sRGB bytes as they are (no decode on sampling),
+    // like the render targets.
+    const texture = isVideo(image) ? new VideoTexture(image) : new Texture(image)
+    texture.colorSpace = SRGBColorSpace
+    texture.flipY = false
+    texture.generateMipmaps = false
+    if (!isVideo(image)) texture.internalFormat = 'RGBA8'
+    this.#texture = texture
+    this.#textureWidth = width
+    this.#textureHeight = height
+    this.#uMap.value = texture
+    return texture
   }
 
   /** Sets a fixed internal resolution, or follows the video size (times `scale`) without arguments. */
@@ -267,11 +313,11 @@ export class Compositor implements ObjectsView {
     this.#updateLayout()
   }
 
-  /** Call before layers update: picks up video size changes (rotation) so the camera and sizes are current. */
+  /** Call before layers update: picks up source size changes (rotation) so the camera and sizes are current. */
   beginFrame(): void {
-    const video = this.#video
-    const vw = video?.videoWidth ?? 0
-    const vh = video?.videoHeight ?? 0
+    const image = this.#image
+    const vw = image ? imageWidth(image) : 0
+    const vh = image ? imageHeight(image) : 0
     if (vw !== this.#videoWidth || vh !== this.#videoHeight) {
       this.#videoWidth = vw
       this.#videoHeight = vh
@@ -283,15 +329,7 @@ export class Compositor implements ObjectsView {
   render(passes: StagePasses, showFilters = true): void {
     if (this.#disposed) return
     const renderer = this.renderer
-    const video = this.#video
-    const hasFrame = !!video && video.videoWidth > 0 && video.readyState >= HAVE_CURRENT_DATA
-    if (hasFrame && this.#texture) {
-      this.#texture.needsUpdate = true
-      this.#uploaded = true
-    }
-    // While the video has no current frame (a looping clip seeking back to 0, a seek), keep showing the last one
-    // uploaded rather than a black frame.
-    this.#videoMesh.visible = hasFrame || this.#uploaded
+    this.#upload()
 
     const anyPass = showFilters && (hasActive(passes.background) || hasActive(passes.face) || hasActive(passes.warp) || hasActive(passes.color))
     if (!anyPass) {
@@ -329,6 +367,29 @@ export class Compositor implements ObjectsView {
     this.#fsMesh.material = this.#copy
     renderer.setRenderTarget(null)
     renderer.render(this.#fsScene, this.#fsCamera)
+  }
+
+  /**
+   * Flags the current image for upload when it has a new frame. A video is uploaded on every rendered frame (the
+   * engine renders once per new video frame). While a paused video seeks, its `readyState` drops and it has no frame
+   * to upload: the last uploaded one is drawn again instead of nothing (the black frames of #116).
+   */
+  #upload(): void {
+    const image = this.#image
+    let ready = false
+    let width = 0
+    let height = 0
+    if (image) {
+      width = imageWidth(image)
+      height = imageHeight(image)
+      ready = width > 0 && height > 0 && (!isVideo(image) || image.readyState >= HAVE_CURRENT_DATA)
+    }
+    if (ready && (isVideo(image!) || this.#dirty)) {
+      this.#ensureTexture(image!, width, height).needsUpdate = true
+      this.#uploaded = true
+      this.#dirty = false
+    }
+    this.#videoMesh.visible = this.#uploaded
   }
 
   /** Frees GPU resources. Idempotent. */
@@ -384,6 +445,10 @@ export class Compositor implements ObjectsView {
     camera.projectionMatrix.copy(this.#projection)
     camera.projectionMatrixInverse.copy(this.#projection).invert()
   }
+}
+
+function isVideo(image: SourceImage): image is HTMLVideoElement {
+  return 'videoWidth' in image
 }
 
 function hasActive(list: readonly PassLayer[]): boolean {
