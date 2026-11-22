@@ -84,16 +84,16 @@ function readVideoTrack(view: DataView, data: Uint8Array, trak: Box, mdia: Box, 
   const { codec, description } = readCodec(view, data, entry)
 
   // Sample tables.
-  const sizes = readSizes(view, stbl)
+  const sizes = readSizes(view, stbl, data.byteLength)
   const n = sizes.length
-  const offsets = readOffsets(view, stbl, n)
+  const offsets = readOffsets(view, stbl, sizes)
   const dts = new Float64Array(n)
   const durations = new Float64Array(n)
   {
     const stts = need(view, stbl, 'stts')
     let i = 0
     let t = 0
-    const count = view.getUint32(stts.start + 4)
+    const count = tableCount(view, stts, 4, 8)
     for (let e = 0; e < count && i < n; e++) {
       const p = stts.start + 8 + e * 8
       const samples = view.getUint32(p)
@@ -110,7 +110,7 @@ function readVideoTrack(view: DataView, data: Uint8Array, trak: Box, mdia: Box, 
   const ctts = find(view, stbl, 'ctts')
   if (ctts) {
     let i = 0
-    const count = view.getUint32(ctts.start + 4)
+    const count = tableCount(view, ctts, 4, 8)
     for (let e = 0; e < count && i < n; e++) {
       const p = ctts.start + 8 + e * 8
       const samples = view.getUint32(p)
@@ -121,7 +121,7 @@ function readVideoTrack(view: DataView, data: Uint8Array, trak: Box, mdia: Box, 
   const sync = new Uint8Array(n)
   const stss = find(view, stbl, 'stss')
   if (stss) {
-    const count = view.getUint32(stss.start + 4)
+    const count = tableCount(view, stss, 4, 4)
     for (let e = 0; e < count; e++) {
       const k = view.getUint32(stss.start + 8 + e * 4) - 1
       if (k >= 0 && k < n) sync[k] = 1
@@ -135,7 +135,7 @@ function readVideoTrack(view: DataView, data: Uint8Array, trak: Box, mdia: Box, 
   const elst = edts && find(view, edts, 'elst')
   if (elst) {
     const v1 = view.getUint8(elst.start) === 1
-    const count = view.getUint32(elst.start + 4)
+    const count = tableCount(view, elst, 4, v1 ? 20 : 12)
     let p = elst.start + 8
     for (let e = 0; e < count; e++) {
       const segment = v1 ? readU64(view, p) : view.getUint32(p)
@@ -218,20 +218,36 @@ function readCodec(view: DataView, data: Uint8Array, entry: Box): { codec: strin
   }
 }
 
-function readSizes(view: DataView, stbl: Box): Uint32Array {
+/**
+ * Sample sizes from `stsz` or `stz2`. The count is checked before the table is allocated: every sample takes at least
+ * one byte of the file, and a variable-size table must hold one entry per sample. Without this check a 20-byte
+ * constant-size `stsz` could declare 2³² − 1 samples and make the engine allocate tens of gigabytes (#123).
+ * Samples do not overlap, so their sizes also add up to at most the file size.
+ */
+function readSizes(view: DataView, stbl: Box, fileSize: number): Uint32Array {
   const stsz = find(view, stbl, 'stsz')
   if (stsz) {
+    if (stsz.end - stsz.start < 12) throw new Mp4Error('The "stsz" box is truncated.')
     const fixed = view.getUint32(stsz.start + 4)
-    const count = view.getUint32(stsz.start + 8)
+    const count = fixed ? view.getUint32(stsz.start + 8) : tableCount(view, stsz, 8, 4)
+    checkSampleCount(count, fileSize)
+    if (fixed) checkSampleBytes(count * fixed, fileSize)
     const sizes = new Uint32Array(count)
     if (fixed) sizes.fill(fixed)
     else for (let i = 0; i < count; i++) sizes[i] = view.getUint32(stsz.start + 12 + i * 4)
+    if (!fixed) checkSampleBytes(sum(sizes), fileSize)
     return sizes
   }
   const stz2 = find(view, stbl, 'stz2')
   if (!stz2) throw new Mp4Error('The video track has no sample size table.')
+  if (stz2.end - stz2.start < 12) throw new Mp4Error('The "stz2" box is truncated.')
   const field = view.getUint8(stz2.start + 7)
+  if (field !== 4 && field !== 8 && field !== 16) {
+    throw new Mp4Error(`The "stz2" box has an invalid field size (${field}).`)
+  }
   const count = view.getUint32(stz2.start + 8)
+  if (Math.ceil((count * field) / 8) > stz2.end - stz2.start - 12) throw tooManyEntries(stz2, count)
+  checkSampleCount(count, fileSize)
   const sizes = new Uint32Array(count)
   const p = stz2.start + 12
   for (let i = 0; i < count; i++) {
@@ -239,27 +255,29 @@ function readSizes(view: DataView, stbl: Box): Uint32Array {
     else if (field === 8) sizes[i] = view.getUint8(p + i)
     else sizes[i] = (view.getUint8(p + (i >> 1)) >> (i & 1 ? 0 : 4)) & 0xf
   }
+  checkSampleBytes(sum(sizes), fileSize)
   return sizes
 }
 
-function readOffsets(view: DataView, stbl: Box, n: number): Float64Array {
+function readOffsets(view: DataView, stbl: Box, sizes: Uint32Array): Float64Array {
+  const n = sizes.length
   const stco = find(view, stbl, 'stco')
   const co64 = stco ? undefined : find(view, stbl, 'co64')
   const table = stco ?? co64
   if (!table) throw new Mp4Error('The video track has no chunk offset table.')
-  const chunkCount = view.getUint32(table.start + 4)
+  const chunkCount = tableCount(view, table, 4, stco ? 4 : 8)
   const chunk = (k: number) => (stco ? view.getUint32(table.start + 8 + k * 4) : readU64(view, table.start + 8 + k * 8))
 
   const stsc = need(view, stbl, 'stsc')
-  const runs = view.getUint32(stsc.start + 4)
+  const runs = tableCount(view, stsc, 4, 12)
   const offsets = new Float64Array(n)
-  const sizes = readSizes(view, stbl)
   let i = 0
   for (let r = 0; r < runs && i < n; r++) {
     const p = stsc.start + 8 + r * 12
     const first = view.getUint32(p) - 1
     const perChunk = view.getUint32(p + 4)
-    const last = r + 1 < runs ? view.getUint32(p + 12) - 1 : chunkCount
+    // Chunks past the offset table do not exist: stopping there also bounds the loop when `perChunk` is 0.
+    const last = Math.min(r + 1 < runs ? view.getUint32(p + 12) - 1 : chunkCount, chunkCount)
     for (let c = first; c < last && i < n; c++) {
       let offset = chunk(c)
       for (let k = 0; k < perChunk && i < n; k++, i++) {
@@ -270,6 +288,45 @@ function readOffsets(view: DataView, stbl: Box, n: number): Float64Array {
   }
   if (i < n) throw new Mp4Error('The sample-to-chunk table does not cover every sample.')
   return offsets
+}
+
+/**
+ * Entry count of a sample table: the 32-bit count at `countAt` (from the payload start, after the full-box header),
+ * followed by entries of `entryBytes` each. Checked against the box payload before any loop, so that a forged count
+ * fails at once instead of reading the bytes after the box.
+ */
+function tableCount(view: DataView, box: Box, countAt: number, entryBytes: number): number {
+  const entries = box.start + countAt + 4
+  if (entries > box.end) throw new Mp4Error(`The "${box.type}" box is truncated.`)
+  const count = view.getUint32(entries - 4)
+  if (count * entryBytes > box.end - entries) throw tooManyEntries(box, count)
+  return count
+}
+
+function tooManyEntries(box: Box, count: number): Mp4Error {
+  return new Mp4Error(`The "${box.type}" box declares ${count} entries, more than it holds (corrupt or forged file).`)
+}
+
+/** Every sample takes at least one byte of the file. */
+function checkSampleCount(count: number, fileSize: number): void {
+  if (count <= fileSize) return
+  throw new Mp4Error(
+    `The video track declares ${count} samples, more than a ${fileSize}-byte file can hold (corrupt or forged file).`,
+  )
+}
+
+/** Samples do not overlap: together they take at most the whole file. */
+function checkSampleBytes(bytes: number, fileSize: number): void {
+  if (bytes <= fileSize) return
+  throw new Mp4Error(
+    `The video track's samples add up to ${bytes} bytes, more than the ${fileSize}-byte file (corrupt or forged file).`,
+  )
+}
+
+function sum(values: Uint32Array): number {
+  let total = 0
+  for (const v of values) total += v
+  return total
 }
 
 function readRotation(view: DataView, tkhd: Box): 0 | 90 | 180 | 270 {
