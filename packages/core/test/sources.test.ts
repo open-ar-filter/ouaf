@@ -61,7 +61,9 @@ function u32(...words: number[]): Uint8Array {
   return out
 }
 
-type Tables = Partial<Record<'stts' | 'stsc' | 'stsz' | 'stco' | 'edts', Uint8Array>> & { readonly more?: readonly Uint8Array[] }
+type Tables = Partial<Record<'stts' | 'stsc' | 'stsz' | 'stco' | 'edts', Uint8Array>> & {
+  readonly more?: readonly Uint8Array[]
+}
 
 /**
  * A synthetic one-track H.264 MP4 of `frames` 10-byte samples in one chunk, at 30 fps (no picture data: the demuxer
@@ -83,7 +85,8 @@ function syntheticMp4(frames: number, tables: Tables = {}): Uint8Array {
   const hdlr = box('hdlr', u32(0, 0), new TextEncoder().encode('vide'), new Uint8Array(13))
   const mdia = box('mdia', box('mdhd', u32(0, 0, 0, 30, frames, 0)), hdlr, box('minf', stbl))
   const tkhd = box('tkhd', new Uint8Array(40), u32(0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000), u32(0, 0))
-  const moov = box('moov', box('mvhd', u32(0, 0, 0, 1000, 0), new Uint8Array(80)), box('trak', tkhd, ...(tables.edts ? [tables.edts] : []), mdia))
+  const trak = box('trak', tkhd, ...(tables.edts ? [tables.edts] : []), mdia)
+  const moov = box('moov', box('mvhd', u32(0, 0, 0, 1000, 0), new Uint8Array(80)), trak)
   const mdat = box('mdat', new Uint8Array(frames * 10))
   const file = new Uint8Array(moov.length + mdat.length)
   file.set(moov)
@@ -106,15 +109,22 @@ describe('demuxMp4 on forged files (#123)', () => {
     const track = demuxMp4(syntheticMp4(3))
     expect(track.codec).toBe('avc1.42c01e')
     expect([track.codedWidth, track.codedHeight]).toEqual([64, 48])
-    expect(track.samples.map((s) => [s.size, Math.round(s.time * 30), s.sync])).toEqual([[10, 0, true], [10, 1, true], [10, 2, true]])
+    expect(track.samples.map((s) => [s.size, Math.round(s.time * 30), s.sync])).toEqual([
+      [10, 0, true],
+      [10, 1, true],
+      [10, 2, true],
+    ])
     expect(track.samples[1]!.offset - track.samples[0]!.offset).toBe(10)
   })
 
   it('refuses a constant-size stsz declaring 2³² − 1 samples at once, before allocating its tables', () => {
     const start = performance.now()
-    // An Mp4Error (not a RangeError from a failed allocation) shows that the count was refused before `new Uint32Array`.
+    // An Mp4Error (not a RangeError from a failed allocation) shows that the count was refused before
+    // `new Uint32Array`.
     expect(forged({ stsz: box('stsz', u32(0, 10, 0xffffffff)) })).toThrow(Mp4Error)
-    expect(forged({ stsz: box('stsz', u32(0, 10, 0xffffffff)) })).toThrow(/4294967295 samples, more than a \d+-byte file/)
+    expect(forged({ stsz: box('stsz', u32(0, 10, 0xffffffff)) })).toThrow(
+      /4294967295 samples, more than a \d+-byte file/,
+    )
     expect(performance.now() - start).toBeLessThan(500)
   })
 
@@ -126,8 +136,20 @@ describe('demuxMp4 on forged files (#123)', () => {
     expect(forged({ stsz: box('stsz', u32(0)) })).toThrow(/"stsz" box is truncated/)
   })
 
+  it('refuses sample sizes that add up to more than the file', () => {
+    const size = syntheticMp4(3).length
+    // Fewer samples than bytes, but at 100 bytes each they cannot all fit.
+    expect(forged({ stsz: box('stsz', u32(0, 100, Math.ceil(size / 50))) })).toThrow(/samples add up to/)
+    expect(forged({ stsz: box('stsz', u32(0, 0, 3, size, 10, 10)) })).toThrow(/samples add up to/)
+    const sizes16 = new Uint8Array(6)
+    new DataView(sizes16.buffer).setUint16(0, size)
+    new DataView(sizes16.buffer).setUint16(2, 10)
+    expect(forged({ stsz: box('stz2', u32(0, 16, 3), sizes16) })).toThrow(/samples add up to/)
+  })
+
   it('checks stz2 against its payload and field size', () => {
-    const stz2 = (field: number, count: number, ...bytes: number[]) => box('stz2', u32(0, field, count), new Uint8Array(bytes))
+    const stz2 = (field: number, count: number, ...bytes: number[]) =>
+      box('stz2', u32(0, field, count), new Uint8Array(bytes))
     expect(demuxMp4(syntheticMp4(3, { stsz: stz2(8, 3, 10, 10, 10) })).samples.map((s) => s.size)).toEqual([10, 10, 10])
     expect(demuxMp4(syntheticMp4(3, { stsz: stz2(4, 3, 0xaa, 0xa0) })).samples.map((s) => s.size)).toEqual([10, 10, 10])
     expect(forged({ stsz: stz2(4, 5, 0xaa, 0xa0) })).toThrow(/"stz2" box declares 5 entries/)
@@ -145,7 +167,10 @@ describe('demuxMp4 on forged files (#123)', () => {
     expect(forged({ more: [box('ctts', u32(0, 0xffffffff, 3, 0))] })).toThrow(/"ctts" box declares/)
     expect(forged({ more: [box('stss', u32(0, 2, 1))] })).toThrow(/"stss" box declares 2 entries/)
     expect(forged({ edts: box('edts', box('elst', u32(0, 0xffffffff, 3, 0, 0x10000))) })).toThrow(/"elst" box declares/)
-    expect(forged({ edts: box('edts', box('elst', u32(0x01000000, 1, 0, 3, 0, 0))) })).toThrow(/"elst" box declares 1 entries/) // 16 bytes: one version 0 entry, not a version 1 one
+    // 16 bytes: one version 0 entry, not a version 1 one.
+    expect(forged({ edts: box('edts', box('elst', u32(0x01000000, 1, 0, 3, 0, 0))) })).toThrow(
+      /"elst" box declares 1 entries/,
+    )
   })
 
   it('stops at the end of the chunk table on an empty sample-to-chunk run', () => {

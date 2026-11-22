@@ -222,6 +222,7 @@ function readCodec(view: DataView, data: Uint8Array, entry: Box): { codec: strin
  * Sample sizes from `stsz` or `stz2`. The count is checked before the table is allocated: every sample takes at least
  * one byte of the file, and a variable-size table must hold one entry per sample. Without this check a 20-byte
  * constant-size `stsz` could declare 2³² − 1 samples and make the engine allocate tens of gigabytes (#123).
+ * Samples do not overlap, so their sizes also add up to at most the file size.
  */
 function readSizes(view: DataView, stbl: Box, fileSize: number): Uint32Array {
   const stsz = find(view, stbl, 'stsz')
@@ -230,16 +231,20 @@ function readSizes(view: DataView, stbl: Box, fileSize: number): Uint32Array {
     const fixed = view.getUint32(stsz.start + 4)
     const count = fixed ? view.getUint32(stsz.start + 8) : tableCount(view, stsz, 8, 4)
     checkSampleCount(count, fileSize)
+    if (fixed) checkSampleBytes(count * fixed, fileSize)
     const sizes = new Uint32Array(count)
     if (fixed) sizes.fill(fixed)
     else for (let i = 0; i < count; i++) sizes[i] = view.getUint32(stsz.start + 12 + i * 4)
+    if (!fixed) checkSampleBytes(sum(sizes), fileSize)
     return sizes
   }
   const stz2 = find(view, stbl, 'stz2')
   if (!stz2) throw new Mp4Error('The video track has no sample size table.')
   if (stz2.end - stz2.start < 12) throw new Mp4Error('The "stz2" box is truncated.')
   const field = view.getUint8(stz2.start + 7)
-  if (field !== 4 && field !== 8 && field !== 16) throw new Mp4Error(`The "stz2" box has an invalid field size (${field}).`)
+  if (field !== 4 && field !== 8 && field !== 16) {
+    throw new Mp4Error(`The "stz2" box has an invalid field size (${field}).`)
+  }
   const count = view.getUint32(stz2.start + 8)
   if (Math.ceil((count * field) / 8) > stz2.end - stz2.start - 12) throw tooManyEntries(stz2, count)
   checkSampleCount(count, fileSize)
@@ -250,6 +255,7 @@ function readSizes(view: DataView, stbl: Box, fileSize: number): Uint32Array {
     else if (field === 8) sizes[i] = view.getUint8(p + i)
     else sizes[i] = (view.getUint8(p + (i >> 1)) >> (i & 1 ? 0 : 4)) & 0xf
   }
+  checkSampleBytes(sum(sizes), fileSize)
   return sizes
 }
 
@@ -303,7 +309,24 @@ function tooManyEntries(box: Box, count: number): Mp4Error {
 
 /** Every sample takes at least one byte of the file. */
 function checkSampleCount(count: number, fileSize: number): void {
-  if (count > fileSize) throw new Mp4Error(`The video track declares ${count} samples, more than a ${fileSize}-byte file can hold (corrupt or forged file).`)
+  if (count <= fileSize) return
+  throw new Mp4Error(
+    `The video track declares ${count} samples, more than a ${fileSize}-byte file can hold (corrupt or forged file).`,
+  )
+}
+
+/** Samples do not overlap: together they take at most the whole file. */
+function checkSampleBytes(bytes: number, fileSize: number): void {
+  if (bytes <= fileSize) return
+  throw new Mp4Error(
+    `The video track's samples add up to ${bytes} bytes, more than the ${fileSize}-byte file (corrupt or forged file).`,
+  )
+}
+
+function sum(values: Uint32Array): number {
+  let total = 0
+  for (const v of values) total += v
+  return total
 }
 
 function readRotation(view: DataView, tkhd: Box): 0 | 90 | 180 | 270 {
