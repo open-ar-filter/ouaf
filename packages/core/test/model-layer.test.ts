@@ -52,8 +52,8 @@ describe('procedural shapes', () => {
     expect(size('torus')).toEqual([1, 1, 0.2]) // in the xy plane, tube 0.2
     expect(size('torus', 0.5)).toEqual([1, 1, 0.5])
     expect(size('ring')).toEqual([1, 1, 0])
-    expect(size('cylinder')).toEqual([1, 0.2, 1]) // a disc by default
-    expect(size('cylinder', 1)).toEqual([1, 1, 1])
+    expect(size('cylinder')).toEqual([1, 1, 1])
+    expect(size('cylinder', 0.5)).toEqual([1, 1, 1]) // thickness is for the torus and the ring only
     expect(size('plane')).toEqual([1, 1, 0])
   })
 

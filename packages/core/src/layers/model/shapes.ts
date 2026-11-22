@@ -2,10 +2,12 @@
  * Procedural primitives of the `model` layer (`src: { shape }`, spec §6.3): usable without any file, of size 1 (they
  * fit in a 1 × 1 × 1 box centred on the origin, in face units), lit like glTF models (`MeshStandardMaterial`).
  *
- * - `box`: a 1 × 1 × 1 cube; `sphere`: diameter 1; `cone`: base diameter 1, height 1, tip up (+y).
- * - `torus`, `ring`: outer diameter 1 in the xy plane, facing the camera (+z); `thickness` is the width of the band
- *   (outer minus inner radius), so `{ "shape": "torus" }` and `{ "shape": "ring" }` cover the same area on screen.
- * - `cylinder`: diameter 1, axis along y, height `thickness` (a disc by default: 0.2; 1 gives a 1 × 1 × 1 cylinder).
+ * - `box`: a 1 × 1 × 1 cube; `sphere`: diameter 1; `cylinder`: diameter 1, height 1; `cone`: base diameter 1,
+ *   height 1, tip up (+y). Cylinder and cone have their axis along y. Other proportions (a disc, a rod) come from
+ *   `scale`, as in the usual 3D APIs.
+ * - `torus`, `ring`: outer diameter 1 in the xy plane, facing the camera (+z); `thickness` (only for them) is the
+ *   width of the band (outer minus inner radius), so `{ "shape": "torus" }` and `{ "shape": "ring" }` cover the same
+ *   area on screen.
  * - `plane`: 1 × 1 in the xy plane, facing the camera, drawn on both sides (as the ring).
  */
 import type { TModelLayer } from '@ouaf/spec'
@@ -32,7 +34,7 @@ export type ShapeName = TShape['shape']
 /** Default `thickness` (schema). */
 export const DEFAULT_THICKNESS = 0.2
 
-/** The geometry of a primitive of size 1. `thickness` in (0, 1]. */
+/** The geometry of a primitive of size 1. `thickness` in (0, 1], for `torus` and `ring` only. */
 export function shapeGeometry(shape: ShapeName, thickness = DEFAULT_THICKNESS): BufferGeometry {
   const t = Math.min(1, Math.max(1e-3, thickness))
   switch (shape) {
@@ -47,7 +49,7 @@ export function shapeGeometry(shape: ShapeName, thickness = DEFAULT_THICKNESS): 
     case 'cone':
       return new ConeGeometry(0.5, 1, 32)
     case 'cylinder':
-      return new CylinderGeometry(0.5, 0.5, t, 32)
+      return new CylinderGeometry(0.5, 0.5, 1, 32)
     case 'plane':
       return new PlaneGeometry(1, 1)
   }

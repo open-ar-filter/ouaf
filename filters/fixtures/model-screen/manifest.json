@@ -28,7 +28,7 @@
     { "id": "torus", "type": "model", "src": { "shape": "torus", "color": "#ff00ff" }, "anchor": "screen", "offset": [-0.08, -0.3, 0], "scale": 0.06 },
     { "id": "ring", "type": "model", "src": { "shape": "ring", "color": "#ff00ff" }, "anchor": "screen", "offset": [0, -0.3, 0], "scale": 0.06 },
     { "id": "cone", "type": "model", "src": { "shape": "cone", "color": "#ff00ff" }, "anchor": "screen", "offset": [0.08, -0.3, 0], "scale": 0.06 },
-    { "id": "cylinder", "type": "model", "src": { "shape": "cylinder", "color": "#ff00ff", "thickness": 1 }, "anchor": "screen", "offset": [0.16, -0.3, 0], "scale": 0.06 },
+    { "id": "cylinder", "type": "model", "src": { "shape": "cylinder", "color": "#ff00ff" }, "anchor": "screen", "offset": [0.16, -0.3, 0], "scale": 0.06 },
     { "id": "plane", "type": "model", "src": { "shape": "plane", "color": "#ff00ff", "emissive": "#400040" }, "anchor": "screen", "offset": [0.24, -0.3, 0], "scale": 0.06 },
     { "type": "color", "contrast": { "param": "contrast" } }
   ]
