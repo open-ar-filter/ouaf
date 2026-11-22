@@ -199,7 +199,8 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
   // Playback state (clock, last frame time, rate) in a typed array: a double in a closure variable is boxed on write.
   const play = new Float64Array(3)
   play[LAST_TIME] = -1
-  // A face was selected on the previous frame (face stickers): when none was, the first face to appear restarts playback.
+  // A face was selected on the previous frame (face stickers): when none was, the first face to appear restarts
+  // playback.
   let hadFace = false
 
   const pickFor = (inst: Instance, faceId: number) => {

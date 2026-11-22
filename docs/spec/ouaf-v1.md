@@ -154,6 +154,10 @@ implementation are listed in Appendix D (informative).
 | `visible` | Boolean, *bindable*. |
 | `opacity` | 0–1, *bindable*. |
 
+Hiding a layer, with `visible` false or `opacity` 0, neither pauses nor restarts its animations (spritesheets,
+videos, a `model`'s `animation`): as an animation under CSS `visibility: hidden`, they keep advancing and resume
+where they are when the layer is shown again. When they start is given by each type (6.3).
+
 ### 6.2 Properties of anchored layers (`text`, `sticker`, `model`, `canvas`)
 
 | Property | Default | Description |
@@ -195,12 +199,11 @@ Normative behavior:
 - `sticker`: `size` is the height in anchor units, the width follows the asset's aspect ratio. Animated assets
   (spritesheets, videos) play from their first frame when the filter is activated and when the first selected face
   appears after none was (a screen sticker: at activation only); a face that appears while another is selected joins
-  the running animation. While the layer is hidden by `visible` (or `opacity` 0) they keep advancing, as an animation
-  under CSS `visibility: hidden`, and resume where they are when it is shown again. This holds for every animated
-  layer type (a `model`'s `animation` too, which starts at activation and for each face that appears): hiding a
-  layer neither pauses nor restarts its animations. They advance with the media time times `rate`; with
-  `autoplay: false` they stay on the first frame; without `loop` they hold the last frame. `rate` is one value for
-  the layer, read for its first selected face. `{ pick }`: see 10.1.
+  the running animation; hidden by `visible` or `opacity`, they keep advancing (6.1). They advance with the media
+  time times `rate`; with `autoplay: false` they stay on the first frame; without `loop` they hold the last frame.
+  `rate` is one value for the layer, read for its first selected face. `{ pick }`: see 10.1.
+- `model.animation`: the clip plays from its start when the filter is activated and, for each face, when that face
+  appears (a new face id).
 - `model.occlusion: "head"`: the part of the object hidden by the head is not drawn (hat, glasses temples).
 - `model.fit`: the object is rescaled so its bounding box has the requested width or height.
 - `model.src: { shape }`: primitives `box`, `sphere`, `torus`, `ring`, `cone`, `cylinder`, `plane`, of size 1, usable
