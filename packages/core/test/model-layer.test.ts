@@ -168,11 +168,16 @@ function fakeAnchors(ids: number[]): AnchorProvider & { count: number } {
   }
 }
 
+/** What `test.shown` reads (a boolean the tests toggle). */
+let shownData = true
+
 const data: BindingDataSource = {
   resolve: (path) =>
     path === 'face.index'
       ? { type: 'number', perFace: true, read: (face: number, out: Float64Array, i: number) => void (out[i] = face < 0 ? Number.NaN : face) }
-      : undefined,
+      : path === 'test.shown'
+        ? { type: 'boolean', perFace: false, read: () => shownData }
+        : undefined,
 }
 
 function context(assets: Record<string, ModelAsset>, maxFaces = 2, warnings: string[] = []): LayerContext {
@@ -346,6 +351,31 @@ describe('model layer', () => {
     layer.update(frameAt(12.5, anchors))
     expect(round(holders(layer)[1]!.getObjectByName('lift')!.quaternion.toArray())).toEqual([0, 0, 0.707, 0.707])
     expect(warnings).toEqual([])
+    layer.dispose()
+  })
+
+  it('keeps animating while hidden by `visible`, and resumes where it is; a face that comes back restarts', async () => {
+    const lift = await parseModel(glb('lift.glb'), undefined)
+    const layer = make({ src: 'lift', animation: 'lift', loop: false, visible: { bind: 'test.shown' } }, context({ lift }, 1))
+    const ids = [1]
+    const anchors = fakeAnchors(ids)
+    const y = () => Math.round(holders(layer)[0]!.getObjectByName('lift')!.position.y * 1000) / 1000
+    shownData = true
+    layer.update(frameAt(0, anchors))
+    layer.update(frameAt(0.25, anchors))
+    expect(y()).toBe(0.5)
+    shownData = false
+    for (const t of [0.5, 0.75]) layer.update(frameAt(t, anchors))
+    expect(holders(layer)[0]!.visible).toBe(false)
+    shownData = true
+    layer.update(frameAt(1, anchors))
+    expect([holders(layer)[0]!.visible, y()]).toEqual([true, 2]) // 1 s in, not 0.5 s
+    anchors.count = 0
+    layer.update(frameAt(1.25, anchors))
+    anchors.count = 1
+    ids[0] = 2 // a face that comes back is a new face (new id)
+    layer.update(frameAt(1.5, anchors))
+    expect(y()).toBe(0) // from the start
     layer.dispose()
   })
 

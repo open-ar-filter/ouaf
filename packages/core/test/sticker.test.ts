@@ -193,12 +193,17 @@ function fakeAnchors(ids: number[]): AnchorProvider & { count: number } {
   }
 }
 
-/** `face.index` data: the slot index (NaN without a face). */
+/** What `test.shown` reads (a boolean the tests toggle). */
+let shownData = true
+
+/** `face.index` data: the slot index (NaN without a face); `test.shown`: `shownData`. */
 const data: BindingDataSource = {
   resolve: (path) =>
     path === 'face.index'
       ? { type: 'number', perFace: true, read: (face: number, out: Float64Array, i: number) => void (out[i] = face < 0 ? Number.NaN : face) }
-      : undefined,
+      : path === 'test.shown'
+        ? { type: 'boolean', perFace: false, read: () => shownData }
+        : undefined,
 }
 
 function context(assets: Record<string, StickerAsset>, maxFaces = 2): LayerContext {
@@ -377,7 +382,72 @@ describe('sticker layer', () => {
     expect(sheet.width / sheet.height).toBe(1)
   })
 
-  it('restarts playback when the layer becomes visible, not when another face joins', () => {
+  it('keeps playing while hidden by `visible` or `opacity`, and resumes where it is (CSS `visibility`)', () => {
+    const sheet = asset('spritesheet', 400, 400, { width: 100, height: 100, frames: { cols: 4, rows: 4, count: 16, fps: 10 } })
+    const frameOf = (layer: ObjectLayer) => {
+      const r = meshes(layer)[0]!.material.uniforms.uRect!.value as Vector4
+      return Math.round(r.y / r.w) * 4 + Math.round(r.x / r.z)
+    }
+    for (const decl of [
+      { visible: { bind: 'test.shown' } },
+      { opacity: { bind: 'test.shown', map: { true: 1, false: 0 } } },
+      { anchor: 'screen', visible: { bind: 'test.shown' } },
+    ]) {
+      const layer = createSticker({ type: 'sticker', src: 'walk', ...decl } as LayerDecl, context({ walk: sheet }, 1))
+      const anchors = fakeAnchors([1])
+      shownData = true
+      for (let i = 0; i <= 3; i++) layer.update(frameAt(i / 10, anchors))
+      expect(frameOf(layer)).toBe(3)
+      // Hidden for 1 s at 10 fps, the face staying tracked.
+      shownData = false
+      for (let i = 4; i < 14; i++) {
+        layer.update(frameAt(i / 10, anchors))
+        expect(meshes(layer)[0]!.visible).toBe(false)
+      }
+      shownData = true
+      layer.update(frameAt(1.4, anchors))
+      expect([meshes(layer)[0]!.visible, frameOf(layer)]).toEqual([true, 14]) // frame +10, not frame 0
+      layer.dispose()
+    }
+    shownData = true
+  })
+
+  it('re-synchronizes a video paused while hidden by `visible` to the running clock', () => {
+    const video = {
+      loop: false,
+      duration: 10,
+      currentTime: 0,
+      paused: true,
+      seeking: false,
+      playbackRate: 1,
+      plays: 0,
+      play() {
+        this.paused = false
+        this.plays++
+        return Promise.resolve()
+      },
+      pause() {
+        this.paused = true
+      },
+    }
+    const clip = asset('video', 100, 100, { video: video as unknown as HTMLVideoElement })
+    const layer = createSticker({ type: 'sticker', src: 'clip', visible: { bind: 'test.shown' } } as LayerDecl, context({ clip }, 1))
+    const anchors = fakeAnchors([1])
+    shownData = true
+    layer.update(frameAt(0, anchors))
+    expect([video.paused, video.plays]).toEqual([false, 1])
+    shownData = false
+    for (let i = 1; i <= 20; i++) layer.update(frameAt(i / 10, anchors)) // hidden 2 s: paused after VIDEO_IDLE_PAUSE_MS
+    expect(video.paused).toBe(true)
+    video.currentTime = 1.1 // where it was paused
+    shownData = true
+    layer.update(frameAt(2.1, anchors))
+    expect([video.paused, video.plays]).toEqual([false, 2])
+    expect(video.currentTime).toBeCloseTo(2.1) // the clock kept running: seeked to it, not to 0
+    layer.dispose()
+  })
+
+  it('restarts playback at activation and when the first face appears after none was, not when another face joins', () => {
     const sheet = asset('spritesheet', 400, 200, { width: 100, height: 100, frames: { cols: 4, rows: 2, count: 8, fps: 10 } })
     const layer = createSticker({ type: 'sticker', src: 'walk' } as LayerDecl, context({ walk: sheet }, 2))
     const frameOf = (i: number) => {
@@ -387,7 +457,7 @@ describe('sticker layer', () => {
     const ids = [1, 2]
     const anchors = fakeAnchors(ids)
     anchors.count = 0
-    layer.update(frameAt(0, anchors)) // activated with no face: nothing shown, the clock does not run
+    layer.update(frameAt(0, anchors)) // activated with no face: nothing shown
     layer.update(frameAt(0.5, anchors))
     anchors.count = 1
     layer.update(frameAt(1, anchors))
