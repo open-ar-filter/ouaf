@@ -159,7 +159,8 @@ export interface FilterEvent {
 
 /**
  * Events of `engine.on(name, listener)`. Listeners are called synchronously, in subscription order; a throwing listener
- * does not stop the others (its error is reported as a `warning`). `dispose()` removes every listener.
+ * does not stop the others (its error is reported as a `warning`, or with `console.error` for a `warning` listener).
+ * `dispose()` removes every listener.
  */
 export type EngineEvents = {
   /** Rendering and tracking rates, about once per second while frames are rendered. */
@@ -212,7 +213,12 @@ export class Engine {
   /** Validation registry, including the vocabulary of installed plugins (for editors and the CLI). */
   readonly registry: SpecRegistry
 
-  #events = new Emitter<EngineEvents>((error) => this.#warn(`An event listener threw: ${String(error)}`))
+  // A throwing listener becomes a `warning`, except a throwing `warning` listener: reporting it as a warning would
+  // call it again, without end.
+  #events = new Emitter<EngineEvents>((error, event) => {
+    if (event === 'warning') console.error('[ouaf] A warning listener threw:', error)
+    else this.#warn(`An event listener threw: ${String(error)}`)
+  })
   #compositor: Compositor
   #outputs = new Outputs()
   #anchors: FaceAnchors

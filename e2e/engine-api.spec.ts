@@ -89,6 +89,34 @@ test('stats report the rendering and tracking rates', async ({ page }) => {
   expect(typeof stats.trackingHz).toBe('number')
 })
 
+test('a throwing listener becomes a warning; a throwing warning listener does not loop and rendering goes on', async ({ page }) => {
+  await open(page)
+  const result = await page.evaluate(
+    () =>
+      new Promise<{ warnings: string[]; framesAfter: number }>((resolve) => {
+        const { engine } = window.ouaf!
+        const warnings: string[] = []
+        engine.on('warning', (w) => {
+          warnings.push(w.message)
+          throw new Error('warning listener')
+        })
+        const off = engine.on('stats', () => {
+          off()
+          throw new Error('stats listener')
+        })
+        // Let a stats event fire (about once per second), then check that frames are still rendered.
+        setTimeout(() => {
+          const before = window.ouaf!.frames
+          setTimeout(() => resolve({ warnings, framesAfter: window.ouaf!.frames - before }), 1000)
+        }, 2000)
+      }),
+  )
+  expect(result.warnings.filter((m) => m.includes('stats listener'))).toHaveLength(1)
+  // Before the fix, the warning listener's own error was reported as a warning to itself, thousands of times.
+  expect(result.warnings.filter((m) => m.includes('warning listener'))).toEqual([])
+  expect(result.framesAfter).toBeGreaterThan(0)
+})
+
 test('dispose releases the sandboxes, the GPU context and the listeners, and is idempotent', async ({ page }) => {
   await open(page)
   const result = await page.evaluate(async (url) => {
