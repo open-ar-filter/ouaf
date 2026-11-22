@@ -77,6 +77,8 @@ export interface FilterLoadEnv {
   layerTypes: ReadonlyMap<string, LayerTypeImpl>
   loaders: ReadonlyMap<LoaderKind, AssetLoader>
   builtinUrl(name: string): string
+  /** The engine's `assetsBaseUrl`, given to asset loaders (decoders). */
+  assetsBaseUrl?: string
   fetchImpl: typeof fetch
   renderer: WebGLRenderer
   view: ObjectsView
@@ -213,6 +215,7 @@ export async function loadFilter(
     refs,
     loaders: env.loaders,
     builtinUrl: env.builtinUrl,
+    assetsBaseUrl: env.assetsBaseUrl,
     fetchImpl: env.fetchImpl,
   })
 
