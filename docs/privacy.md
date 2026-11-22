@@ -5,6 +5,23 @@ landmarks, blendshapes or any other data anywhere, and filters run without netwo
 
 There is one exception, coming from a third-party dependency, that hosts embedding `@ouaf/core` should know about.
 
+## Filter scripts
+
+A filter's script (spec §12) is untrusted code: the engine runs it in a sandbox that cannot reach the network, the
+page or its storage (spec §15). Each script gets:
+
+- a `sandbox="allow-scripts"` iframe (opaque origin: no access to the page's DOM, cookies or storage), whose CSP is
+  `default-src 'none'; script-src 'unsafe-inline' blob:; worker-src blob:; connect-src 'none'; img-src 'none'`;
+- a Worker created by that iframe from a `blob:` URL, which inherits that policy and runs `script.js`; before
+  loading it, the network and storage globals (`fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`,
+  `importScripts`, `Worker`, `indexedDB`, `caches`…) are removed;
+- only the data its manifest declares in `script.uses`, through one `MessagePort`.
+
+The sandbox document is a `srcdoc` iframe, so it also inherits the page's own CSP. A page with a CSP must therefore
+allow what the sandbox needs: inline scripts and `blob:` workers for frames (`script-src 'unsafe-inline' blob:` and
+`worker-src blob:`, or no `script-src` / `worker-src` at all). Otherwise the script does not start: the engine
+emits an `error` (code `script`) and the rest of the filter keeps working.
+
 ## MediaPipe usage metrics
 
 Face tracking uses [MediaPipe Tasks](https://www.npmjs.com/package/@mediapipe/tasks-vision) (`@mediapipe/tasks-vision`,

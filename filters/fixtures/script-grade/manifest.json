@@ -1,0 +1,17 @@
+{
+  "ouaf": "1",
+  "id": "script-grade",
+  "name": "Script grade (script sandbox fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Script fixture (#26): a color layer driven by host messages through the script (set, animate), sandbox probes, and an endless loop to trigger the watchdog.",
+  "requires": {},
+  "layers": [
+    { "id": "grade", "type": "color", "saturation": 0 }
+  ],
+  "script": {
+    "entry": "script.js",
+    "setup": true,
+    "on": ["message:tint", "message:fade", "message:probe", "message:loop"]
+  }
+}

@@ -131,13 +131,38 @@ tracking result gets a stable face id (500 ms grace delay, `frame.anchors.id(i)`
 every rendered frame then extrapolates the smoothed landmarks to its own time (at most 100 ms), which hides most of
 the age of a worker tracker's results. Layers and bindings read these predicted faces.
 
+## Scripts (spec §12, #26)
+
+Code: `packages/core/src/script/`. A filter with a `script` section has its `script.js` read at load time; when the
+filter is added to the stack, the engine starts a `ScriptHost` for it:
+
+- **Sandbox** (`sandbox.ts`): a `sandbox="allow-scripts"` `srcdoc` iframe with a CSP that blocks the network, which
+  starts a classic Worker from a `blob:` URL and hands it one end of a `MessageChannel`. Removing the iframe kills the
+  Worker (watchdog). A module Worker does not load from a `blob:` URL of an opaque origin in Chromium, hence classic.
+- **Runtime** (`runtime.ts`): the Worker's code, a self-contained function turned into source with `toString()` (no
+  bundler-specific worker import); `import()` of `script.js` lives in the Worker source text, because bundlers rewrite
+  `import()` calls in code. It implements `f`, timers in media time, events in order, per-face state.
+- **Host** (`host.ts`): one frame in flight; answers are applied at the start of the next rendered frame
+  (`beginFrame`, before the layers update), frames are sent after rendering (`endFrame`); 1 s watchdog
+  (`OuafError('SCRIPT_STOPPED')`); `f.emit` limits.
+- **Script values** (`overrides.ts`): in a scripted filter, every bindable property compiled with a `name`
+  (`BindableProperty.name`) is wrapped by the bindings compiler (`BindingEnv.overrides`), so `.set()` and
+  `.animate()` reach every layer type without code in the layers. Values are per face id or for every instance;
+  animations run on a media-time clock. Layer types only need to pass `name` when they compile their properties.
+- **Frame data** (`frame-data.ts`): only what `script.uses` declares, in normalized display space.
+- **Seed**: the script's `f.random()` runs in the Worker, seeded with `scriptSeed(filter.seed)`; when the engine
+  reseeds the filter (a new source run, #32), the next frame sent carries the new seed.
+- **Models and shaders**: `.play(name)` goes to `ModelLayerInstance.play`; shader uniforms are set as
+  `.set({ uniforms: { name: value } })`, registered as the properties `uniforms.<name>`.
+
 ## Provisional parts, and who replaces them
 
 | Part | Now | Replaced by |
 |---|---|---|
 | Params `apply: "reload"` | applied at the next frame like `live` | engine `ReloadHooks`: preload a new filter instance, swap it in |
 | Face tracker | MediaPipe tasks-vision, main thread | LiteRT.js pipeline in a worker (face-runtime.md, tracking-worker.md) |
-| Scripts, `send`, `filter:<name>` | warning, no-op | #26 sandbox |
+| Script content properties (`src`, `font`, `lut`, `animation`; `scale` outside models), `.invalidate()`, `f.asset()` | warning, ignored | #26 follow-up, #25 (canvas) |
+| Scripts waiting for the answer with file sources (spec §12.1) | never waits | #32 (offline sources) |
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
 | Head occluder (`model.occlusion: "head"`) | an ellipsoid of an average head on the `head` anchor | a head mesh fitted to the landmarks |
 | Model animations | three's `AnimationMixer` (boxes a few numbers per animated face and frame) | an allocation-free sampler, if profiles show GC |

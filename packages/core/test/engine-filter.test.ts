@@ -150,9 +150,13 @@ describe('loadFilter', () => {
     expect(ok.disposed).toHaveLength(1)
   })
 
-  it('warns about scripts, which are not run yet', async () => {
-    const source = memorySource({ manifest: { ...base, script: { entry: 'script.js', on: ['blink'] }, requires: { face: true }, layers: [] } })
-    const filter = await loadFilter(1, source, undefined, env())
-    expect(filter.warnings.some((w) => w.includes('scripts are not supported'))).toBe(true)
+  it('reads script.js and gives each layer a registry of the properties a script can set', async () => {
+    const manifest = { ...base, script: { entry: 'script.js', on: ['blink'] }, requires: { face: true }, layers: [] }
+    const filter = await loadFilter(1, memorySource({ manifest, files: { 'script.js': 'export default {}' } }), undefined, env())
+    expect(filter.script?.code).toBe('export default {}')
+    expect(filter.host).toBeUndefined() // started by the engine on activation
+    const missing = await loadFilter(2, memorySource({ manifest }), undefined, env()).catch((e: unknown) => e)
+    expect(missing).toBeInstanceOf(OuafError)
+    expect((missing as OuafError).code).toBe('filter-load')
   })
 })

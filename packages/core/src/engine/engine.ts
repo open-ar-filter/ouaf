@@ -19,7 +19,7 @@
  *   tracking result, time is the media time, and the seed is fixed: every run gives the same images.
  */
 import { resolveBuiltin } from '@ouaf/builtins'
-import { createRegistry, extendRegistry, type SpecRegistry, type Stage } from '@ouaf/spec'
+import { DEFAULT_SCRIPT_USES, createRegistry, extendRegistry, type ScriptUse, type SpecRegistry, type Stage } from '@ouaf/spec'
 import { createFaceFrame, type FaceFrame } from '../face.ts'
 import { FrameScheduler, type VideoFrameInfo } from '../scheduler.ts'
 import type { VideoSource } from '../video-source.ts'
@@ -35,7 +35,7 @@ import { builtinPlugins } from './builtin.ts'
 import { Compositor, type StagePasses } from './compositor.ts'
 import { Emitter } from './emitter.ts'
 import { GpuContextLostError, IncompatibleSourceError, OuafError, disposedError } from './errors.ts'
-import { FilterInstance, bindingParams, createHandle, loadFilter, type FilterHandle, type FilterLoadEnv } from './filter.ts'
+import { FilterInstance, bindingParams, createHandle, loadFilter, scriptSeed, type FilterHandle, type FilterLoadEnv } from './filter.ts'
 import type { FrameContext, LayerContext, LayerInstance, LayerTypeImpl, ObjectLayer, PassLayer } from './layer-type.ts'
 import { FaceBindingData } from '../bindings/index.ts'
 import { ParamStore } from '../params/index.ts'
@@ -49,6 +49,9 @@ import type {
   SourceImpl,
 } from './plugin.ts'
 import { TrackingHub } from './tracking.ts'
+import { FrameDataBuilder, type FrameDataSource } from '../script/frame-data.ts'
+import { ScriptHost } from '../script/host.ts'
+import { openSandbox } from '../script/sandbox.ts'
 
 /**
  * Version used for compatibility checks (spec §17): the format level this engine implements. Filters declare a
@@ -94,6 +97,8 @@ export interface EngineOptions {
    * `pushFrame`), a random one at each activation for live sources.
    */
   seed?: number
+  /** Opens the sandbox of a filter's script (tests). Default: a sandboxed iframe running a Worker (spec §15.1). */
+  openSandbox?: (label: string) => ReturnType<typeof openSandbox>
 }
 
 /** How the engine runs a source (spec §12.1): see `Engine.regime`. */
@@ -229,6 +234,10 @@ export class Engine {
   #passes: { [S in 'background' | 'face' | 'warp' | 'color']: PassLayer[] } = { background: [], face: [], warp: [], color: [] }
   #objects: ObjectLayer[] = []
   #frame: { -readonly [K in keyof FrameContext]: FrameContext[K] }
+  /** What scripts read their `frame.faces` from (spec §12.4). */
+  #scriptData: FrameDataSource
+  /** Overrides how a script's sandbox is opened (tests). */
+  #openSandbox: typeof openSandbox
   #lastNow = -1
   #statsStart = 0
   #statsFrames = 0
@@ -279,6 +288,19 @@ export class Engine {
       height: this.#compositor.height,
       mirrored: false,
     }
+    const engine = this
+    this.#scriptData = {
+      get faces() {
+        return engine.#drawnFaces
+      },
+      anchors: this.#anchors,
+      bindingData: this.#bindingData,
+      camera: this.#compositor.camera,
+      get videoToClip() {
+        return engine.#compositor.videoToClip
+      },
+    }
+    this.#openSandbox = options.openSandbox ?? openSandbox
   }
 
   get disposed(): boolean {
@@ -456,6 +478,7 @@ export class Engine {
     this.#stack.push(filter)
     this.#handles.set(filter, this.#handleFor(filter))
     this.#stackChanged()
+    this.#startScript(filter)
     await this.#updateTracking()
     return this.#handles.get(filter)!
   }
@@ -480,15 +503,19 @@ export class Engine {
     for (const f of loaded) this.#handles.set(f, this.#handleFor(f))
     this.#stackChanged()
     for (const f of old) this.#disposeFilter(f)
+    for (const f of loaded) this.#startScript(f)
     await this.#updateTracking()
     return this.filters.slice()
   }
 
-  /** Sends a message to the filters' scripts (`message:<name>`, spec §13). Delivered once scripts run (#26). */
+  /**
+   * Sends a message to the scripts of every filter of the stack, received as the `message:<name>` event (spec §13).
+   * `data` must be structured-cloneable.
+   */
   send(name: string, data?: unknown): void {
     this.#assertAlive()
-    if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) throw new OuafError('invalid-param', `Invalid message name "${name}".`)
-    void data
+    checkMessageName(name)
+    for (const filter of this.#stack) filter.host?.queue({ name: `message:${name}`, payload: { data } })
   }
 
   /** Stops everything and frees the GPU context, the tracker and every filter. Idempotent. */
@@ -754,6 +781,16 @@ export class Engine {
     frame.mirrored = compositor.mirrored
     this.#lastNow = now
 
+    this.#drawnFaces = faces
+    for (let i = 0; i < this.#stack.length; i++) {
+      const filter = this.#stack[i]!
+      if (!filter.script) continue
+      // The script's values and animations follow the media time; its answers apply from this frame (spec §12.1).
+      filter.script.overrides.clock.advance(time)
+      filter.script.overrides.idOf = this.#idOf
+      filter.host?.beginFrame()
+    }
+
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
       if (!filter.enabled) continue
@@ -765,6 +802,11 @@ export class Engine {
     if (this.#contextLost) return
     this.#markAuthorShaders(start)
     compositor.render(this.#passes as StagePasses)
+    // Then the frame goes to the scripts that are not busy with a previous one (spec §12.7).
+    for (let i = 0; i < this.#stack.length; i++) {
+      const filter = this.#stack[i]!
+      if (filter.enabled) filter.host?.endFrame(time, this.#scriptData)
+    }
     const end = performance.now()
     this.#recordStats(end, end - start, faces.count)
   }
@@ -845,6 +887,18 @@ export class Engine {
       const detector = filter.expressions
       if (!detector || !filter.enabled) continue
       const out = detector.update(timeMs, identity.count, identity.ids, this.#signals)
+      const host = filter.host
+      if (host) {
+        for (let e = 0; e < out.count; e++) {
+          const ev = out.items[e]!
+          if (ev.name === 'faceEnter' || ev.name === 'faceLeave') continue
+          host.queue(ev.side ? { name: ev.name, face: ev.faceId, side: ev.side } : { name: ev.name, face: ev.faceId })
+        }
+        for (let e = 0; e < identity.enteredCount; e++) host.queue({ name: 'faceEnter', face: identity.entered[e]! })
+        for (let e = 0; e < identity.leftCount; e++) host.queue({ name: 'faceLeave', face: identity.left[e]! })
+      }
+      // A face that left keeps no script values (its id is never reused).
+      if (filter.script) for (let e = 0; e < identity.leftCount; e++) filter.script.overrides.dropFace(identity.left[e]!)
       if (!filter.events.has('expression')) continue
       for (let e = 0; e < out.count; e++) {
         const ev = out.items[e]!
@@ -923,7 +977,56 @@ export class Engine {
         this.#stackChanged()
         void this.#updateTracking()
       },
+      send: (f, name, data) => {
+        checkMessageName(name)
+        f.host?.queue({ name: `message:${name}`, payload: { data } })
+      },
     })
+  }
+
+  /** Face key of a face slot for the scripts' per-face values: its stable id, 0 for no face (screen layers). */
+  readonly #idOf = (slot: number): number => (slot < 0 ? 0 : this.#anchors.id(slot))
+  #drawnFaces: FaceFrame = createFaceFrame(1)
+
+  /** Starts the script of a filter just added to the stack (spec §12): a new sandbox and a new seed. */
+  #startScript(filter: FilterInstance): void {
+    const script = filter.script
+    const decl = filter.manifest.script
+    if (!script || !decl || filter.host || filter.disposed) return
+    const id = filter.manifest.id
+    const uses = (decl.uses ?? DEFAULT_SCRIPT_USES) as readonly ScriptUse[]
+    if (uses.includes('pairs')) this.#warn(`Filter "${id}": pair data (uses: "pairs") is not computed by this engine version yet: frame.pairs stays empty.`, id)
+    const anchors = [...this.registry.anchors.values()].filter((a) => a.subject === 'face').map((a) => a.name)
+    const host = new ScriptHost({
+      filterId: id,
+      code: script.code,
+      layers: filter.manifest.layers.map((l) => l.id ?? ''),
+      on: decl.on ?? [],
+      uses,
+      overrides: script.overrides,
+      frameData: new FrameDataBuilder(uses, anchors),
+      // The filter's seed (spec §12.5): fixed for file sources, random per activation when live, or the host's.
+      seed: scriptSeed(filter.seed),
+      connect: () => this.#openSandbox(`Filter "${id}"`),
+      warn: (message) => this.#warn(message, id),
+      error: (error) => this.#error(error),
+      play: (layer, face, animation) => {
+        const instance = filter.layers[layer]?.instance as (LayerInstance & { play?: (name: string, faceId?: number) => boolean }) | undefined
+        if (typeof instance?.play !== 'function') return 'unsupported'
+        return instance.play(animation, face) ? 'played' : 'unknown'
+      },
+      emit: (name, data) => {
+        const handle = this.#handles.get(filter)
+        filter.events.emit(`filter:${name}`, data)
+        if (handle) this.#events.emit(`filter:${name}`, { filter: handle, data })
+      },
+    })
+    filter.host = host
+    filter.params.onChange((change) => {
+      host.paramsChanged(filter.params.values())
+      host.queue({ name: 'paramChange', payload: change })
+    })
+    void host.start(filter.params.values(), this.#frame.time)
   }
 
   #disposeFilter(filter: FilterInstance): void {
@@ -1023,6 +1126,10 @@ export function createEngine(options: EngineOptions): Engine {
 }
 
 export { memorySource, urlSource }
+
+function checkMessageName(name: string): void {
+  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) throw new OuafError('invalid-param', `Invalid message name "${name}".`)
+}
 
 function passStage(stage: Stage): 'background' | 'face' | 'warp' | 'color' {
   if (stage === 'background' || stage === 'face' || stage === 'warp' || stage === 'color') return stage

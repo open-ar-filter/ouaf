@@ -18,6 +18,10 @@ export type OuafErrorCode =
   | 'shader'
   | 'gpu-context-lost'
   | 'disposed'
+  /** A filter's script could not start (sandbox, `script.js`). */
+  | 'script'
+  /** A filter's script did not answer within 1 s and was stopped (spec §12.7); the rest of the filter keeps working. */
+  | 'SCRIPT_STOPPED'
 
 export class OuafError extends Error {
   override name = 'OuafError'
