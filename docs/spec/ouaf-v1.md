@@ -426,6 +426,10 @@ vec4 effect(vec2 uv) {
 
 `uses` lists the data the script receives (12.4); when omitted, `["face.pose", "face.blendshapes"]`.
 
+`script.js` is a self-contained ES module (no `import`): its default export is an object with the functions of
+`filter.js` and the initial state (`state`, `setup`, `update`, `on`, `draw`; other keys are ignored). The engine
+reads the manifest, not this object, to know which functions exist and which events the script handles.
+
 ### 12.3 Functions in `filter.js`
 
 ```js
