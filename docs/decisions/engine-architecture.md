@@ -83,8 +83,10 @@ Stack rules: within a stage, stack order then layer order; passes are chained; o
 exclusive (last enabled filter wins, with a warning). The per-stage lists are rebuilt only when the stack changes.
 
 Image buffers hold **sRGB-encoded bytes**, like the camera texture and the canvas: raw shader passes read and write
-them unchanged. Render targets are tagged sRGB with an RGBA8 internal format, so lit three.js materials are encoded the
-same way whether they render to a target or to the canvas (to verify with the model layer, #21).
+them unchanged. Render targets are tagged sRGB with an RGBA8 internal format, and flagged `isXRRenderTarget`: three only
+encodes its built-in materials' output to the target's color space for XR targets, so without it lit models and text
+were written linear (darker) whenever a pass was active. They now get the same bytes whether they render to a target
+or to the canvas (checked by `e2e/model.spec.ts`, #21).
 
 ## Spaces and anchors
 
@@ -109,6 +111,9 @@ the age of a worker tracker's results. Layers and bindings read these predicted 
 | Face tracker | MediaPipe tasks-vision, main thread | LiteRT.js pipeline in a worker (face-runtime.md, tracking-worker.md) |
 | Scripts, `send`, `filter:<name>` | warning, no-op | #26 sandbox |
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
+| Head occluder (`model.occlusion: "head"`) | an ellipsoid of an average head on the `head` anchor | a head mesh fitted to the landmarks |
+| Model animations | three's `AnimationMixer` (boxes a few numbers per animated face and frame) | an allocation-free sampler, if profiles show GC |
+| glTF limits | 32 MB per file, textures not size-checked, no KTX2 textures | the limits of spec Appendix C; KTX2 with #116 |
 
 ## Testing a layer type
 

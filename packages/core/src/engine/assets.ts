@@ -94,6 +94,11 @@ export interface AssetRequest {
   /** Path inside the package or built-in name; the emoji itself for `emoji`. */
   readonly path: string
   readonly builtin: boolean
+  /**
+   * The engine's `assetsBaseUrl`, where the host serves the engine's own files (decoders: `draco/`…). Undefined when
+   * assets are loaded outside an engine (tests, tools).
+   */
+  readonly assetsBaseUrl?: string
   /** Reads the file (package file, built-in resource, or the inline SVG as an `image/svg+xml` blob). */
   read(): Promise<Blob>
   readonly signal: AbortSignal
@@ -158,6 +163,8 @@ export interface PreloadOptions {
   loaders: ReadonlyMap<LoaderKind, AssetLoader>
   /** URL of a built-in resource (`font/sans`, `lut/noir`). */
   builtinUrl: (name: string) => string
+  /** Given to loaders (`AssetRequest.assetsBaseUrl`). */
+  assetsBaseUrl?: string
   fetchImpl?: typeof fetch
   signal?: AbortSignal
 }
@@ -190,7 +197,8 @@ export async function preloadAssets(options: PreloadOptions): Promise<PreloadedA
         return source.file(r.path, signal)
       }
       try {
-        const value = await loader.load({ ref, kind: r.kind, entry: r.entry, path: r.path, builtin: r.builtin, read, signal })
+        const { assetsBaseUrl } = options
+        const value = await loader.load({ ref, kind: r.kind, entry: r.entry, path: r.path, builtin: r.builtin, assetsBaseUrl, read, signal })
         loaded.set(ref, { value, loader })
       } catch (cause) {
         if (cause instanceof AssetError) throw cause

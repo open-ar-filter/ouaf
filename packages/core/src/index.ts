@@ -28,3 +28,4 @@ export * from './expressions/index.ts'
 // Layer types (#19–#25), each a built-in plugin
 export * from './layers/color/index.ts'
 export * from './layers/sticker/index.ts'
+export * from './layers/model/index.ts'
