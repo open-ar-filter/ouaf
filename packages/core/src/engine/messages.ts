@@ -14,11 +14,16 @@ export const MESSAGE_NAME = /^[A-Za-z][A-Za-z0-9_-]*$/
  */
 export function messagePayload(name: string, data: unknown): { data: unknown } {
   if (typeof name !== 'string' || !MESSAGE_NAME.test(name)) {
-    throw new OuafError('invalid-message', `Invalid message name ${JSON.stringify(name)}: a letter, then letters, digits, "_" or "-".`)
+    const shown = JSON.stringify(name)
+    throw new OuafError('invalid-message', `Invalid message name ${shown}: a letter, then letters, digits, "_" or "-".`)
   }
   try {
     return { data: data === undefined ? undefined : structuredClone(data) }
   } catch (cause) {
-    throw new OuafError('invalid-message', `send("${name}"): the data cannot be sent to a script, it must be structured-cloneable (${String(cause)}).`, { cause })
+    throw new OuafError(
+      'invalid-message',
+      `send("${name}"): the data cannot be sent to a script, it must be structured-cloneable (${String(cause)}).`,
+      { cause },
+    )
   }
 }
