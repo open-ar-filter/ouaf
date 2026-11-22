@@ -267,6 +267,7 @@ describe('warp layer', () => {
       params: {} as LayerContext['params'],
       bindings,
       maxFaces,
+      random: Math.random,
       warn: (m: string) => void warnings.push(m),
     } satisfies LayerContext
     const layer = createWarpLayer({ type: 'warp', ...decl } as LayerDecl, ctx) as PassLayer

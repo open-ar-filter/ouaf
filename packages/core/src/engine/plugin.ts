@@ -60,6 +60,17 @@ export interface FrameTracker {
    * `timestampMs` increases strictly between calls.
    */
   track(input: TrackerInput, timestampMs: number, mediaTime: number, out: FaceFrame): void | Promise<void>
+  /**
+   * Tracks a still image (image sources, #32): detection from scratch, no state carried over from earlier frames
+   * (MediaPipe IMAGE mode). Optional: without it the engine calls `track`.
+   */
+  trackImage?(input: TrackerInput, mediaTime: number, out: FaceFrame): void | Promise<void>
+  /**
+   * Forgets the state carried from frame to frame, so that the next `track` works as on a first frame: called at the
+   * start of each run of a file source (offline video, `pushFrame`) so that every run gives the same result
+   * (spec §12.5). Optional for trackers without temporal state.
+   */
+  reset?(): void | Promise<void>
   /** Applies a new configuration (blendshapes on/off, fewer faces); takes effect on a later `track`. */
   configure(config: TrackerConfig): void
   dispose(): void

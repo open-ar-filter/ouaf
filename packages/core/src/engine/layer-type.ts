@@ -90,6 +90,13 @@ export interface LayerContext {
   readonly bindings: BindingEnv
   /** Maximum number of faces of the engine: size per-face resources for it. */
   readonly maxFaces: number
+  /**
+   * The layer's seeded generator, a number in [0, 1) per call (spec §12.5): use it for every random choice. Seeded at
+   * activation and again when the source changes, with a fixed seed for file sources (image, offline video,
+   * `pushFrame`: every run gives the same draws), a random one for live sources, or the host's
+   * `createEngine({ seed })`. Each layer has its own sequence.
+   */
+  random(): number
   /** Reports a non-fatal problem to the host (`engine.on('warning')`). */
   warn(message: string): void
 }

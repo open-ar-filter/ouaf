@@ -210,6 +210,7 @@ function context(assets: Record<string, StickerAsset>, maxFaces = 2): LayerConte
     params: {} as LayerContext['params'],
     bindings: { data, params: { type: () => undefined, get: () => undefined } },
     maxFaces,
+    random: Math.random,
     warn: () => {},
   }
 }

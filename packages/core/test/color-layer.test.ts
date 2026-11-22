@@ -249,6 +249,7 @@ describe('color layer', () => {
       view: { camera },
       maxFaces: 1,
       bindingData: new FaceBindingData(faces),
+      seed: () => 1,
       warn: () => {},
       ...overrides,
     }

@@ -11,12 +11,21 @@
  *
  * One frame (spec §7, §9): new camera frame → submit it to tracking (eager, shared by the stack) → apply the queued
  * param changes of every filter → update every layer with the latest tracking result → render the stages.
+ *
+ * Sources (#32) come in two regimes (spec §12.1, §12.5):
+ * - **live**: a camera, a playing `<video>` (`VideoFileSource`), a canvas the host draws into. Frames are rendered as
+ *   they come, with the latest tracking result; random choices are seeded randomly.
+ * - **file**: a still image, an `OfflineVideoSource`, frames given with `pushFrame`. Every frame waits for its own
+ *   tracking result, time is the media time, and the seed is fixed: every run gives the same images.
  */
 import { resolveBuiltin } from '@ouaf/builtins'
 import { createRegistry, extendRegistry, type SpecRegistry, type Stage } from '@ouaf/spec'
 import { createFaceFrame, type FaceFrame } from '../face.ts'
 import { FrameScheduler, type VideoFrameInfo } from '../scheduler.ts'
 import type { VideoSource } from '../video-source.ts'
+import { OfflineVideoSource } from '../offline-video.ts'
+import { assertReadable, describeImage, isCanvas, isFrameImage, isSecurityError, taintedError, type FrameImage } from '../frame-image.ts'
+import { checkSeed, deriveSeed, FILE_SOURCE_SEED, randomSeed, SeededRandom } from '../random.ts'
 import type { FitMode } from '../viewport.ts'
 import { FaceIdentityTracker, FaceSmoother } from '../anchoring/index.ts'
 import { createSignals, readExpressionSignals } from '../expressions/index.ts'
@@ -71,6 +80,28 @@ export interface EngineOptions {
   height?: number
   /** `fetch` used for filters and assets (tests, custom caching). Default: the global `fetch`. */
   fetch?: typeof fetch
+  /**
+   * Seed of every random choice (spec §12.5: `f.random()`, `{ pick, by: "random" }`), an integer from 0 to 2³² − 1,
+   * e.g. to reproduce a bug seen on a live source. Default: a fixed seed for file sources (image, offline video,
+   * `pushFrame`), a random one at each activation for live sources.
+   */
+  seed?: number
+}
+
+/** How the engine runs a source (spec §12.1): see `Engine.regime`. */
+export type SourceRegime = 'live' | 'file'
+
+export interface SourceOptions {
+  /** Mirror the image (canvas, still image). Default: false. `VideoSource` and `OfflineVideoSource` carry their own. */
+  mirror?: boolean
+}
+
+/** `engine.on('sourceEnd')`: an `OfflineVideoSource` without `loop` rendered its last frame. */
+export interface SourceEndEvent {
+  /** Frames rendered in this run. */
+  frames: number
+  /** Media time of the last frame (s). */
+  time: number
 }
 
 export interface EngineStats {
@@ -114,6 +145,7 @@ export type EngineEvents = {
   /** Asynchronous failures (tracking, a frame that threw). Synchronous API errors are thrown instead. */
   error: Error
   performance: PerformanceEvent
+  sourceEnd: SourceEndEvent
 } & { [K in `filter:${string}`]: FilterEvent }
 
 /** A filter to load: URL of its folder (or of its `manifest.json`), or a `FilterSource` (`memorySource`…). */
@@ -124,8 +156,24 @@ export interface FilterSpec {
   params?: Readonly<Record<string, unknown>>
 }
 
-/** What `setSource` accepts: a `VideoSource` (`CameraSource`, `VideoFileSource`), a playing `<video>`, or anything a source plugin accepts. */
-export type SourceInput = VideoSource | HTMLVideoElement | unknown
+/**
+ * What `setSource` accepts: a `VideoSource` (`CameraSource`, `VideoFileSource`) or a playing `<video>` (live), a
+ * canvas (`HTMLCanvasElement`, `OffscreenCanvas`, read on every animation frame: live), a still image
+ * (`HTMLImageElement`, `ImageBitmap`, `VideoFrame`: file), an `OfflineVideoSource` (file), or anything a source plugin
+ * accepts.
+ */
+export type SourceInput = VideoSource | HTMLVideoElement | FrameImage | OfflineVideoSource | unknown
+
+/** What drives the frames of the current source. Async loops stop when `Engine.#feed` is no longer theirs. */
+type Feed =
+  | { readonly kind: 'video'; readonly source: VideoSource; readonly scheduler: FrameScheduler }
+  | { readonly kind: 'canvas'; readonly canvas: HTMLCanvasElement | OffscreenCanvas; raf: number }
+  | { readonly kind: 'still'; readonly image: FrameImage; raf: number }
+  | { readonly kind: 'offline'; readonly source: OfflineVideoSource }
+  | { readonly kind: 'push' }
+
+/** Frames between two checks that a live canvas is still readable (it can become tainted at any time). */
+const CANVAS_CHECK_FRAMES = 60
 
 export class Engine {
   readonly maxFaces: number
@@ -159,10 +207,17 @@ export class Engine {
   #stack: FilterInstance[] = []
   #handles = new Map<FilterInstance, FilterHandle>()
   #nextKey = 1
-  #source: VideoSource | undefined
-  /** The source is live (a camera): frames are timed with the clock, not the media time. */
+  #feed: Feed | undefined
+  /** Regime of the current (or last) source; seeds follow it. */
+  #regime: SourceRegime = 'live'
+  #seedOption: number | undefined
+  /** A video source is a camera: frames are timed with the clock, not the media time. */
   #live = false
-  #scheduler: FrameScheduler | undefined
+  /** `pushFrame` calls run one after the other. */
+  #pushChain: Promise<void> = Promise.resolve()
+  /** Media time of the last frame of a file source (NaN: none yet), to detect a new run (loop, seek back). */
+  #lastTime = Number.NaN
+  #scratch: OffscreenCanvasRenderingContext2D | null | undefined
   #passes: { [S in 'background' | 'face' | 'warp' | 'color']: PassLayer[] } = { background: [], face: [], warp: [], color: [] }
   #objects: ObjectLayer[] = []
   #frame: { -readonly [K in keyof FrameContext]: FrameContext[K] }
@@ -178,6 +233,7 @@ export class Engine {
     this.maxFaces = maxFaces
     this.assetsBaseUrl = new URL(options.assetsBaseUrl.endsWith('/') ? options.assetsBaseUrl : `${options.assetsBaseUrl}/`, globalThis.location?.href).href
     this.#fetch = options.fetch ?? ((input, init) => fetch(input, init))
+    this.#seedOption = options.seed === undefined ? undefined : checkSeed(options.seed)
     this.registry = createRegistry()
     this.#compositor = new Compositor({ canvas: options.canvas, fit: options.fit, scale: options.scale, width: options.width, height: options.height })
     this.#anchors = new FaceAnchors(createFaceFrame(1), this.#compositor.camera)
@@ -281,35 +337,88 @@ export class Engine {
   }
 
   /**
-   * Sets the image source. The engine renders and tracks every new frame of it. A source passed by the host stays
-   * the host's: the engine does not dispose it. Throws `IncompatibleSourceError`.
+   * Regime of the current source (spec §12.1): `live` (camera, playing video, canvas: frames are rendered as they
+   * come) or `file` (still image, offline video, `pushFrame`: each frame waits for its tracking, seeds are fixed).
    */
-  async setSource(input: SourceInput): Promise<void> {
+  get regime(): SourceRegime {
+    return this.#regime
+  }
+
+  /**
+   * Sets the image source (see `SourceInput`). The engine renders and tracks every new frame of it. A source passed
+   * by the host stays the host's: the engine does not dispose it, and a still image or canvas must stay readable
+   * while it is the source. Throws `IncompatibleSourceError`: unsupported input, disposed source, the engine's own
+   * canvas, an image without pixels, a tainted (cross-origin) image or canvas.
+   */
+  async setSource(input: SourceInput, options: SourceOptions = {}): Promise<void> {
     this.#assertAlive()
+    if (input instanceof OfflineVideoSource) {
+      if (input.disposed) throw new IncompatibleSourceError('The offline video source has been disposed.')
+      this.#begin({ kind: 'offline', source: input }, 'file', undefined, input.mirrored)
+      input.restart()
+      void this.#runOffline(this.#feed!, input)
+      return
+    }
+    if (isFrameImage(input)) {
+      const image = await this.#checkImage(input, true)
+      this.#assertAlive()
+      if (isCanvas(image)) {
+        const feed = { kind: 'canvas' as const, canvas: image, raf: 0 }
+        this.#begin(feed, 'live', image, options.mirror ?? false)
+        this.#runCanvas(feed)
+      } else {
+        const feed = { kind: 'still' as const, image, raf: 0 }
+        this.#begin(feed, 'file', image, options.mirror ?? false)
+        void this.#runStill(feed)
+      }
+      return
+    }
     let source: VideoSource | undefined
     if (isVideoSource(input)) source = input
     else if (typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement) source = videoElementSource(input)
     else {
       const impl = this.#sources.find((s) => s.accepts(input))
-      if (!impl) throw new IncompatibleSourceError(`Unsupported source: ${describeSource(input)}. Pass a VideoSource (CameraSource, VideoFileSource) or a <video>.`)
+      if (!impl) {
+        throw new IncompatibleSourceError(
+          `Unsupported source: ${describeSource(input)}. Pass a VideoSource (CameraSource, VideoFileSource), a <video>, a canvas, an image (HTMLImageElement, ImageBitmap, VideoFrame) or an OfflineVideoSource.`,
+        )
+      }
       source = await impl.create(input)
     }
     if (source.disposed) throw new IncompatibleSourceError('The source has been disposed.')
-    this.#scheduler?.dispose()
-    this.#source = source
+    const scheduler = new FrameScheduler(source.video, (frame) => this.#onVideoFrame(frame), { onError: (e) => this.#error(e) })
+    this.#begin({ kind: 'video', source, scheduler }, 'live', source.video, source.mirrored)
     this.#live = typeof MediaStream !== 'undefined' && source.video.srcObject instanceof MediaStream
-    this.#compositor.setVideo(source.video, source.mirrored)
-    this.#lastNow = -1
-    this.#scheduler = new FrameScheduler(source.video, (frame) => this.#onFrame(frame), { onError: (e) => this.#error(e) })
-    this.#scheduler.start()
+    scheduler.start()
   }
 
   /** Stops rendering the current source (the canvas keeps its last image). */
   clearSource(): void {
-    this.#scheduler?.dispose()
-    this.#scheduler = undefined
-    this.#source = undefined
-    this.#compositor.setVideo(undefined, false)
+    this.#stopFeed()
+    this.#compositor.setSource(undefined, false)
+  }
+
+  /**
+   * Renders one frame given by the host at media time `time` (s): the file regime (spec §12.1), for frames the host
+   * produces itself (its own decoder, a canvas animation rendered offline). The frame is tracked, then rendered; the
+   * promise resolves once it is drawn, and the host may then close or reuse it. Calls are processed in order; a time
+   * earlier than the previous one starts a new run (faces are tracked afresh). The first call replaces the current
+   * source. Rejects with `IncompatibleSourceError` (the engine's own canvas, no pixels, tainted) or `RangeError`.
+   */
+  pushFrame(frame: FrameImage, time: number): Promise<void> {
+    this.#assertAlive()
+    if (!isFrameImage(frame)) return Promise.reject(new IncompatibleSourceError(`pushFrame needs a canvas, an image, an ImageBitmap or a VideoFrame, got ${describeSource(frame)}.`))
+    if (!Number.isFinite(time)) return Promise.reject(new RangeError(`time must be a finite number of seconds, got ${time}`))
+    const run = this.#pushChain.then(async () => {
+      this.#assertAlive()
+      const image = await this.#checkImage(frame, false)
+      if (this.#feed?.kind !== 'push') {
+        this.#begin({ kind: 'push' }, 'file', undefined, false)
+      }
+      await this.#fileFrame(this.#feed!, image, time)
+    })
+    this.#pushChain = run.catch(() => {})
+    return run
   }
 
   /**
@@ -364,7 +473,7 @@ export class Engine {
   dispose(): void {
     if (this.#disposed) return
     this.#disposed = true
-    this.#scheduler?.dispose()
+    this.#stopFeed()
     for (const f of this.#stack) this.#disposeFilter(f)
     this.#stack = []
     for (const p of this.#renderPasses) p.dispose()
@@ -375,16 +484,228 @@ export class Engine {
 
   // ---------------------------------------------------------------------------------------------
 
-  #onFrame(info: VideoFrameInfo): void {
-    if (this.#disposed || !this.#source) return
+  /** Starts `feed` as the new source: stops the previous one, forgets its faces, reseeds the filters. */
+  #begin(feed: Feed, regime: SourceRegime, image: FrameImage | HTMLVideoElement | undefined, mirrored: boolean): void {
+    this.#stopFeed()
+    this.#feed = feed
+    this.#regime = regime
+    this.#live = false
+    this.#lastNow = -1
+    this.#lastTime = Number.NaN
+    this.#resetFaces()
+    for (const f of this.#stack) f.reseed(this.#filterSeed(f.manifest.id))
+    this.#compositor.setSource(image, mirrored)
+  }
+
+  #stopFeed(): void {
+    const feed = this.#feed
+    this.#feed = undefined
+    if (!feed) return
+    if (feed.kind === 'video') feed.scheduler.dispose()
+    else if (feed.kind === 'canvas' || feed.kind === 'still') cancelAnimationFrame(feed.raf)
+    else if (feed.kind === 'offline') feed.source.restart() // frees the decoder; the next run starts from frame 0
+  }
+
+  /** Faces of the previous source are forgotten: new ids, no smoothing across sources. */
+  #resetFaces(): void {
+    this.#tracking.clear()
+    this.#identity.reset()
+  }
+
+  /** Seed of a filter activation (spec §12.5). */
+  #filterSeed(filterId: string): number {
+    if (this.#seedOption !== undefined) return deriveSeed(this.#seedOption, filterId)
+    if (this.#regime === 'file') return deriveSeed(FILE_SOURCE_SEED, filterId)
+    return randomSeed()
+  }
+
+  /**
+   * Checks an image the engine will read (spec: explicit errors): not the engine's own canvas, has pixels, not
+   * tainted. An `<img>` still loading is awaited when `decode` is set.
+   */
+  async #checkImage(image: FrameImage, decode: boolean): Promise<FrameImage> {
+    if (image === this.#compositor.renderer.domElement) {
+      throw new IncompatibleSourceError('The source is the canvas the engine renders into: it cannot read its own output. Draw into another canvas.')
+    }
+    if (decode && typeof HTMLImageElement !== 'undefined' && image instanceof HTMLImageElement && !(image.complete && image.naturalWidth > 0)) {
+      try {
+        await image.decode()
+      } catch (cause) {
+        throw new IncompatibleSourceError(`The image ${image.currentSrc || image.src || ''} could not be loaded or decoded.`, { cause })
+      }
+    }
+    assertReadable(image, () => this.#scratchContext())
+    return image
+  }
+
+  #scratchContext(): OffscreenCanvasRenderingContext2D | undefined {
+    if (this.#scratch === undefined) {
+      this.#scratch = typeof OffscreenCanvas === 'undefined' ? null : new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true })
+    }
+    return this.#scratch ?? undefined
+  }
+
+  /** A new frame of a video source (live regime). */
+  #onVideoFrame(info: VideoFrameInfo): void {
+    const feed = this.#feed
+    if (this.#disposed || feed?.kind !== 'video') return
     const start = performance.now()
-    const compositor = this.#compositor
-    compositor.beginFrame()
+    this.#compositor.beginFrame()
     // The frame's time (s): the media time for files (deterministic, spec §12.5); for a live source the clock, since
     // browsers do not always advance a camera's media time (Firefox reports 0 for every frame).
     const time = this.#live ? info.now / 1000 : info.mediaTime
-    this.#tracking.submit(this.#source.video, info.now, time)
+    this.#tracking.submit(feed.source.video, info.now, time)
+    this.#draw(time, info.now, start)
+  }
 
+  /** A canvas the host draws into (live regime): read on every animation frame. */
+  #runCanvas(feed: Extract<Feed, { kind: 'canvas' }>): void {
+    let frames = 0
+    const tick = (now: number) => {
+      if (this.#feed !== feed) return
+      feed.raf = requestAnimationFrame(tick)
+      const start = performance.now()
+      try {
+        // It may have been tainted since the last check (drawn from another origin): WebGL would refuse it silently.
+        if (++frames % CANVAS_CHECK_FRAMES === 0) assertReadable(feed.canvas, () => this.#scratchContext())
+        this.#compositor.setFrame(feed.canvas)
+        this.#compositor.beginFrame()
+        this.#tracking.submit(feed.canvas, now, now / 1000)
+        this.#draw(now / 1000, now, start)
+      } catch (error) {
+        this.#sourceFailed(feed, error)
+      }
+    }
+    feed.raf = requestAnimationFrame(tick)
+  }
+
+  /**
+   * A still image (file regime): tracked once (IMAGE mode), again when the tracking configuration changes, and
+   * rendered on every animation frame so that animations and transitions play. Time is the time since the source
+   * was set.
+   */
+  async #runStill(feed: Extract<Feed, { kind: 'still' }>): Promise<void> {
+    let tracked = -1
+    let t0 = -1
+    while (this.#feed === feed) {
+      const now = await new Promise<number>((resolve) => (feed.raf = requestAnimationFrame(resolve)))
+      if (this.#feed !== feed) return
+      const tracking = this.#tracking
+      const starting = tracking.starting
+      if (starting) await starting.catch(() => {})
+      if (tracking.active && tracking.configVersion !== tracked) {
+        tracked = tracking.configVersion
+        await tracking.track(feed.image, now, t0 < 0 ? 0 : (now - t0) / 1000, true)
+        if (this.#feed !== feed) return
+      }
+      // The clock starts with the first frame shown (switching the tracker to IMAGE mode can take a while).
+      if (t0 < 0) t0 = Math.max(now, performance.now())
+      const time = Math.max(0, now - t0) / 1000
+      const start = performance.now()
+      try {
+        this.#compositor.beginFrame()
+        this.#draw(time, now, start)
+      } catch (error) {
+        this.#sourceFailed(feed, error)
+      }
+    }
+  }
+
+  /** Renders every frame of an offline video, paced at `source.rate` (file regime). */
+  async #runOffline(feed: Feed, source: OfflineVideoSource): Promise<void> {
+    let frames = 0
+    let last = 0
+    // Pacing reference: media time `t0` is due at wall-clock `wall0`.
+    let t0 = Number.NaN
+    let wall0 = 0
+    let rate = source.rate
+    try {
+      for (;;) {
+        const frame = await source.read()
+        if (this.#feed !== feed) return frame?.close()
+        if (!frame) {
+          if (source.loop && frames > 0 && !source.disposed) {
+            source.restart()
+            t0 = Number.NaN
+            continue
+          }
+          if (this.#events.has('sourceEnd')) this.#events.emit('sourceEnd', { frames, time: last })
+          return
+        }
+        try {
+          const now = performance.now()
+          if (Number.isNaN(t0) || frame.time < last || source.rate !== rate) {
+            t0 = frame.time
+            wall0 = now
+            rate = source.rate
+          } else if (Number.isFinite(rate)) {
+            const due = wall0 + ((frame.time - t0) * 1000) / rate
+            // Late (a slow device): run slower than real time from here instead of rushing to catch up.
+            if (now - due > 100) {
+              t0 = frame.time
+              wall0 = now
+            } else if (due - now > 1) await sleep(due - now)
+          } else await yieldToBrowser()
+          if (this.#feed !== feed) return
+          await this.#fileFrame(feed, frame.image, frame.time)
+        } finally {
+          frame.close()
+        }
+        frames++
+        last = frame.time
+      }
+    } catch (error) {
+      if (this.#feed === feed) this.#sourceFailed(feed, error)
+    }
+  }
+
+  /**
+   * One frame of a file source: waits for the tracker, tracks this very frame, then renders it (spec §12.1). A time
+   * earlier than the previous frame's starts a new run: faces and the tracker's temporal state are reset, and seeds
+   * restart, so that every run gives the same images (spec §12.5).
+   */
+  async #fileFrame(feed: Feed, image: FrameImage, time: number): Promise<void> {
+    const tracking = this.#tracking
+    const newRun = !(time >= this.#lastTime)
+    this.#lastTime = time
+    if (newRun) {
+      if (this.#lastNow >= 0) {
+        this.#resetFaces()
+        for (const f of this.#stack) f.reseed(this.#filterSeed(f.manifest.id))
+      }
+      this.#lastNow = -1
+      await tracking.resetTracker()
+    } else {
+      const starting = tracking.starting
+      if (starting) await starting.catch(() => {})
+    }
+    if (this.#feed !== feed || this.#disposed) return
+    const now = time * 1000
+    this.#compositor.setFrame(image)
+    this.#compositor.beginFrame()
+    if (tracking.active) {
+      await tracking.track(image, now, time)
+      if (this.#feed !== feed || this.#disposed) return
+    }
+    try {
+      this.#draw(time, now, performance.now())
+    } catch (error) {
+      if (isSecurityError(error)) throw taintedError(describeImage(image), error)
+      throw error
+    }
+  }
+
+  /** The source cannot be read any more (tainted canvas, decoding error): reported, and the source is cleared. */
+  #sourceFailed(feed: Feed, error: unknown): void {
+    if (this.#feed !== feed) return
+    const what = feed.kind === 'canvas' ? describeImage(feed.canvas) : feed.kind === 'still' ? describeImage(feed.image) : 'source'
+    this.#error(isSecurityError(error) ? taintedError(what, error) : error)
+    if (error instanceof IncompatibleSourceError || isSecurityError(error) || feed.kind === 'offline') this.clearSource()
+  }
+
+  /** Params, tracking data, layer updates and rendering of one frame at media time `time`. */
+  #draw(time: number, now: number, start: number): void {
+    const compositor = this.#compositor
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
       // Media time drives transitions: deterministic with file sources (spec §12.5); a loop counts as no time.
@@ -399,14 +720,14 @@ export class Engine {
     data.mirrored = compositor.mirrored
     data.videoToClip = compositor.videoToClip
     const frame = this.#frame
-    frame.dt = this.#lastNow < 0 ? 0 : info.now - this.#lastNow
-    frame.now = info.now
+    frame.dt = this.#lastNow < 0 ? 0 : Math.max(0, now - this.#lastNow)
+    frame.now = now
     frame.time = time
     frame.faces = faces
     frame.width = compositor.width
     frame.height = compositor.height
     frame.mirrored = compositor.mirrored
-    this.#lastNow = info.now
+    this.#lastNow = now
 
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
@@ -417,7 +738,8 @@ export class Engine {
     for (let i = 0; i < this.#renderPasses.length; i++) this.#renderPasses[i]!.update(frame)
 
     compositor.render(this.#passes as StagePasses)
-    this.#recordStats(info.now, performance.now() - start, faces.count)
+    const end = performance.now()
+    this.#recordStats(end, end - start, faces.count)
   }
 
   /**
@@ -502,6 +824,7 @@ export class Engine {
       view: this.#compositor,
       maxFaces: this.maxFaces,
       bindingData: this.#bindingData,
+      seed: (filterId) => this.#filterSeed(filterId),
       warn: (message) => this.#warn(message),
     }
   }
@@ -584,6 +907,7 @@ export class Engine {
       dispose: () => {},
     }
     const params = new ParamStore(undefined)
+    const random = new SeededRandom(this.#seedOption ?? randomSeed())
     const ctx: LayerContext = {
       filterId: `pass:${impl.id}`,
       renderer: this.#compositor.renderer,
@@ -592,6 +916,7 @@ export class Engine {
       params,
       bindings: { data: this.#bindingData, params: bindingParams(params) },
       maxFaces: this.maxFaces,
+      random: random.next,
       warn: (message) => this.#warn(`Render pass "${impl.id}": ${message}`),
     }
     try {
@@ -661,4 +986,13 @@ function describeSource(input: unknown): string {
   if (input === null) return 'null'
   if (typeof input !== 'object') return typeof input
   return (input as object).constructor?.name ?? 'object'
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Lets the page handle input and paint between frames rendered as fast as possible. */
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
 }

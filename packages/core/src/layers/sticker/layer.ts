@@ -46,7 +46,7 @@ export function stickerRefs(decl: LayerDecl): string[] {
 }
 
 export interface StickerOptions {
-  /** Random draw in [0, 1) for `{ pick, by: "random" }`. Default: `Math.random`. */
+  /** Random draw in [0, 1) for `{ pick, by: "random" }`. Default: the layer's seeded generator (`ctx.random`). */
   random?: () => number
 }
 
@@ -127,7 +127,7 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
     return value
   })
   const by: PickMode = typeof d.src === 'object' && d.src.by === 'random' ? 'random' : 'face'
-  const draw = (options.random ?? Math.random)()
+  const draw = (options.random ?? ctx.random)()
 
   const anchor = d.anchor ?? 'head'
   const screen = anchor === 'screen'

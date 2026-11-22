@@ -41,6 +41,7 @@ function env(overrides: Partial<FilterLoadEnv> = {}, layerTypes: LayerTypeImpl[]
     view: {} as FilterLoadEnv['view'],
     maxFaces: 2,
     bindingData: { resolve: () => undefined },
+    seed: () => 1,
     warn: () => {},
     ...overrides,
   }

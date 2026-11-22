@@ -12,6 +12,7 @@ import { ExpressionEventDetector, type EventSide, type ExpressionEventName } fro
 import { ParamStore, type ParamChange, type ParamValue, type SelectOptions, type SetParamOptions } from '../params/index.ts'
 import { parsePluginRequirement } from './plugin.ts'
 import type { WebGLRenderer } from 'three'
+import { deriveSeed, SeededRandom } from '../random.ts'
 
 /** Events of a filter handle. */
 export interface FilterEvents extends Record<string, unknown> {
@@ -83,6 +84,8 @@ export interface FilterLoadEnv {
   maxFaces: number
   /** Tracking data for bindings, updated by the engine every frame. */
   bindingData: BindingDataSource
+  /** Seed of a filter activation (spec §12.5); `FilterInstance.reseed` derives the layer sequences from it. */
+  seed(filterId: string): number
   warn(message: string): void
 }
 
@@ -106,6 +109,10 @@ export class FilterInstance {
   readonly events: Emitter<FilterEvents>
   /** Expression detectors with the filter's tuning (spec §13); only for face filters. */
   readonly expressions: ExpressionEventDetector | undefined
+  /** Seeded generators (spec §12.5): the filter's own (the script's `f.random()`, #26) and one per layer. */
+  readonly random: SeededRandom
+  readonly layerRandom: readonly SeededRandom[]
+  #seed = 0
   enabled = true
   disposed = false
 
@@ -119,6 +126,9 @@ export class FilterInstance {
     warnings: string[]
     onListenerError: (error: unknown) => void
     maxFaces: number
+    seed: number
+    random: SeededRandom
+    layerRandom: readonly SeededRandom[]
   }) {
     this.key = init.key
     this.manifest = init.manifest
@@ -131,8 +141,23 @@ export class FilterInstance {
     this.needsBlendshapes = this.needsFace && (!!init.manifest.requires.blendshapes || usesBlendshapes(init.manifest))
     this.events = new Emitter(init.onListenerError)
     this.expressions = this.needsFace ? new ExpressionEventDetector({ maxFaces: init.maxFaces, events: init.manifest.events }) : undefined
+    this.random = init.random
+    this.layerRandom = init.layerRandom
+    this.reseed(init.seed)
     // Changes are committed by `params.beginFrame`, at the start of a frame (spec §9).
     this.params.onChange((change) => this.events.emit('paramChange', change))
+  }
+
+  /** Seed of the current activation. */
+  get seed(): number {
+    return this.#seed
+  }
+
+  /** Restarts every generator of the filter from `seed` (a new activation, or a new source run). */
+  reseed(seed: number): void {
+    this.#seed = seed >>> 0
+    this.random.reseed(deriveSeed(seed, 'filter'))
+    this.layerRandom.forEach((r, i) => r.reseed(deriveSeed(seed, 'layer', i)))
   }
 
   /** Layers of a stage, in layer order. */
@@ -216,7 +241,11 @@ export async function loadFilter(
     fetchImpl: env.fetchImpl,
   })
 
-  const ctx: LayerContext = {
+  // Seeded before the layers are created: a layer may draw in `create`.
+  const seed = env.seed(manifest.id)
+  const random = new SeededRandom(deriveSeed(seed, 'filter'))
+  const layerRandom = decls.map((_, i) => new SeededRandom(deriveSeed(seed, 'layer', i)))
+  const ctx: Omit<LayerContext, 'random'> = {
     filterId: manifest.id,
     renderer: env.renderer,
     view: env.view,
@@ -229,7 +258,7 @@ export async function loadFilter(
   const layers: LoadedLayer[] = []
   try {
     for (let i = 0; i < decls.length; i++) {
-      const instance = await impls[i]!.create(decls[i]!, ctx)
+      const instance = await impls[i]!.create(decls[i]!, { ...ctx, random: layerRandom[i]!.next })
       layers.push({ decl: decls[i]!, instance })
     }
   } catch (error) {
@@ -238,7 +267,20 @@ export async function loadFilter(
     params.dispose()
     throw error
   }
-  return new FilterInstance({ key, manifest, source: source.label, params, layers, assets, warnings, maxFaces: env.maxFaces, onListenerError: (e) => env.warn(String(e)) })
+  return new FilterInstance({
+    key,
+    manifest,
+    source: source.label,
+    params,
+    layers,
+    assets,
+    warnings,
+    maxFaces: env.maxFaces,
+    onListenerError: (e) => env.warn(String(e)),
+    seed,
+    random,
+    layerRandom,
+  })
 }
 
 /**

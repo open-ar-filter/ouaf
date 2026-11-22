@@ -8,11 +8,12 @@ import {
   type Delegate,
   type FaceFrame,
   type FaceTracker,
+  type RunningMode,
   type TrackerInput,
 } from './face.ts'
 
 /**
- * MediaPipe FaceLandmarker integration (VIDEO mode).
+ * MediaPipe FaceLandmarker integration: VIDEO mode for video frames, IMAGE mode for still images (`detectImage`).
  *
  * Assets are self-hosted: nothing is fetched from a CDN. The host serves the `wasm/` directory of
  * `@mediapipe/tasks-vision` (only `vision_wasm_internal.js` and `vision_wasm_internal.wasm` are used, or their
@@ -66,6 +67,9 @@ export type WasmLoader = 'classic' | 'module'
 /** The part of MediaPipe's `FaceLandmarker` the tracker relies on (replaced by a fake in unit tests). */
 export interface Landmarker {
   detectForVideo(frame: TexImageSource, timestampMs: number): FaceLandmarkerResult
+  /** IMAGE mode. */
+  detect(image: TexImageSource): FaceLandmarkerResult
+  setOptions(options: FaceLandmarkerOptions): Promise<void>
   close(): void
 }
 
@@ -170,6 +174,8 @@ class MediaPipeFaceTracker implements FaceTracker {
   /** Last timestamp given to MediaPipe, and the shift applied to the caller's timestamps to keep them increasing. */
   #lastTimestamp = WARMUP_TIMESTAMP_MS
   #timestampShift = 0
+  #mode: RunningMode = 'VIDEO'
+  #switching: Promise<void> | undefined
   /** MediaPipe blendshape index → index in `BLENDSHAPE_NAMES` (-1: unknown), built from the first result. */
   #blendshapeMap: Int8Array | undefined
 
@@ -191,6 +197,54 @@ class MediaPipeFaceTracker implements FaceTracker {
    * - `count` is set to 0 before inference, so an exception leaves a consistent (empty) frame.
    */
   detect(source: TrackerInput, timestampMs: number, mediaTime: number, out: FaceFrame): void {
+    const landmarker = this.#begin(source, mediaTime, out)
+    if (!landmarker) return
+    if (!Number.isFinite(timestampMs)) throw new RangeError(`timestampMs must be a finite number, got ${timestampMs}`)
+    if (this.#mode !== 'VIDEO') throw new Error('The face tracker is in IMAGE mode: call setRunningMode("VIDEO") before detect().')
+
+    let ts = timestampMs + this.#timestampShift
+    if (!(ts > this.#lastTimestamp)) {
+      this.#timestampShift += this.#lastTimestamp + 1 - ts
+      ts = this.#lastTimestamp + 1
+    }
+    this.#lastTimestamp = ts
+    this.#write(landmarker.detectForVideo(source, ts), out)
+  }
+
+  get runningMode(): RunningMode {
+    return this.#mode
+  }
+
+  async setRunningMode(mode: RunningMode): Promise<void> {
+    while (this.#switching) await this.#switching
+    const landmarker = this.#landmarker
+    if (mode === this.#mode || !landmarker) return
+    this.#switching = landmarker.setOptions({ runningMode: mode }).then(() => {
+      this.#mode = mode
+    })
+    try {
+      await this.#switching
+    } finally {
+      this.#switching = undefined
+    }
+  }
+
+  async resetState(): Promise<void> {
+    while (this.#switching) await this.#switching
+    // MediaPipe rebuilds its graph on every setOptions, which drops the regions tracked from the previous frames.
+    await this.#landmarker?.setOptions({ runningMode: this.#mode })
+  }
+
+  async detectImage(source: TrackerInput, mediaTime: number, out: FaceFrame): Promise<void> {
+    out.count = 0
+    await this.setRunningMode('IMAGE')
+    const landmarker = this.#begin(source, mediaTime, out)
+    if (!landmarker) return
+    this.#write(landmarker.detect(source), out)
+  }
+
+  /** Resets `out` for `source`; returns the landmarker when there is something to track. */
+  #begin(source: TrackerInput, mediaTime: number, out: FaceFrame): Landmarker | undefined {
     out.count = 0
     out.mediaTime = mediaTime
     if ('videoWidth' in source) {
@@ -199,22 +253,19 @@ class MediaPipeFaceTracker implements FaceTracker {
     } else if ('displayWidth' in source) {
       out.width = source.displayWidth
       out.height = source.displayHeight
+    } else if ('naturalWidth' in source) {
+      out.width = source.naturalWidth
+      out.height = source.naturalHeight
     } else {
       out.width = source.width
       out.height = source.height
     }
     const landmarker = this.#landmarker
-    if (!landmarker || out.width === 0 || out.height === 0) return
-    if (!Number.isFinite(timestampMs)) throw new RangeError(`timestampMs must be a finite number, got ${timestampMs}`)
+    if (!landmarker || out.width === 0 || out.height === 0) return undefined
+    return landmarker
+  }
 
-    let ts = timestampMs + this.#timestampShift
-    if (!(ts > this.#lastTimestamp)) {
-      this.#timestampShift += this.#lastTimestamp + 1 - ts
-      ts = this.#lastTimestamp + 1
-    }
-    this.#lastTimestamp = ts
-
-    const result = landmarker.detectForVideo(source, ts)
+  #write(result: FaceLandmarkerResult, out: FaceFrame): void {
     const faces = result.faceLandmarks
     const blendshapes = result.faceBlendshapes
     const matrices = result.facialTransformationMatrixes
