@@ -94,6 +94,17 @@ test('a built-in LUT grades the image, mixed by its intensity', async ({ page })
   await expect.poll(async () => check(await sample(page), (s) => s.chroma > 8), POLL).toBe(true)
 })
 
+test('intensity weakens the LUT only: the other adjustments of the layer still apply', async ({ page }) => {
+  await open(page, `source=pesquet-talk&autostart&filter=${NOIR}`, false)
+  // Black and white, then an orange tint (blue × 0): orange image.
+  await page.evaluate(() => window.ouaf!.engine.filters[0]!.setParam('tint', '#ff8000', { transition: 0 }))
+  await expect.poll(async () => check(await sample(page), (s) => s.r > s.g + 10 && s.g > s.b + 10 && s.b < 5), POLL).toBe(true)
+  // Without the LUT the colors come back, still tinted: no blue left. (When intensity mixed the whole grade, this
+  // showed the untouched image.)
+  await page.evaluate(() => window.ouaf!.engine.filters[0]!.setParam('intensity', 0, { transition: 0 }))
+  await expect.poll(async () => check(await sample(page), (s) => s.chroma > 8 && s.b < 5), POLL).toBe(true)
+})
+
 test('color layers chain in stack order', async ({ page }) => {
   await open(page, `source=pesquet-talk&autostart&filter=${NOIR}&filter=${GRADE}`, false)
   // Black and white, then an orange tint: orange image.

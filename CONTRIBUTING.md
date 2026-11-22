@@ -34,9 +34,13 @@ Without `npm run fetch-models` the playground still runs, but face tracking is u
 | `npm run fetch-models` | Downloads and checks the face model, extracts its TFLite files |
 | `npm run test:browser` | Browser tests on the test clips (Playwright, Chromium; needs `fetch-models`) |
 | `npx ouaf validate <folder\|file.ouaf>` | Checks a filter (manifest, files, formats, limits); `--json` for tools |
+| `npx ouaf pack-alpha <input> -o out.mp4` | Converts a video with transparency (WebM, ProRes 4444, PNG frames) into a packed-alpha MP4; needs [ffmpeg](https://ffmpeg.org) |
 
 The first time you run the browser tests, install Chromium: `npx playwright install chromium` (add `--with-deps` on
 Linux if system libraries are missing).
+
+`npm test` needs no ffmpeg: the `pack-alpha` tests that run the real ffmpeg (`packages/cli/test/pack-alpha.ffmpeg.test.ts`)
+are skipped, with a message, when it is not installed (or point `OUAF_FFMPEG` to it).
 
 ## Before opening a pull request
 

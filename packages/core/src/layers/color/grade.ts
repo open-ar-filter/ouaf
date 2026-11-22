@@ -7,7 +7,7 @@
  *
  * | Step        | Property ([range])        | Formula on c (each channel, 0–1)                                        |
  * |-------------|---------------------------|-------------------------------------------------------------------------|
- * | LUT         | `lut`                     | c = lut(c), its input mapped from DOMAIN_MIN–DOMAIN_MAX                 |
+ * | LUT         | `lut`, `intensity` i      | c = mix(c, lut(c), i), the LUT's input mapped from DOMAIN_MIN–DOMAIN_MAX |
  * | brightness  | `brightness` b [-1, 1]    | c = c^(2^-b): a midtone curve, black and white stay put                 |
  * | contrast    | `contrast` k [-1, 1]      | c = (c − 0.5)·(1 + k) + 0.5 (-1 = flat grey)                            |
  * | saturation  | `saturation` s [-1, 1]    | c = Y + (c − Y)·(1 + s), Y = Rec. 709 luma (-1 = black and white)       |
@@ -16,8 +16,9 @@
  * | vignette    | `vignette` v [0, 1]       | c ·= 1 − v·smoothstep(0.35, 1, r), r = 0 at the centre, 1 in the corners |
  * | grain       | `grain` g [0, 1]          | c += 0.2·g·(n − 0.5), n uniform noise per pixel, from the media time    |
  *
- * then the result is clamped to [0, 1] and mixed with the layer's input by `intensity × opacity` (× the face mask
- * with `region: "face"`).
+ * then the result is clamped to [0, 1] and mixed with the layer's input by `opacity` (× the face mask with
+ * `region: "face"`). `intensity` only weakens the LUT, so a filter can soften its look and keep its adjustments.
+ * These formulas are the reference ones (spec Appendix E, informative).
  */
 
 /** Indices of the layer's numeric properties in the values array the bindings write into. */
@@ -55,7 +56,7 @@ export const GRAIN_RATE = 24
 
 /** Layout of the uniforms array written by `writeGradeUniforms`. */
 export const U = {
-  /** Mix with the input: intensity × opacity. */
+  /** Mix with the input: opacity. */
   mix: 0,
   /** Brightness exponent 2^-b. */
   gamma: 1,
@@ -75,8 +76,10 @@ export const U = {
   tintA: 11,
   /** Integer seed of the grain pattern. */
   seed: 12,
+  /** Strength of the LUT: intensity. */
+  lut: 13,
 } as const
-export const UNIFORM_COUNT = 13
+export const UNIFORM_COUNT = 14
 
 const clamp = (v: number, min: number, max: number) => (v < min ? min : v > max ? max : v)
 
@@ -93,7 +96,7 @@ function amount(amounts: ArrayLike<number>, name: AmountName): number {
  */
 export function writeGradeUniforms(amounts: ArrayLike<number>, tint: ArrayLike<number>, time: number, out: Float32Array): Float32Array {
   const t = amount(amounts, 'temperature')
-  out[U.mix] = amount(amounts, 'intensity') * amount(amounts, 'opacity')
+  out[U.mix] = amount(amounts, 'opacity')
   out[U.gamma] = Math.pow(2, -amount(amounts, 'brightness'))
   out[U.contrast] = 1 + amount(amounts, 'contrast')
   out[U.saturation] = 1 + amount(amounts, 'saturation')
@@ -106,6 +109,7 @@ export function writeGradeUniforms(amounts: ArrayLike<number>, tint: ArrayLike<n
   out[U.tintB] = clamp(tint[2]!, 0, 1)
   out[U.tintA] = clamp(tint[3]!, 0, 1)
   out[U.seed] = grainSeed(time)
+  out[U.lut] = amount(amounts, 'intensity')
   return out
 }
 
@@ -116,13 +120,13 @@ export function grainSeed(time: number): number {
 
 /**
  * Whether uniforms `u` leave the image unchanged, so the pass can be skipped (`PassLayer.active`). `hasLut`: the layer
- * has a LUT (assumed to change the image).
+ * has a LUT (assumed to change the image unless its intensity is 0).
  */
 export function isNeutral(u: ArrayLike<number>, hasLut: boolean): boolean {
   if (u[U.mix]! <= 0) return true
   const tintNeutral = u[U.tintA]! <= 0 || (u[U.tintR]! >= 1 && u[U.tintG]! >= 1 && u[U.tintB]! >= 1)
   return (
-    !hasLut &&
+    (!hasLut || u[U.lut]! <= 0) &&
     u[U.gamma] === 1 &&
     u[U.contrast] === 1 &&
     u[U.saturation] === 1 &&
