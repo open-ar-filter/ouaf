@@ -1,6 +1,8 @@
 import { EASINGS } from '@ouaf/spec'
 import { describe, expect, it } from 'vitest'
 import { compileBinding, compileNumberBinding, type BindingEnv } from '../src/bindings/index.ts'
+import type { LayerContext } from '../src/engine/layer-type.ts'
+import { compileScale } from '../src/layers/scale.ts'
 import { easingOf } from '../src/script/easing.ts'
 import { ScriptOverrides } from '../src/script/overrides.ts'
 
@@ -108,6 +110,23 @@ describe('script overrides', () => {
     overrides.clock.advance(0.75)
     overrides.clock.advance(1.25) // 1.25 s: second run of the endless offset animation
     expect(offset.evaluate(0)).toEqual([0.25, 0.5, 0.75])
+  })
+
+  it('scale declared as a number (or absent) takes a number or a vector from the script', () => {
+    const overrides = new ScriptOverrides()
+    overrides.idOf = () => 1
+    const scale = compileScale(1, 'scale', { bindings: env(overrides.forLayer(0)) } as LayerContext)
+    const prop = overrides.property(0, 'scale')!
+    expect(prop.types).toEqual(['number', 'vec3'])
+    const out = new Float64Array(3)
+    const read = () => (scale.write(0, out, 0) ? [...out] : 'hidden')
+    expect(read()).toEqual([1, 1, 1])
+    prop.set(undefined, [1, 1.4, 1])
+    expect(read()).toEqual([1, 1.4, 1])
+    prop.set(undefined, 2)
+    expect(read()).toEqual([2, 2, 2])
+    prop.set(undefined, 0)
+    expect(read()).toBe('hidden')
   })
 
   it('forgets the values of a face that left', () => {

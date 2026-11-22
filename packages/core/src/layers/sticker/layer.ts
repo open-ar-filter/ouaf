@@ -5,8 +5,9 @@
  * with `{ pick }` the asset chosen for its face, kept while the face keeps its stable id: `(id − 1) mod n` with
  * `by: "face"`, a random draw when the face appears with `by: "random"`; a screen sticker picks for its first
  * selected face (id 0 while there is none). `size` is the
- * height in anchor units, the width follows the asset's aspect ratio. Bindable properties (`visible`, `opacity`,
- * `size`, `offset`, `rotation`) are evaluated per face; `rate` once per layer, for the first selected face.
+ * height in anchor units, the width follows the asset's aspect ratio; `scale` multiplies it (per axis with `[x, y, z]`).
+ * Bindable properties (`visible`, `opacity`, `size`, `scale`, `offset`, `rotation`) are evaluated per face; `rate`
+ * once per layer, for the first selected face.
  *
  * Playback (spritesheets, videos) follows the layer's clock (`playback.ts`): it starts from the first frame when the
  * layer is activated and, for a face sticker, when the first selected face appears after none was; faces that appear
@@ -25,6 +26,7 @@ import type { AnchorFollow } from '../../anchors.ts'
 import { NO_FACE, compileBinding, compileNumberBinding, type CompiledBinding, type NumberBinding } from '../../bindings/index.ts'
 import { OuafError } from '../../engine/errors.ts'
 import type { FrameContext, LayerContext, LayerDecl, LayerTypeImpl, ObjectLayer } from '../../engine/layer-type.ts'
+import { compileScale } from '../scale.ts'
 import { isStickerAsset, type StickerAsset } from './assets.ts'
 import { StickerMaterial, type BlendMode } from './material.ts'
 import { clockStep, spriteFrame, videoDrift, videoTarget } from './playback.ts'
@@ -153,6 +155,7 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
   const visible: CompiledBinding<boolean> = compileBinding(d.visible ?? true, { type: 'boolean', fallback: true, path: path('visible'), name: 'visible' }, env)
   const opacity: NumberBinding = compileNumberBinding(d.opacity ?? 1, { fallback: 1, path: path('opacity'), name: 'opacity' }, env)
   const size: NumberBinding = compileNumberBinding(d.size ?? 1, { fallback: 1, path: path('size'), name: 'size' }, env)
+  const scaleBinding = compileScale(d.scale ?? 1, path('scale'), ctx)
   const rate: NumberBinding = compileNumberBinding(d.rate ?? 1, { fallback: 1, path: path('rate'), name: 'rate' }, env)
   const offset: CompiledBinding<Vec3> = compileBinding(d.offset ?? [0, 0, 0], { type: 'vec3', fallback: [0, 0, 0], path: path('offset'), name: 'offset' }, env)
   const rotation: CompiledBinding<Vec3> = compileBinding(d.rotation ?? [0, 0, 0], { type: 'vec3', fallback: [0, 0, 0], path: path('rotation'), name: 'rotation' }, env)
@@ -188,7 +191,7 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
   const slots = new Int32Array(Math.max(1, ctx.maxFaces))
   const ids = new Int32Array(Math.max(1, ctx.maxFaces))
   const sizes = new Float64Array(Math.max(1, ctx.maxFaces))
-  const num = new Float64Array(3) // opacity, size, rate
+  const num = new Float64Array(6) // opacity, size, rate, scale x, y, z
   const anchorMatrix = new Matrix4()
   const local = new Matrix4()
   const position = new Vector3()
@@ -217,6 +220,7 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
     const alpha = num[0]!
     const height = num[1]!
     if (!(alpha > 0) || !(height > 0)) return false
+    if (!scaleBinding.write(face, num, 3)) return false
     if (screen) frame.anchors.screen(anchorMatrix)
     else if (!frame.anchors.face(face, anchor, follow, anchorMatrix)) return false
 
@@ -227,14 +231,17 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
     const r = rotation.evaluate(face)
     quaternion.setFromEuler(euler.set(r[0] * DEG, r[1] * DEG, r[2] * DEG))
     const m = inst.mesh.matrix
+    const sx = height * aspect * num[3]!
+    const sy = height * num[4]!
+    const sz = num[5]!
     if (orientScreen && !screen) {
-      // Position from the anchor frame, orientation from the screen: T(anchor · offset) · S(anchor scale) · R · S(size).
+      // Position from the anchor frame, orientation from the screen: T(anchor · offset) · S(anchor scale) · R · S(size × scale).
       anchorPosition.set(o[0], o[1], o[2]).applyMatrix4(anchorMatrix)
       const e = anchorMatrix.elements
       const unit = Math.sqrt(e[0]! * e[0]! + e[1]! * e[1]! + e[2]! * e[2]!)
-      m.compose(anchorPosition, quaternion, scale.set(unit * height * aspect, unit * height, unit))
+      m.compose(anchorPosition, quaternion, scale.set(unit * sx, unit * sy, unit * sz))
     } else {
-      local.compose(position.set(o[0], o[1], o[2]), quaternion, scale.set(height * aspect, height, 1))
+      local.compose(position.set(o[0], o[1], o[2]), quaternion, scale.set(sx, sy, sz))
       m.multiplyMatrices(anchorMatrix, local)
     }
     material.params.x = alpha < 1 ? alpha : 1

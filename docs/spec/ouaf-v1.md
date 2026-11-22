@@ -169,7 +169,7 @@ where they are when the layer is shown again. When they start is given by each t
 | `anchor` | `head` | Anchor (section 5). |
 | `offset` | `[0,0,0]` | Offset in the anchor frame, *bindable*. |
 | `rotation` | `[0,0,0]` | Rotation in degrees around the x, y, z axes of the anchor frame, *bindable*. Euler order XYZ: the rotation matrix is Rx · Ry · Rz, so z is applied first, then y, then x. |
-| `scale` | `1` | Size multiplier, a number or `[x, y, z]`, *bindable*; e.g. animated by a script for a "pop" (12.4). |
+| `scale` | `1` | Size multiplier, a number or `[x, y, z]`, *bindable*; e.g. animated by a script for a "pop" (12.4). It multiplies the layer's size (`size`, `fit`) along the x, y, z axes of the layer (the anchor frame turned by `rotation`): a number scales uniformly, `[1, 1.4, 1]` stretches vertically. A `text` is scaled as drawn, around its anchor point: its wrapping (`maxWidth`) does not change. An instance with a factor of 0 or less is not drawn. |
 | `orient` | `face` | `face`: follows the head; `screen`: keeps facing the screen (readable text). |
 | `follow` | `auto` | What the anchor **position** follows: `rigid`: the head pose only (stable, ignores expressions); `expression`: the live landmarks (moves with the mouth, brows, cheeks); `auto`: the anchor's default (5.3). Rotation always follows the head. No effect with `anchor: "screen"`. |
 | `faces` | `all` | Faces affected (5.4). |

@@ -186,7 +186,7 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 |---|---|---|
 | Params `apply: "reload"` | applied at the next frame like `live` | engine `ReloadHooks`: preload a new filter instance, swap it in |
 | Face tracker | MediaPipe tasks-vision, main thread | LiteRT.js pipeline in a worker (face-runtime.md, tracking-worker.md) |
-| Script content properties (`src`, `font`, `lut`, `animation`; `scale` outside models), `.invalidate()`, `f.asset()` | warning, ignored | #26 follow-up, #25 (canvas) |
+| Script content properties (`src`, `font`, `lut`, `animation`), `.invalidate()`, `f.asset()` | warning, ignored | #26 follow-up, #25 (canvas) |
 | Scripts waiting for the answer with file sources (spec §12.1) | never waits | #32 (offline sources) |
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
 | Head occluder (`model.occlusion: "head"`) | an ellipsoid of an average head on the `head` anchor | a head mesh fitted to the landmarks |
