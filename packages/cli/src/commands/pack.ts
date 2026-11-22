@@ -13,7 +13,7 @@ Builds a .ouaf package (spec §3) from a filter folder:
                              and the initial state (spec §3.1, §12.3)
     assets/                  files referenced by the manifest (optional)
 
-  1. bundles filter.ts / filter.js with its imports into script.js, a self-contained ES module (esbuild;
+  1. bundles filter.ts / filter.js with its imports into script.js, a self-contained ES module (Rolldown, as Vite;
      TypeScript is transpiled, "@ouaf/spec" is reduced to defineFilter, the identity function)
   2. runs it once, without Node or browser APIs (time limit ${RUN_TIMEOUT_MS} ms), and reads its default export
   3. writes manifest.json from the data, with "ouaf" and the "script" section filled in from the functions

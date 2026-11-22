@@ -4,10 +4,11 @@
  * A source folder holds `filter.js` or `filter.ts`, whose default export is the manifest data plus the script
  * functions and initial state, and an optional `assets/` folder. The packer:
  *
- * 1. bundles `filter.js` with esbuild (TypeScript, relative and npm imports) into one ES module without `import`:
- *    `script.js`. `import { defineFilter } from '@ouaf/spec'` is replaced by the identity function, so the format
- *    library is not bundled;
- * 2. runs that module once, in a `node:vm` context without Node APIs (no `require`, `process`, file system or
+ * 1. bundles `filter.js` with Rolldown (TypeScript, relative and npm imports), the bundler of the Vite playground, so
+ *    that a packed filter is compiled as in dev mode. The bundle is written once as an ES module without `import`,
+ *    `script.js`, and once as a classic script for step 2. `import { defineFilter } from '@ouaf/spec'` is replaced
+ *    by the identity function, so the format library is not bundled;
+ * 2. runs the classic script once, in a `node:vm` context without Node APIs (no `require`, `process`, file system or
  *    network) and with a time limit, and reads its default export;
  * 3. separates the data (`manifest.json`, with the `ouaf` field and the `script` section filled in) from the functions
  *    (`setup`, `update`, `on`, `draw`) and the `state`, which stay in `script.js`;
@@ -25,8 +26,7 @@
 import { lstat, readdir, readFile, stat } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import { createContext, runInContext } from 'node:vm'
-import type { BuildFailure, Message, Plugin } from 'esbuild'
-import { build, transform } from 'esbuild'
+import { rolldown, type Plugin, type RollupLog } from 'rolldown'
 import { validatePackage, type PackageIssue, type PackageReport, type ValidateOptions } from './validate.ts'
 import { zipSource } from './source.ts'
 import { writeZip, type ZipInput } from './zip.ts'
@@ -137,57 +137,84 @@ async function collectAssets(dir: string, problems: PackageIssue[]): Promise<{ f
 // filter.js → script.js + manifest data
 
 /** `@ouaf/spec` at run time: only `defineFilter`, the identity function (spec §12.3); the types are erased. */
+const SPEC_SHIM = 'ouaf:spec'
 const specShim: Plugin = {
   name: 'ouaf-spec',
-  setup(b) {
-    b.onResolve({ filter: /^@ouaf\/spec$/ }, () => ({ path: '@ouaf/spec', namespace: 'ouaf-spec' }))
-    b.onLoad({ filter: /.*/, namespace: 'ouaf-spec' }, () => ({ contents: 'export function defineFilter(def) { return def }\n', loader: 'js' }))
-  },
+  resolveId: (id) => (id === '@ouaf/spec' ? SPEC_SHIM : undefined),
+  load: (id) => (id === SPEC_SHIM ? 'export function defineFilter(def) { return def }\n' : undefined),
 }
 
-function buildIssues(p: Problems, messages: Message[], severity: 'error' | 'warning') {
-  for (const m of messages) {
-    const loc = m.location
-    const note = m.notes.find((n) => n.text)?.text
-    const i = issue(severity, severity === 'error' ? 'build-error' : 'build-warning', loc?.file ?? p.entry, '', m.text, note,
-      loc ? loc.line : undefined, loc ? loc.column + 1 : undefined)
-    ;(severity === 'error' ? p.errors : p.warnings).push(i)
+/** Name of the default export's holder in the classic script run by `evaluate`. */
+const GLOBAL = '__ouafFilter'
+
+/** The two outputs of one bundle: `script.js` and the same code as a classic script, for `node:vm`. */
+interface Bundle {
+  module: string
+  classic: string
+}
+
+/** A Rolldown log as an issue: first line of its message, without the colors and the `[CODE]` prefix. */
+function buildIssue(dir: string, p: Problems, log: RollupLog, severity: 'error' | 'warning'): PackageIssue {
+  // eslint-disable-next-line no-control-regex
+  const text = log.message.replace(/\x1b\[[0-9;]*m/g, '').split('\n')[0]!.replace(/^\[[A-Z_]+\]\s*/, '')
+  const file = log.loc?.file ?? log.id
+  const path = file ? relative(resolve(dir), file).split(sep).join('/') : p.entry
+  return issue(severity, severity === 'error' ? 'build-error' : 'build-warning', path, '', text, undefined,
+    log.loc ? log.loc.line : undefined, log.loc ? log.loc.column + 1 : undefined)
+}
+
+/**
+ * Bundles `filter.js` into a self-contained module. An import that cannot be bundled (a Node built-in, a package that
+ * is not installed) is an error: the script runs in a Worker (spec §12.1) and `script.js` has no `import`.
+ */
+async function bundle(dir: string, p: Problems): Promise<Bundle | undefined> {
+  const logs: { level: 'error' | 'warning'; log: RollupLog }[] = []
+  const report = () => {
+    // Each `generate` logs the same problems again: report each one once.
+    const seen = new Set<string>()
+    for (const { level, log } of logs) {
+      const i = buildIssue(dir, p, log, level)
+      const key = JSON.stringify([i.file, i.line, i.column, i.message])
+      if (seen.has(key)) continue
+      seen.add(key)
+      ;(level === 'error' ? p.errors : p.warnings).push(i)
+    }
   }
-}
-
-/** Bundles `filter.js` into a self-contained ES module. */
-async function bundle(dir: string, p: Problems): Promise<string | undefined> {
+  const built = await rolldown({
+    input: p.entry,
+    cwd: resolve(dir),
+    // Browser resolution of npm packages, no Node built-ins.
+    platform: 'browser',
+    transform: { target: 'es2022' },
+    plugins: [specShim],
+    onLog: (level, log) => {
+      if (level === 'debug' || level === 'info') return
+      logs.push({ level: log.code === 'UNRESOLVED_IMPORT' ? 'error' : 'warning', log })
+    },
+  })
   try {
-    const out = await build({
-      absWorkingDir: resolve(dir),
-      entryPoints: [p.entry],
-      bundle: true,
-      format: 'esm',
-      // The script runs in a Worker (spec §12.1): browser resolution of npm packages, no Node built-ins.
-      platform: 'browser',
-      target: 'es2022',
-      charset: 'utf8',
-      write: false,
-      logLevel: 'silent',
-      plugins: [specShim],
-      banner: { js: `// Generated by ouaf pack from ${p.entry} (spec §12.2). Do not edit: edit ${p.entry} and pack again.` },
-    })
-    buildIssues(p, out.warnings, 'warning')
-    return out.outputFiles[0]?.text
+    // The build runs at the first `generate`; the second one reuses it.
+    const banner = `// Generated by ouaf pack from ${p.entry} (spec §12.2). Do not edit: edit ${p.entry} and pack again.`
+    // The banner is added here: Rolldown 1.2 drops `output.banner` when the first module is the `@ouaf/spec` shim.
+    const module = await built.generate({ format: 'esm', codeSplitting: false })
+    const classic = await built.generate({ format: 'iife', codeSplitting: false, name: GLOBAL, exports: 'named' })
+    report()
+    if (logs.some((l) => l.level === 'error')) return undefined
+    return { module: `${banner}\n${module.output[0].code}`, classic: classic.output[0].code }
   } catch (e) {
-    const failure = e as Partial<BuildFailure>
-    if (!Array.isArray(failure.errors)) throw e
-    buildIssues(p, failure.errors, 'error')
-    buildIssues(p, failure.warnings ?? [], 'warning')
+    const errors = (e as { errors?: RollupLog[] }).errors
+    if (!Array.isArray(errors)) throw e
+    for (const log of errors) p.errors.push(buildIssue(dir, p, log, 'error'))
+    report()
     return undefined
+  } finally {
+    await built.close()
   }
 }
 
 /** Runs the bundle once, without Node APIs, and returns its default export. */
-async function evaluate(code: string, p: Problems): Promise<unknown> {
-  // The same code as script.js, as a classic script: node:vm runs ES modules only behind a flag.
-  const GLOBAL = '__ouafFilter'
-  const iife = await transform(code, { format: 'iife', globalName: GLOBAL, target: 'es2022', charset: 'utf8', logLevel: 'silent' })
+async function evaluate(code: Bundle, p: Problems): Promise<unknown> {
+  // The same bundle as script.js, as a classic script: node:vm runs ES modules only behind a flag.
   const logs: string[] = []
   const log = (...args: unknown[]) => void logs.push(args.map(String).join(' '))
   const context = createContext({ console: { log, info: log, warn: log, error: log, debug: log } }, {
@@ -195,7 +222,7 @@ async function evaluate(code: string, p: Problems): Promise<unknown> {
     codeGeneration: { strings: false, wasm: false },
   })
   try {
-    runInContext(iife.code, context, { filename: p.entry, timeout: RUN_TIMEOUT_MS })
+    runInContext(code.classic, context, { filename: p.entry, timeout: RUN_TIMEOUT_MS })
   } catch (e) {
     const timeout = (e as { code?: string }).code === 'ERR_SCRIPT_EXECUTION_TIMEOUT'
     p.errors.push(issue('error', 'run-error', p.entry, '',
@@ -231,6 +258,22 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 const SKIP = Symbol('skip')
+
+/**
+ * Reports the getters and setters of `obj`. Reading one would run the author's code again, after the run's time
+ * limit: a getter that never returns would hang the packer. Data is plain values anyway.
+ */
+function hasAccessors(obj: object, path: string, p: Problems): boolean {
+  let found = false
+  for (const key of Object.keys(obj)) {
+    const d = Object.getOwnPropertyDescriptor(obj, key)
+    if (!d || 'value' in d) continue
+    p.errors.push(issue('error', 'accessor-in-data', p.entry, pointer(path, key), `"${key}" is a getter or setter: data is plain values.`,
+      'Write the value itself; compute it in setup or update if it depends on the frame.'))
+    found = true
+  }
+  return found
+}
 
 /** Converts manifest data to JSON values, reporting what JSON cannot hold (functions, NaN, class instances…). */
 function toJson(value: unknown, path: string, p: Problems, parents: unknown[]): unknown {
@@ -273,6 +316,7 @@ function toJson(value: unknown, path: string, p: Problems, parents: unknown[]): 
     const name = (Object.getPrototypeOf(value) as { constructor?: { name?: string } } | null)?.constructor?.name ?? 'object'
     return fail('not-json', `A ${name} cannot be written to manifest.json: data is made of objects, lists, strings, numbers, booleans and null.`)
   }
+  if (hasAccessors(value, path, p)) return SKIP
   const out: Record<string, unknown> = {}
   for (const key of Object.keys(value)) {
     const v = toJson(value[key], pointer(path, key), p, next)
@@ -287,6 +331,11 @@ function split(def: unknown, p: Problems): Record<string, unknown> | undefined {
     p.errors.push(issue('error', 'not-an-object', p.entry, '', `The default export of ${p.entry} must be an object.`,
       'export default defineFilter({ id, name, version, license, requires, layers, … }) (spec §3.1).'))
     return undefined
+  }
+  if (hasAccessors(def, '', p)) return undefined
+  for (const key of ['on', 'draw'] as const) {
+    const v = def[key]
+    if (isPlainObject(v) && hasAccessors(v, `/${key}`, p)) return undefined
   }
   const script: Record<string, unknown> = { entry: 'script.js' }
   let functions = 0
@@ -372,7 +421,7 @@ export async function packFolder(dir: string, options: FilterPackOptions = {}): 
     const manifest = def === undefined ? undefined : split(def, p)
     if (manifest) {
       files.set('manifest.json', enc.encode(`${JSON.stringify(manifest, null, 2)}\n`))
-      if (manifest.script) files.set('script.js', enc.encode(code))
+      if (manifest.script) files.set('script.js', enc.encode(code!.module))
     }
   } else {
     for (const name of ['manifest.json', 'script.js']) {

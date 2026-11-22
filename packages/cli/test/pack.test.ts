@@ -118,6 +118,17 @@ describe('ouaf pack: filter.ts → .ouaf', () => {
     for (const e of readZipEntries(a.zip!)) expect(e.unixMode).toBe(0o100000)
   })
 
+  it('inlines dynamic imports: script.js stays one file without import', async () => {
+    const dir = await folder({
+      'filter.js': `${filterJs()}`.replace('layers: []', `layers: [], setup() { void import('./later.js').then((m) => m.x) }`),
+      'later.js': `export const x = 1\n`,
+    })
+    const result = await packFolder(dir)
+    expect(result.report.errors).toEqual([])
+    expect(result.files).toEqual(['manifest.json', 'script.js'])
+    expect(unzip(result.zip!)['script.js']).not.toMatch(/\bimport\s*[('"]/)
+  })
+
   it('a data-only filter has no script section and no script.js', async () => {
     const dir = await folder({ 'filter.js': filterJs(`layers: [{ type: 'color', saturation: 0 }], state: { n: 1 }`) })
     const result = await packFolder(dir)
@@ -145,6 +156,17 @@ describe('ouaf pack: filter.ts → .ouaf', () => {
     ]))
   })
 
+  it('refuses getters in the data without calling them (they would run after the time limit)', async () => {
+    const dir = await folder({
+      'filter.js': `export default { ${data}, get description() { for (;;) {} }, layers: [{ type: 'text', get text() { for (;;) {} } }] }\n`,
+    })
+    const { report, zip } = await packFolder(dir)
+    expect(zip).toBeUndefined()
+    expect(report.errors.map((e) => [e.code, e.path])).toEqual([['accessor-in-data', '/description']])
+    const nested = await packFolder(await folder({ 'filter.js': filterJs(`layers: [{ type: 'text', get text() { for (;;) {} } }]`) }))
+    expect(nested.report.errors.map((e) => [e.code, e.path])).toEqual([['accessor-in-data', '/layers/0/text']])
+  })
+
   it('reports validation issues against filter.js (by JSON pointer: manifest.json is generated)', async () => {
     const dir = await folder({ 'filter.js': filterJs(`layers: [{ type: 'text', text: 'hi', anchor: 'forehaed' }], on: { smile() {} }`) })
     const { report } = await packFolder(dir)
@@ -156,8 +178,11 @@ describe('ouaf pack: filter.ts → .ouaf', () => {
   it('reports build errors with their location: syntax, Node built-ins, a missing import', async () => {
     const syntax = await packFolder(await folder({ 'filter.js': `export default {\n  id: 'x',,\n}\n` }))
     expect(syntax.report.errors[0]).toMatchObject({ code: 'build-error', file: 'filter.js', line: 2 })
+    // A plain message (no terminal colors, no "[CODE]"), reported once although the bundle is generated twice.
+    expect(syntax.report.errors[0]!.message).toBe('Unexpected token')
     const node = await packFolder(await folder({ 'filter.js': `import { readFileSync } from 'node:fs'\n${filterJs()}` }))
-    expect(node.report.errors[0]).toMatchObject({ code: 'build-error', file: 'filter.js', line: 1 })
+    expect(node.report.errors).toEqual([expect.objectContaining({ code: 'build-error', file: 'filter.js', line: 1 })])
+    expect(node.report.errors[0]!.message).toBe(`Could not resolve 'node:fs' in filter.js`)
     const missing = await packFolder(await folder({ 'filter.js': `import { x } from './nope.js'\n${filterJs()}` }))
     expect(missing.report.errors[0]!.message).toContain('./nope.js')
     const spec = await packFolder(await folder({ 'filter.js': `import { validateManifest } from '@ouaf/spec'\n${filterJs()}` }))
