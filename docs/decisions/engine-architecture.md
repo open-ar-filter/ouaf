@@ -129,7 +129,7 @@ it (mirrored for a front camera, spec §5.1), at the internal render size, minus
   drawn last, straight into the canvas. While an output is in use, the compositor copies the canvas into a hidden 2D
   canvas (`drawImage`, in the task that rendered it) just before drawing them. With no output in use nothing is
   copied; the excluded overlays are drawn last either way, so the screen does not change when a recording starts.
-  Consequence: they are drawn above the other overlay layers, whatever the stack and layer order.
+  Consequence: they are drawn above the other overlay layers, whatever the stack and layer order (spec §6.2).
 - **`snapshot({ type, quality })`**: resolves with the next rendered frame, encoded by the browser (`toBlob`; PNG by
   default). It waits while nothing is rendered (no source, a paused video) and rejects if the engine is disposed.
 - **`outputStream({ frameRate })`**: `captureStream()` of the capture surface, a new stream per call, one video track,
@@ -191,7 +191,7 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
 | Head occluder (`model.occlusion: "head"`) | an ellipsoid of an average head on the `head` anchor | a head mesh fitted to the landmarks |
 | Model animations | three's `AnimationMixer` (boxes a few numbers per animated face and frame) | an allocation-free sampler, if profiles show GC |
-| Frame-exact video export | `record()`: `MediaRecorder`, real time; WebM without duration in its header (not seekable until remuxed) | WebCodecs `VideoEncoder` + an MP4 muxer, driven by file-regime frames (#33 follow-up) |
+| Frame-exact video export | `record()`: `MediaRecorder`, real time; WebM without duration in its header (not seekable until remuxed) | WebCodecs `VideoEncoder` + an MP4 muxer, driven by file-regime frames (#137) |
 | glTF limits | 32 MB per file, textures not size-checked, no KTX2 textures | the limits of spec Appendix C; KTX2 with #116 |
 
 ## Testing a layer type
