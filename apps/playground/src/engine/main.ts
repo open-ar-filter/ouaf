@@ -27,12 +27,14 @@ const params = new URLSearchParams(location.search)
 const SOURCE = /^[\w-]+$/.test(params.get('source') ?? '') ? params.get('source') : null
 const FILTERS = params.getAll('filter')
 const MAX_FACES = Math.min(16, Math.max(1, Math.trunc(Number(params.get('maxFaces'))) || 1))
+/** `?seed=N`: fixes the seed of random choices (spec §12.5). */
+const SEED = /^\d+$/.test(params.get('seed') ?? '') ? Number(params.get('seed')) : undefined
 const canvas = document.getElementById('canvas') as HTMLCanvasElement
 const video = document.getElementById('video') as HTMLVideoElement
 const log = document.getElementById('log') as HTMLPreElement
 const startButton = document.getElementById('start') as HTMLButtonElement
 
-const engine = createEngine({ canvas, assetsBaseUrl: new URL('./', document.baseURI).href, maxFaces: MAX_FACES, plugins: [playgroundPlugin] })
+const engine = createEngine({ canvas, assetsBaseUrl: new URL('./', document.baseURI).href, maxFaces: MAX_FACES, plugins: [playgroundPlugin], ...(SEED === undefined ? {} : { seed: SEED }) })
 const hook = { engine, core, memorySource, stats: undefined as EngineStats | undefined, frames: 0, warnings: [] as string[], errors: [] as string[], events: [] as Array<{ name: string; faceId: number; side: string | null }> }
 window.ouaf = hook
 
