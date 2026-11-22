@@ -283,7 +283,7 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
 }
 
 /** Writes `out[face]`, the apparent size of face slot `face`: its face unit over its distance (`faces: "largest"`). */
-function apparentSize(anchors: FrameContext['anchors'], face: number, scratch: Matrix4, out: Float64Array): void {
+export function apparentSize(anchors: FrameContext['anchors'], face: number, scratch: Matrix4, out: Float64Array): void {
   out[face] = 0
   if (!anchors.face(face, 'eyes', 'rigid', scratch)) return
   const e = scratch.elements

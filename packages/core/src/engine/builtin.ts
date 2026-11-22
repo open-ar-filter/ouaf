@@ -8,6 +8,7 @@ import { createFaceTracker } from '../face-tracker.ts'
 import type { FaceTracker } from '../face.ts'
 import type { FaceTrackerImpl, FrameTracker, OuafPlugin } from './plugin.ts'
 import { colorPlugin } from '../layers/color/index.ts'
+import { modelPlugin } from '../layers/model/index.ts'
 import { stickerPlugin } from '../layers/sticker/index.ts'
 import { textPlugin } from '../layers/text/index.ts'
 import { warpPlugin } from '../layers/warp/index.ts'
@@ -57,6 +58,7 @@ export function builtinPlugins(): OuafPlugin[] {
     facePlugin,
     textPlugin,
     stickerPlugin,
+    modelPlugin,
     warpPlugin,
     colorPlugin,
   ]

@@ -58,6 +58,18 @@ Open the browser developer tools, **Network** tab, filter on `odml`, and run the
 - not blocked: `POST …/v1/log` requests appear;
 - blocked: at most one request, marked as blocked by CSP, and none afterwards.
 
+## Self-hosted engine files
+
+Everything else the engine loads comes from the host's `assetsBaseUrl` (`createEngine({ assetsBaseUrl })`), never from
+a CDN: the tracking wasm and models, the built-in fonts and LUTs (`builtins/`), and the Draco decoder of the model
+layer (`draco/draco_wasm_wrapper.js` and `draco/draco_decoder.wasm`, copied from `three/examples/jsm/libs/draco/gltf/`;
+fetched only when a filter has a Draco-compressed model). The meshopt decoder is bundled with the engine. A filter's
+glTF models must embed their buffers and images: the engine refuses a model that points to any other file or URL.
+
+With a CSP: the Draco decoder runs in a worker created from a `blob:` URL (`worker-src blob:`, or a `script-src` that
+allows it) and compiles WebAssembly (`'wasm-unsafe-eval'`); glTF textures are decoded from `blob:` URLs (`img-src
+blob:`), as sticker images are.
+
 ## Reference
 
 The playground (`apps/playground/index.html`) blocks the metrics with
