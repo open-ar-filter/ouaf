@@ -116,6 +116,8 @@ export class Compositor implements ObjectsView {
   #video: HTMLVideoElement | undefined
   #mirrored = false
   #texture: VideoTexture | undefined
+  /** A frame of the current video has been uploaded to `#texture`. */
+  #uploaded = false
   #videoMesh: Mesh<BufferGeometry, RawShaderMaterial>
   #videoScene = new Scene()
   #uVideoToClip = { value: new Vector4() }
@@ -239,6 +241,7 @@ export class Compositor implements ObjectsView {
     if (video !== this.#video) {
       this.#texture?.dispose()
       this.#texture = undefined
+      this.#uploaded = false
       this.#video = video
       if (video) {
         // As in the phase 0 renderer: `VideoTexture` is three's upload path that works for a <video>; uploads are
@@ -282,8 +285,13 @@ export class Compositor implements ObjectsView {
     const renderer = this.renderer
     const video = this.#video
     const hasFrame = !!video && video.videoWidth > 0 && video.readyState >= HAVE_CURRENT_DATA
-    this.#videoMesh.visible = hasFrame
-    if (hasFrame && this.#texture) this.#texture.needsUpdate = true
+    if (hasFrame && this.#texture) {
+      this.#texture.needsUpdate = true
+      this.#uploaded = true
+    }
+    // While the video has no current frame (a looping clip seeking back to 0, a seek), keep showing the last one
+    // uploaded rather than a black frame.
+    this.#videoMesh.visible = hasFrame || this.#uploaded
 
     const anyPass = showFilters && (hasActive(passes.background) || hasActive(passes.face) || hasActive(passes.warp) || hasActive(passes.color))
     if (!anyPass) {

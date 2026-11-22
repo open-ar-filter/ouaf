@@ -71,7 +71,7 @@ export const AssetPick = Type.Object(
     pick: Type.Array(AssetRef, { minItems: 1, maxItems: 64 }),
     by: Type.Optional(Type.Union([Type.Literal('face'), Type.Literal('random')], { default: 'face' })),
   },
-  { additionalProperties: false, description: 'Picks one asset from the list: stable per face ("face") or on each activation ("random").' },
+  { additionalProperties: false, description: 'Picks one asset from the list for each face: by its stable id ("face") or at random ("random"), and keeps it while the face is tracked.' },
 )
 
 export type TId = Static<typeof Id>

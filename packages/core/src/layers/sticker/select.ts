@@ -62,13 +62,14 @@ export function selectFaces(
   return n
 }
 
-/** `by` of a `{ pick }` source: stable per face, or drawn at random on each activation. */
+/** `by` of a `{ pick }` source: from the face's stable id, or drawn at random for each face. */
 export type PickMode = 'face' | 'random'
 
 /**
- * Index of the asset a face shows among `count` picks. `"face"`: from the face's stable id, so it stays the same
- * while the face is visible and successive faces get successive assets (deterministic with a file source);
- * id 0 (no face, `anchor: "screen"`) takes the first one. `"random"`: `draw` (drawn once per activation, in [0, 1)).
+ * Index of the asset a face shows among `count` picks (spec §10.1). `"face"`: `(id − 1) mod count` from the face's
+ * stable id, so successive faces get successive assets (deterministic with a file source); id 0 (no face,
+ * `anchor: "screen"`) takes the first one. `"random"`: from `draw`, in [0, 1), drawn when the face gets its id.
+ * Either way the caller keeps the index while the face keeps its id.
  */
 export function pickIndex(by: PickMode, faceId: number, count: number, draw: number): number {
   if (count <= 1) return 0
