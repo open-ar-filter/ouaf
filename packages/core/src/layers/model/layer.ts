@@ -81,7 +81,7 @@ export function fitScale(fit: TModelLayer['fit'], w: number, h: number): number 
 }
 
 export interface ModelOptions {
-  /** Random draws in [0, 1) for `{ pick, by: "random" }`, one per face. Default: `Math.random`. */
+  /** Random draws in [0, 1) for `{ pick, by: "random" }`, one per face. Default: the seeded `ctx.random` (spec §12.5). */
   random?: () => number
   /**
    * Environment map lighting the models (`environment.ts`). Default: the renderer's shared one; `null` for none
@@ -147,7 +147,7 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
         return value
       })
   const by: PickMode = typeof d.src === 'object' && 'pick' in d.src && d.src.by === 'random' ? 'random' : 'face'
-  const random = options.random ?? Math.random
+  const random = options.random ?? ctx.random
   const fits = models.map((m) => {
     const size = m.bounds.isEmpty() ? new Vector3() : m.bounds.getSize(new Vector3())
     return fitScale(d.fit, size.x, size.y)
