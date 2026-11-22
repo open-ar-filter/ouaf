@@ -4,6 +4,8 @@
  *
  * - `playground:tint` (pass, `color` stage): multiplies the image by a color, mixed by `amount` (a param or a number).
  * - `playground:dot` (object): a flat colored disc at a face anchor (or the screen centre), `size` in anchor units.
+ * - `playground:probe` (object, draws nothing): records each frame it sees into `window.ouafProbe` (time, faces, the
+ *   first landmark, one draw of the layer's seeded generator), for the source tests (#32).
  */
 import type { LayerContext, LayerDecl, ObjectLayer, OuafPlugin, PassLayer } from '@ouaf/core'
 import { FULLSCREEN_VERTEX, compileNumberBinding } from '@ouaf/core'
@@ -130,6 +132,51 @@ function createDot(decl: LayerDecl, ctx: LayerContext): ObjectLayer {
   }
 }
 
+const ProbeSchema = Type.Object({ type: Type.Literal('playground:probe'), id: Type.Optional(Type.String()) }, { additionalProperties: false })
+
+/** One frame as a probe layer saw it. */
+export interface ProbeSample {
+  time: number
+  dt: number
+  faces: number
+  /** x, y of landmark 0 of face 0 (NaN without a face). */
+  x: number
+  y: number
+  /** One draw of the layer's seeded generator (`ctx.random`). */
+  random: number
+}
+
+declare global {
+  interface Window {
+    /** Frames seen by `playground:probe` layers, oldest first (capped). */
+    ouafProbe?: ProbeSample[]
+  }
+}
+
+const PROBE_CAPACITY = 5000
+
+function createProbe(_decl: LayerDecl, ctx: LayerContext): ObjectLayer {
+  return {
+    kind: 'object',
+    stage: 'objects',
+    object: new Group(),
+    update(frame) {
+      const samples = (window.ouafProbe ??= [])
+      if (samples.length >= PROBE_CAPACITY) samples.shift()
+      const has = frame.faces.count > 0
+      samples.push({
+        time: frame.time,
+        dt: frame.dt,
+        faces: frame.faces.count,
+        x: has ? frame.faces.landmarks[0]! : Number.NaN,
+        y: has ? frame.faces.landmarks[1]! : Number.NaN,
+        random: ctx.random(),
+      })
+    },
+    dispose() {},
+  }
+}
+
 export const playgroundPlugin: OuafPlugin = {
   name: 'playground',
   version: '1.0.0',
@@ -137,10 +184,12 @@ export const playgroundPlugin: OuafPlugin = {
     layers: [
       { type: 'playground:tint', schema: TintSchema, stage: 'color', since: '1.0', anchored: false },
       { type: 'playground:dot', schema: DotSchema, stage: 'objects', since: '1.0', anchored: true },
+      { type: 'playground:probe', schema: ProbeSchema, stage: 'objects', since: '1.0', anchored: false },
     ],
   },
   setup(api) {
     api.registerLayerType({ type: 'playground:tint', create: createTint })
     api.registerLayerType({ type: 'playground:dot', create: createDot })
+    api.registerLayerType({ type: 'playground:probe', create: createProbe })
   },
 }

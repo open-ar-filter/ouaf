@@ -35,7 +35,13 @@ export const mediaPipeFaceTracker: FaceTrackerImpl = {
     })
     const frameTracker: FrameTracker = {
       description: `MediaPipe ${tracker.delegate}, main thread`,
-      track: (input, timestampMs, mediaTime, out) => tracker.detect(input, timestampMs, mediaTime, out),
+      // After a still image the landmarker is in IMAGE mode: switch back once (asynchronous), then track.
+      track: (input, timestampMs, mediaTime, out) =>
+        tracker.runningMode === 'VIDEO'
+          ? tracker.detect(input, timestampMs, mediaTime, out)
+          : tracker.setRunningMode('VIDEO').then(() => tracker.detect(input, timestampMs, mediaTime, out)),
+      trackImage: (input, mediaTime, out) => tracker.detectImage(input, mediaTime, out),
+      reset: () => tracker.resetState(),
       configure: () => {},
       dispose: () => tracker.dispose(),
     }

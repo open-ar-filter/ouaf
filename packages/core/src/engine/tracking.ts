@@ -5,6 +5,10 @@
  * Results are double-buffered: the tracker writes into the back `FaceFrame`; when the call completes, the buffers
  * swap and the new front is what layers read from the next rendered frame on. The tracking rate (completed results
  * per second over a sliding window, spec §16.1) is measured here.
+ *
+ * Two ways to run it (spec §12.1): `submit` for live sources (never waits: the frame is rendered with the latest
+ * result), `track` for file sources (image, offline video, `pushFrame`: the frame waits for its own result, so every
+ * run gives the same faces).
  */
 import { createFaceFrame, type FaceFrame, type TrackerInput } from '../face.ts'
 import type { FaceTrackerImpl, FrameTracker, LandmarkModifier, TrackerConfig, TrackerEnv } from './plugin.ts'
@@ -30,6 +34,12 @@ export class TrackingHub {
   #back: FaceFrame
   #empty: FaceFrame
   #busy = false
+  /** Settles (never rejects) when the call in flight completes. */
+  #inflight: Promise<void> | undefined
+  /** Incremented by `clear`: a result of an older generation is dropped. */
+  #generation = 0
+  #submitted = 0
+  #configVersion = 0
   #needed = false
   #disposed = false
   /** Completion times of recent results (ring buffer). */
@@ -39,8 +49,12 @@ export class TrackingHub {
   #lastNow = 0
   #results = 0
   #onError: (error: unknown) => void
-  #onResult = (): void => this.#complete()
+  #onResult = (): void => {
+    this.#inflight = undefined
+    this.#complete()
+  }
   #onFailure = (error: unknown): void => {
+    this.#inflight = undefined
     this.#busy = false
     this.#onError(error)
   }
@@ -77,9 +91,22 @@ export class TrackingHub {
     return this.#tracker?.description
   }
 
-  /** Total completed results since the tracker started. */
+  /** Total completed results since the tracker started (`clear` counts as one: an empty result). */
   get results(): number {
     return this.#results
+  }
+
+  /**
+   * Changes whenever the tracker starts or is reconfigured: a still image tracked once is tracked again when it
+   * changes (blendshapes turned on by a new filter).
+   */
+  get configVersion(): number {
+    return this.#configVersion
+  }
+
+  /** The tracker is starting for a filter that needs it: settles once it runs (or failed, reported by `setNeeds`). */
+  get starting(): Promise<unknown> | undefined {
+    return this.#needed && !this.#tracker && this.#starting ? this.#starting : undefined
   }
 
   /** Tracking rate in Hz over the sliding window ending at the last `submit` (spec §16.1). */
@@ -109,7 +136,10 @@ export class TrackingHub {
     const changed = config.blendshapes !== this.#config.blendshapes
     this.#config = config
     if (this.#tracker) {
-      if (changed) this.#tracker.configure(config)
+      if (changed) {
+        this.#tracker.configure(config)
+        this.#configVersion++
+      }
       return
     }
     if (!this.#impl) {
@@ -121,6 +151,7 @@ export class TrackingHub {
         return tracker
       }
       this.#tracker = tracker
+      this.#configVersion++
       // The needs may have changed while it started.
       if (this.#config.blendshapes !== config.blendshapes) tracker.configure(this.#config)
       return tracker
@@ -139,13 +170,59 @@ export class TrackingHub {
     const tracker = this.#tracker
     if (!this.#needed || !tracker || this.#busy) return
     this.#busy = true
+    this.#submitted = this.#generation
     try {
       const pending = tracker.track(input, now, mediaTime, this.#back)
-      if (pending) pending.then(this.#onResult, this.#onFailure)
+      if (pending) this.#inflight = pending.then(this.#onResult, this.#onFailure)
       else this.#complete()
     } catch (error) {
       this.#onFailure(error)
     }
+  }
+
+  /**
+   * Tracks this frame and resolves once its result is the front one (file sources, spec §12.1): waits for a tracker
+   * that is starting and for the call in flight. `still`: a still image (`FrameTracker.trackImage`). Failures are
+   * reported to `onError` and leave the previous result; it never rejects.
+   */
+  async track(input: TrackerInput, now: number, mediaTime: number, still = false): Promise<void> {
+    this.#lastNow = now
+    const starting = this.starting
+    if (starting) await starting.catch(() => {})
+    while (this.#inflight) await this.#inflight
+    const tracker = this.#tracker
+    if (!this.#needed || !tracker || this.#disposed) return
+    this.#busy = true
+    this.#submitted = this.#generation
+    try {
+      const pending = still && tracker.trackImage ? tracker.trackImage(input, mediaTime, this.#back) : tracker.track(input, now, mediaTime, this.#back)
+      if (pending) {
+        const done = pending.then(this.#onResult, this.#onFailure)
+        this.#inflight = done
+        await done
+      } else this.#complete()
+    } catch (error) {
+      this.#onFailure(error)
+    }
+  }
+
+  /** Resets the tracker's temporal state before the first frame of a file source run (`FrameTracker.reset`). */
+  async resetTracker(): Promise<void> {
+    const starting = this.starting
+    if (starting) await starting.catch(() => {})
+    while (this.#inflight) await this.#inflight
+    try {
+      await this.#tracker?.reset?.()
+    } catch (error) {
+      this.#onError(error)
+    }
+  }
+
+  /** Forgets the current result (new source): layers see no face until the next one; a call in flight is dropped. */
+  clear(): void {
+    this.#generation++
+    this.#front.count = 0
+    this.#results++
   }
 
   dispose(): void {
@@ -157,7 +234,7 @@ export class TrackingHub {
 
   #complete(): void {
     this.#busy = false
-    if (this.#disposed) return
+    if (this.#disposed || this.#submitted !== this.#generation) return
     const done = this.#back
     for (let i = 0; i < this.#modifiers.length; i++) this.#modifiers[i]!.modify(done)
     this.#back = this.#front

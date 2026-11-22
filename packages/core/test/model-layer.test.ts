@@ -184,6 +184,7 @@ function context(assets: Record<string, ModelAsset>, maxFaces = 2, warnings: str
     params: {} as LayerContext['params'],
     bindings: { data, params: { type: () => undefined, get: () => undefined } },
     maxFaces,
+    random: Math.random,
     warn: (message) => void warnings.push(message),
   }
 }

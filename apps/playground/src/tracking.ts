@@ -70,6 +70,12 @@ function withStatus(tracker: FaceTracker, row: HTMLElement): FaceTracker {
           ? `${out.count} (${tracker.delegate}), jawOpen ${(out.blendshapes[JAW_OPEN] ?? 0).toFixed(2)}`
           : `0 (${tracker.delegate})`
     },
+    detectImage: (source, mediaTime, out) => tracker.detectImage(source, mediaTime, out),
+    get runningMode() {
+      return tracker.runningMode
+    },
+    setRunningMode: (mode) => tracker.setRunningMode(mode),
+    resetState: () => tracker.resetState(),
     dispose() {
       tracker.dispose()
     },
