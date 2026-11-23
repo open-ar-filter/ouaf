@@ -3,6 +3,9 @@
 Ouaf (Open Universal AR Filter): an open-source engine for real-time AR filters on the web, with an open filter
 format. Human contributor guide: [`CONTRIBUTING.md`](CONTRIBUTING.md); these rules apply on top of it.
 
+These instructions are for changing the engine, the tools and the format. To write a filter, follow
+[`AUTHORING.md`](AUTHORING.md) (section 17: the create → validate → preview loop) instead.
+
 ## Layout
 
 npm workspaces monorepo, TypeScript only, Node >= 24.
@@ -48,7 +51,8 @@ changes (CI fails on an uncommitted schema diff).
   properties) because Node runs the `.ts` scripts directly; relative imports end in `.ts`.
 - TypeBox in `packages/spec` is the single source of the format types and JSON Schema. Never edit
   `ouaf-v1.schema.json` by hand. A format change updates the spec text, the schemas, the validator and the tests
-  together.
+  together, and `AUTHORING.md` when authors see it (its examples are tested by
+  `packages/cli/test/authoring-guide.test.ts`; section 14 lists what the engine does not support yet).
 - Style: match the surrounding code (2 spaces, single quotes, no semicolons, ~120 columns). No formatter.
 - No runtime network calls or CDN loads from the engine or playground (privacy, see `docs/privacy.md`).
 - Do not add new dependencies without a reason stated in the PR.

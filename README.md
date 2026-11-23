@@ -3,6 +3,8 @@
 A free and open-source engine for real-time AR filters on the web (Snapchat-style face filters, and later body,
 hands and voice), designed to be embedded as a library, with an open filter format.
 
+- **Writing a filter**: [`AUTHORING.md`](AUTHORING.md), the authoring guide for people and AI agents
+  ([`llms.txt`](llms.txt) indexes the docs for LLMs)
 - Format specification: [`docs/spec/ouaf-v1.md`](docs/spec/ouaf-v1.md) (draft)
 - Manifest JSON Schema: [`docs/spec/ouaf-v1.schema.json`](docs/spec/ouaf-v1.schema.json) (generated — do not edit by hand)
 - TypeBox schemas and validator: [`packages/spec`](packages/spec)
