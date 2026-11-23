@@ -23,7 +23,8 @@ import {
   type LayerDecl,
   type PassLayer,
 } from '../src/index.ts'
-import { heapGrowth, writeSyntheticFace } from './synthetic-face.ts'
+import { bytesPerCall } from './allocation.ts'
+import { writeSyntheticFace } from './synthetic-face.ts'
 
 /** The objects camera exactly as the compositor sets it up (tracker perspective, cover crop, never mirrored). */
 function objectsCamera(vw: number, vh: number, tw: number, th: number): PerspectiveCamera {
@@ -95,7 +96,7 @@ describe('shader uniforms (spec §11)', () => {
       params: { type: () => 'vec3', get: () => VEC },
     }
     const u = new ShaderUniforms({ a: { bind: 'face.x' }, b: { param: 'p' }, c: '#123456', d: true }, env)
-    expect(heapGrowth(() => u.update(0))).toBeLessThan(64 * 1024)
+    expect(bytesPerCall(() => u.update(0))).toBeLessThan(1)
   })
 })
 
@@ -161,7 +162,7 @@ describe('shader face inputs (spec §11.1)', () => {
     const anchors = new FaceAnchors(faces, camera)
     anchors.setFrame(faces, [1, 2], false)
     const inputs = new ShaderFaceInputs(2, ['noseTip', 'mouth'], true)
-    expect(heapGrowth(() => inputs.update(anchors, 2, camera.projectionMatrix.elements))).toBeLessThan(64 * 1024)
+    expect(bytesPerCall(() => inputs.update(anchors, 2, camera.projectionMatrix.elements))).toBeLessThan(1)
   })
 })
 
@@ -322,6 +323,6 @@ describe('shader layer', () => {
       { source: 'vec4 effect(vec2 uv) { return vec4(ouaf_faceSize[0] + ouaf_anchor_noseTip[0].x); }' },
     )
     faces.count = 2
-    expect(heapGrowth(() => layer.update(frame))).toBeLessThan(64 * 1024)
+    expect(bytesPerCall(() => layer.update(frame))).toBeLessThan(1)
   })
 })
