@@ -19,8 +19,8 @@ import { expect, test } from '@playwright/test'
  * between machines. To keep that tolerance meaningful, each test also checks that the demo changes much more of the
  * image than the tolerance allows (`changed` against the raw frame): a missing layer fails the comparison.
  *
- * `npx playwright test demos --update-snapshots` rewrites the references; `OUAF_DEMO_SHOTS=<dir>` also writes each
- * rendered image there.
+ * `npx playwright test demos --update-snapshots=all` rewrites the references (plain `--update-snapshots` only those
+ * outside the tolerance); `OUAF_DEMO_SHOTS=<dir>` also writes each rendered image there.
  */
 
 interface Demo {

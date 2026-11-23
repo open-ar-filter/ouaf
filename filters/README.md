@@ -29,8 +29,10 @@ Try them on `/engine.html` (the "Demo filters" list: each one on its clip, or on
 
 [`demos.json`](demos.json) lists the demos for the playground and for `e2e/demos.spec.ts`, which renders each one
 frame by frame on its clip and compares it with its reference image (`e2e/demos.spec.ts-snapshots/<id>.jpeg`;
-`npx playwright test demos --update-snapshots` rewrites them after an intended change, check them before committing).
-`packages/cli/test/demo-filters.test.ts` checks that every demo passes `ouaf validate` without a warning.
+`npx playwright test demos --update-snapshots=all` rewrites them after an intended change, check them before
+committing: plain `--update-snapshots` only rewrites the images outside the tolerance).
+`packages/cli/test/demo-filters.test.ts` checks that every demo of `demos.json` passes `ouaf validate` without a
+warning, and that together they use the seven layer types.
 
 Scripted demos are written as `ouaf pack` writes them (`manifest.json` with its `script` section, and `script.js`), so
 the playground loads the folder as it is; their `filter.js` would hold the same functions.
