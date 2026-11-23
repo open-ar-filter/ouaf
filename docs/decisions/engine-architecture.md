@@ -36,13 +36,14 @@ A failed `addFilter`/`setFilters` leaves the stack unchanged. Compatibility (spe
 - **Packages** (`package.ts`, spec §3, §15.4): the archive is checked when opened, with the rules of `ouaf validate`
   shared through `@ouaf/spec` (`readZipEntries`, `checkPackageEntries`, `checkPackageSize`): stored and deflated
   entries only, no links or special entries, no absolute path or `..`, no duplicate, at most 1000 entries, at most
-  50 MB for the archive and for its files unpacked (declared sizes), a root `manifest.json`; files outside the layout
-  are ignored. Entries are inflated lazily (`DecompressionStream('deflate-raw')`) when the loader reads them, one at
+  50 MB for its files unpacked (declared sizes), a root `manifest.json`; files outside the layout are ignored. The
+  archive itself is only bounded by that limit plus the zip structure (`PACKAGE_MAX_ARCHIVE_BYTES`, 51.14 MB), so that
+  a valid package is never refused for its headers. Entries are inflated lazily (`DecompressionStream('deflate-raw')`) when the loader reads them, one at
   a time, stopping as soon as one goes past its declared size (zip bomb); size and CRC-32 are checked. The engine
   preloads every asset before a filter goes live, so a corrupt entry still fails `addFilter`. A broken package
   throws `PackageError` (code `invalid-package`, `reason` = the `ouaf validate` issue code, `path` = the entry); a
   corrupt asset entry arrives as the `cause` of an `AssetError`. A URL package is the only request made: it is
-  refused past 50 MB from `Content-Length` or while it downloads.
+  refused past that archive bound from `Content-Length` or while it downloads.
 - **Events**: listeners run synchronously, in subscription order. A throwing listener does not stop the others; its
   error becomes a `warning` (a throwing `warning` listener goes to `console.error`, so it cannot loop). `stats`
   (`fps`, `trackingHz`, `faces`, `frameMs`, `tracker`, `width`, `height`) comes about once per second while frames

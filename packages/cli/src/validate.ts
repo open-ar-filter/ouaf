@@ -230,6 +230,11 @@ function checkLayout(ctx: Ctx) {
   const layout = checkPackageEntries(ctx.source.entries)
   const outside = new Map<string, string[]>()
   for (const p of layout.problems) add(ctx, 'error', p.code, { file: p.path }, p.message, p.hint)
+  for (const c of layout.caseConflicts) {
+    add(ctx, 'warning', 'case-conflict', { file: c.path },
+      `"${c.path}" differs from "${c.other}" only by case or Unicode normalization: an engine reads them as two files, ` +
+        'most file systems as one.', 'Rename one of them (spec §3).')
+  }
   for (const e of layout.files) ctx.files.set(e.path, e.size)
   for (const e of layout.outside) {
     const top = e.path.includes('/') ? `${e.path.split('/')[0]}/` : e.path
@@ -237,7 +242,7 @@ function checkLayout(ctx: Ctx) {
   }
   for (const [top, paths] of outside) {
     const what = paths.length > 1 ? `"${top}" (${paths.length} files)` : `"${top}"`
-    add(ctx, zip ? 'error' : 'warning', 'outside-layout', { file: top },
+    add(ctx, 'warning', 'outside-layout', { file: top },
       `${what} is outside the package layout (manifest.json, script.js, assets/): an engine ignores it.`,
       zip ? 'Remove it from the archive (spec §3).' : 'It is left out of the package; move it elsewhere to silence this warning.')
   }
@@ -567,17 +572,20 @@ async function checkShader(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array) 
 
 // ---------------------------------------------------------------------------------------------
 
-/** Limits shared with the engine (`checkPackageSize`: entries, archive and unpacked size), then the recommended size. */
+/**
+ * Limits shared with the engine (`checkPackageSize`: entries, unpacked size, and the archive bound), then the
+ * recommended size. Both sizes are those of the files unpacked (spec §3), whatever the compression.
+ */
 function checkBudget(ctx: Ctx) {
   const bytes = [...ctx.files.values()].reduce((a, b) => a + b, 0)
   const archiveBytes = ctx.source.archiveSize
   const problems = checkPackageSize({ entries: ctx.source.entries.length, bytes, ...(archiveBytes !== undefined ? { archiveBytes } : {}) })
   for (const p of problems) add(ctx, 'error', p.code, { file: '' }, p.message, p.hint)
-  const size = archiveBytes ?? bytes
-  const what = archiveBytes !== undefined ? 'The package is' : 'The package files total'
   if (problems.some((p) => p.code === 'package-too-large')) return
-  if (size > PACKAGE_RECOMMENDED_BYTES) {
-    add(ctx, 'warning', 'package-size', { file: '' }, `${what} ${formatBytes(size)}: 5 MB or less is recommended (spec §3).`,
+  if (bytes > PACKAGE_RECOMMENDED_BYTES) {
+    const unpacked = archiveBytes !== undefined ? ' unpacked' : ''
+    add(ctx, 'warning', 'package-size', { file: '' },
+      `The package files total ${formatBytes(bytes)}${unpacked}: 5 MB or less is recommended (spec §3).`,
       'Compress the assets (KTX2 textures, Draco/meshopt models, shorter or smaller videos).')
   }
 }

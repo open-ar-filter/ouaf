@@ -85,14 +85,18 @@ describe('.ouaf (zip) input', () => {
     expect(r.stats.archiveBytes).toBeGreaterThan(0)
   })
 
-  it('reports links, unsafe paths and files outside the layout as errors', async () => {
+  it('reports links and unsafe paths as errors, files outside the layout and case conflicts as warnings', async () => {
     const r = await validatePath(await tmp('bad.ouaf', zip({
       'manifest.json': manifest,
       'assets/star.png': { data: 'star.png', mode: 0o120777 },
       '../evil.txt': 'x',
       'notes.txt': 'x',
+      'assets/a.json': '{}',
+      'assets/A.json': '{}',
     })))
-    expect(codes(r.errors)).toEqual(['symlink@assets/star.png', 'unsafe-path@../evil.txt', 'outside-layout@notes.txt'])
+    expect(codes(r.errors)).toEqual(['symlink@assets/star.png', 'unsafe-path@../evil.txt'])
+    expect(codes(r.warnings)).toEqual(expect.arrayContaining(['case-conflict@assets/A.json', 'outside-layout@notes.txt']))
+    expect(r.warnings.find((w) => w.code === 'case-conflict')!.message).toContain('differs from "assets/a.json" only by case')
   })
 
   it('explains a zip of the folder instead of its content', async () => {
@@ -302,6 +306,15 @@ describe('package budget (spec §3)', () => {
     expect(warn.warnings[0]!.message).toContain('6.0 MB')
     const fail = await run(big(51_000_000))
     expect(codes(fail.errors)).toEqual(['package-too-large@'])
+  })
+
+  it('counts the files unpacked, not the archive: just under 50 MB of stored files in an archive over 50 MB is valid', async () => {
+    const files = Object.fromEntries(Array.from({ length: 999 }, (_, i) => [`assets/${i}.json`, { data: new Uint8Array(50_000), store: true }]))
+    const archive = zip({ 'manifest.json': JSON.stringify({ ...base, requires: {}, layers: [] }), ...files })
+    expect(archive.length).toBeGreaterThan(50_000_000)
+    const r = await validatePackage(zipSource(archive, 'big.ouaf'))
+    expect(codes(r.errors).filter((c) => c.startsWith('package-too-large') || c.startsWith('too-many'))).toEqual([])
+    expect(r.warnings.find((w) => w.code === 'package-size')!.message).toMatch(/^The package files total [\d.]+ MB unpacked/)
   })
 
   it('fails a zip whose files total more than 50 MB unpacked, and above 1000 files (the engine refuses them)', async () => {

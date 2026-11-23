@@ -5,10 +5,11 @@
  * - The archive structure is checked when the package is opened, with the rules `ouaf validate` applies
  *   (`@ouaf/spec`: `readZipEntries`, `checkPackageEntries`, `checkPackageSize`): no links or special entries, no
  *   absolute path or `..`, no duplicate entry, at most `PACKAGE_MAX_ENTRIES` entries, at most `PACKAGE_MAX_BYTES`
- *   for the archive and for its files unpacked (declared sizes), only stored and deflated entries, and a
- *   `manifest.json` at the root. Regular files outside the layout (`manifest.json`, `script.js`, `assets/`) are
- *   ignored (spec §3). Any of these fails with a `PackageError`.
- * - Entries are inflated lazily, when the engine reads them (`file(path)`): the archive (≤ 50 MB) stays in memory
+ *   for its files unpacked (declared sizes), only stored and deflated entries, and a `manifest.json` at the root.
+ *   Regular files outside the layout (`manifest.json`, `script.js`, `assets/`) are ignored (spec §3). Any of these
+ *   fails with a `PackageError`. Before that, an archive larger than `PACKAGE_MAX_ARCHIVE_BYTES` (the content limit
+ *   plus the zip structure) is refused without reading it, or its download stopped.
+ * - Entries are inflated lazily, when the engine reads them (`file(path)`): the archive (≈ 50 MB at most) stays in memory
  *   while the filter loads, and only the files the filter uses are inflated, one at a time, instead of the whole
  *   package next to the archive. The engine preloads every asset before activating a filter (spec §10.4), so a
  *   corrupt entry still fails `addFilter`. The source is dropped once the filter is loaded.
@@ -16,7 +17,7 @@
  *   declared size. Each entry's size and CRC-32 are checked.
  */
 import {
-  checkPackageEntries, checkPackageSize, formatBytes, missingManifestHint, PACKAGE_MAX_BYTES, readZipEntries, ZIP_STORED,
+  checkPackageEntries, checkPackageSize, formatBytes, missingManifestHint, PACKAGE_MAX_ARCHIVE_BYTES, readZipEntries, ZIP_STORED,
   zipEntryData, zipEntryType, ZipError, type ZipEntry,
 } from '@ouaf/spec'
 import type { FilterSource } from './assets.ts'
@@ -57,7 +58,10 @@ export async function packageSource(input: PackageInput, options: PackageSourceO
   return openPackage(zip, label)
 }
 
-/** Downloads a package (the only request a package source makes), refusing it past `PACKAGE_MAX_BYTES`. */
+/**
+ * Downloads a package (the only request a package source makes), stopping past `PACKAGE_MAX_ARCHIVE_BYTES` (the 50 MB
+ * content limit plus the zip structure, which no valid package exceeds).
+ */
 export async function fetchPackage(
   url: string | URL,
   fetchImpl: typeof fetch = fetch,
@@ -88,7 +92,7 @@ export async function fetchPackage(
   return openPackage(zip, label)
 }
 
-/** The response body, stopping as soon as it goes past the package limit (a missing or false `Content-Length`). */
+/** The response body, stopping as soon as it goes past the archive bound (a missing or false `Content-Length`). */
 async function readBody(res: Response, label: string): Promise<Bytes> {
   if (!res.body) {
     const bytes = new Uint8Array<ArrayBuffer>(await res.arrayBuffer())
@@ -102,7 +106,7 @@ async function readBody(res: Response, label: string): Promise<Bytes> {
     const { done, value } = await reader.read()
     if (done) break
     total += value.length
-    if (total > PACKAGE_MAX_BYTES) {
+    if (total > PACKAGE_MAX_ARCHIVE_BYTES) {
       void reader.cancel()
       checkArchiveSize(label, total)
     }

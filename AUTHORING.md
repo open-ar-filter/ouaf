@@ -61,7 +61,8 @@ A filter is a folder; `ouaf pack` turns it into a `.ouaf` package (a zip) for di
 | **Source folder** (with a script) | `filter.ts` or `filter.js`, optional `assets/` | `npx ouaf pack <folder> -o <file.ouaf>` (packs and validates) | the package it packs to (below) |
 | **Package** | `<id>.ouaf`: `manifest.json`, `script.js`, `assets/` | `npx ouaf validate <file.ouaf>` | `?filter=/filters/<id>.ouaf`, or open / drop the file on the page |
 
-- Asset files live under `assets/`; paths are relative, use `/`, never `..`; no symbolic links (§3).
+- Asset files live under `assets/`; paths are relative, use `/`, never `..`, and are case-sensitive; no symbolic
+  links (§3).
 - `ouaf pack` bundles `filter.ts` (TypeScript is fine, relative imports and npm packages are bundled), runs it once
   to read its default export, writes `manifest.json` from the data and `script.js` from the functions, then zips
   and validates the result. Nothing is written when there are errors. Other files of the folder (README…) are left out.
@@ -436,7 +437,7 @@ alpha 0 leaves the image unchanged.
 
 | What | Limit |
 |---|---|
-| Package | ≤ 5 MB recommended (warning), an engine may refuse above 50 MB |
+| Package | files unpacked: ≤ 5 MB recommended (warning), an engine may refuse above 50 MB or 1000 files |
 | Layers / assets / params | 64 / 256 / 64 |
 | Images | ≤ 4096 px per side |
 | Videos | ≤ 1080p (720p recommended), at most 2 playing at once on phones |
@@ -680,7 +681,8 @@ then `→` a hint. Fix errors first; warnings do not block (unless `--strict`). 
 | `function-in-data`, `not-json`, `accessor-in-data`, `script-section` | in `filter.ts`: a function outside `setup` / `update` / `on` / `draw`, a non-JSON value, a getter, or `script.<key>` other than `uses` | keep data plain; let `ouaf pack` write the `script` section |
 | `run-error`, `no-default-export`, `build-error` | the top level of `filter.ts` throws, has no default export, or imports something that cannot be bundled (Node built-ins) | `export default defineFilter({ … })`; no browser or Node APIs at the top level |
 | `outside-layout` | extra files in a manifest folder (README…) | warning only: they are left out of the package |
-| `package-size` | over 5 MB | compress assets (WebP, GLB with Draco/meshopt, 720p videos) |
+| `case-conflict` | two paths that differ only by case (`assets/Hat.png`, `assets/hat.png`) | rename one |
+| `package-size`, `package-too-large`, `too-many-entries` | files over 5 MB unpacked (warning), over 50 MB or 1000 files (error) | compress assets (WebP, GLB with Draco/meshopt, 720p videos); merge small images |
 
 ## 17. Working with an AI agent
 

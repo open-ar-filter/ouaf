@@ -5,15 +5,30 @@
  */
 import { closest } from './validate.ts'
 
-/** §3: recommended package size; `ouaf validate` warns above. Decimal megabytes, the stricter reading. */
+/**
+ * §3: recommended size of the package content (its files unpacked); `ouaf validate` warns above. Decimal megabytes,
+ * the stricter reading.
+ */
 export const PACKAGE_RECOMMENDED_BYTES = 5_000_000
 /**
- * §3: an engine MAY refuse packages above this size. Applied to the archive and to the total size of its files once
- * unpacked (what an engine holds in memory, and the bound that defuses zip bombs).
+ * §3: an engine MAY refuse a package whose files total more than this, unpacked (what an engine holds in memory, and
+ * the bound that defuses zip bombs). The size of the archive itself is not the limit: see `PACKAGE_MAX_ARCHIVE_BYTES`.
  */
 export const PACKAGE_MAX_BYTES = 50_000_000
-/** Most files a package may hold (bounds the work of reading an archive; a filter has a few dozen at most). */
+/** §3: an engine MAY refuse a package with more entries (a filter has a few dozen files at most). */
 export const PACKAGE_MAX_ENTRIES = 1000
+/**
+ * §3: what the zip structure may add to the content of a package within the limits, so that a reader can stop
+ * reading or downloading an archive larger than `PACKAGE_MAX_ARCHIVE_BYTES` without refusing a valid package:
+ * - 1 KiB per entry: its local (30 B) and central (46 B) headers, plus its name and extra fields, each written twice
+ *   (names up to about 470 bytes with the usual timestamp and Unix extra fields);
+ * - 64 KiB: the end of central directory record (22 B) and the longest archive comment (65 535 B);
+ * - 0.1 % of the content: deflate expands incompressible data by 5 bytes per stored block of up to 64 KiB (under
+ *   0.01 %); `ouaf pack` stores such files instead.
+ */
+export const PACKAGE_ARCHIVE_OVERHEAD_BYTES = PACKAGE_MAX_ENTRIES * 1024 + 0x10000 + PACKAGE_MAX_BYTES / 1000
+/** Largest archive a package within the limits can be (1 139 536 bytes over `PACKAGE_MAX_BYTES`). */
+export const PACKAGE_MAX_ARCHIVE_BYTES = PACKAGE_MAX_BYTES + PACKAGE_ARCHIVE_OVERHEAD_BYTES
 
 /** A file of a package, from a folder or an archive. */
 export interface PackageEntryInfo {
@@ -49,16 +64,23 @@ export function inPackageLayout(path: string): boolean {
 export interface PackageLayout<E extends PackageEntryInfo> {
   /** Regular files of the layout, each once, safe to read. */
   files: E[]
-  /** Regular files outside the layout: an engine ignores them (spec §3), the validator reports them. */
+  /** Regular files outside the layout: an engine ignores them (spec §3), the validator warns. */
   outside: E[]
   /** Entries that break the rules (links, unsafe paths, duplicates, special files), in entry order. */
   problems: PackageProblem[]
+  /**
+   * Paths that differ from an earlier one only by case or Unicode normalization (`assets/Hat.png` after
+   * `assets/hat.png`): distinct files for an engine, which compares paths exactly (spec §3), but the same file once
+   * unpacked on most file systems. The validator warns.
+   */
+  caseConflicts: Array<{ path: string; other: string }>
 }
 
 /** Sorts the entries of a package into its layout, the files outside it, and the entries that break the rules. */
 export function checkPackageEntries<E extends PackageEntryInfo>(entries: readonly E[]): PackageLayout<E> {
   const seen = new Set<string>()
-  const layout: PackageLayout<E> = { files: [], outside: [], problems: [] }
+  const folded = new Map<string, string>()
+  const layout: PackageLayout<E> = { files: [], outside: [], problems: [], caseConflicts: [] }
   for (const e of entries) {
     const problem = (code: PackageProblemCode, message: string, hint: string) =>
       layout.problems.push({ code, path: e.path, message, hint })
@@ -67,6 +89,10 @@ export function checkPackageEntries<E extends PackageEntryInfo>(entries: readonl
       continue
     }
     seen.add(e.path)
+    const key = e.path.normalize('NFC').toLowerCase()
+    const other = folded.get(key)
+    if (other === undefined) folded.set(key, e.path)
+    else layout.caseConflicts.push({ path: e.path, other })
     if (isUnsafePackagePath(e.path)) {
       problem('unsafe-path', `Unsafe path "${e.path}": package paths are relative, use "/" and contain no "..".`,
         'Rebuild the archive from the filter folder (spec §3).')
@@ -98,7 +124,11 @@ export function formatBytes(n: number): string {
 
 const SHRINK = 'Compress the assets (KTX2 textures, Draco/meshopt models, shorter or smaller videos).'
 
-/** The limits a package exceeds (spec §3): its number of entries, its size as an archive and unpacked. */
+/**
+ * The limits a package exceeds (spec §3): its number of entries and the size of its files unpacked. The archive is
+ * only checked against `PACKAGE_MAX_ARCHIVE_BYTES`, which no package within the limits exceeds: a reader can refuse
+ * it before reading the central directory.
+ */
 export function checkPackageSize(size: PackageSize): PackageProblem[] {
   const problems: PackageProblem[] = []
   if (size.entries > PACKAGE_MAX_ENTRIES) {
@@ -106,9 +136,10 @@ export function checkPackageSize(size: PackageSize): PackageProblem[] {
       message: `The package holds ${size.entries} files: an engine refuses more than ${PACKAGE_MAX_ENTRIES}.`,
       hint: 'Merge small images into a spritesheet, and remove the files the manifest does not use.' })
   }
-  if (size.archiveBytes !== undefined && size.archiveBytes > PACKAGE_MAX_BYTES) {
+  if (size.archiveBytes !== undefined && size.archiveBytes > PACKAGE_MAX_ARCHIVE_BYTES) {
     problems.push({ code: 'package-too-large', path: '', hint: SHRINK,
-      message: `The package is ${formatBytes(size.archiveBytes)}: an engine may refuse packages above 50 MB (spec §3).` })
+      message: `The archive is ${formatBytes(size.archiveBytes)}: more than 50 MB of files plus the zip structure, an ` +
+        'engine may refuse it (spec §3).' })
   } else if (size.bytes > PACKAGE_MAX_BYTES) {
     const unpacked = size.archiveBytes !== undefined ? ' unpacked' : ''
     problems.push({ code: 'package-too-large', path: '', hint: SHRINK,

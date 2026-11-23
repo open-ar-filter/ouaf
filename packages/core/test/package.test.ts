@@ -1,5 +1,5 @@
 import { crc32, deflateRawSync } from 'node:zlib'
-import { PACKAGE_MAX_BYTES, PACKAGE_MAX_ENTRIES } from '@ouaf/spec'
+import { PACKAGE_MAX_ARCHIVE_BYTES, PACKAGE_MAX_BYTES, PACKAGE_MAX_ENTRIES } from '@ouaf/spec'
 import { describe, expect, it } from 'vitest'
 import { OuafError, PackageError } from '../src/engine/errors.ts'
 import { fetchPackage, isPackageUrl, packageSource } from '../src/engine/package.ts'
@@ -27,34 +27,50 @@ interface Entry {
 const u16 = (n: number) => [n & 0xff, (n >> 8) & 0xff]
 const u32 = (n: number) => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff]
 
+const cat = (parts: ArrayLike<number>[]) => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
+  let at = 0
+  for (const p of parts) {
+    out.set(p, at)
+    at += p.length
+  }
+  return out
+}
+
 /** A zip archive of `entries`, in order, with Unix modes (as `ouaf pack` writes them). */
 function zip(entries: Entry[]): Uint8Array<ArrayBuffer> {
-  const parts: number[][] = []
-  const central: number[][] = []
+  const parts: ArrayLike<number>[] = []
+  const central: ArrayLike<number>[] = []
   let offset = 0
   for (const e of entries) {
     const data = typeof e.data === 'string' ? bytes(e.data) : (e.data ?? new Uint8Array())
-    const deflated = deflateRawSync(data)
+    const deflated = e.method === 0 ? data : deflateRawSync(data)
     const method = e.method ?? (deflated.length < data.length ? 8 : 0)
     const raw = e.raw ?? (method === 8 ? deflated : data)
     const name = bytes(e.name)
     const common = [...u16(method), ...u16(0), ...u16(33), ...u32(e.crc ?? crc32(data)), ...u32(raw.length), ...u32(e.size ?? data.length), ...u16(name.length), ...u16(0)]
     const flags = e.flags ?? 0x800
-    const local = [...u32(0x04034b50), ...u16(20), ...u16(flags), ...common, ...name, ...raw]
-    central.push([...u32(0x02014b50), ...u16((3 << 8) | 20), ...u16(20), ...u16(flags), ...common, ...u16(0), ...u16(0), ...u16(0),
-      ...u32(((e.mode ?? 0o100644) << 16) >>> 0), ...u32(offset), ...name])
+    const local = cat([u32(0x04034b50), u16(20), u16(flags), common, name, raw])
+    central.push(cat([u32(0x02014b50), u16((3 << 8) | 20), u16(20), u16(flags), common, u16(0), u16(0), u16(0),
+      u32(((e.mode ?? 0o100644) << 16) >>> 0), u32(offset), name]))
     parts.push(local)
     offset += local.length
   }
-  const cd = central.flat()
+  const cd = cat(central)
   const eocd = [...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(entries.length), ...u16(entries.length), ...u32(cd.length), ...u32(offset), ...u16(0)]
-  return new Uint8Array([...parts.flat(), ...cd, ...eocd])
+  return cat([...parts, cd, eocd])
 }
 
 const manifest = { ouaf: '1', id: 'pkg', name: 'Package', version: '1.0.0', license: 'CC0-1.0', layers: [] }
 const MANIFEST: Entry = { name: 'manifest.json', data: JSON.stringify(manifest), method: 0 }
 /** Compresses well: deflated by default. */
 const SHADER = 'vec4 effect(vec2 uv) { return vec4(uv, 0.0, 1.0); }\n'.repeat(20)
+
+/** 999 stored files of 50 kB and the manifest: 49.95 MB of content, about 50.06 MB of archive. */
+function nearLimit(): Uint8Array<ArrayBuffer> {
+  const file = new Uint8Array(50_000)
+  return zip([MANIFEST, ...Array.from({ length: PACKAGE_MAX_ENTRIES - 1 }, (_, i) => ({ name: `assets/${i}.bin`, data: file, method: 0 }))])
+}
 
 async function refused(archive: Uint8Array | Blob): Promise<PackageError> {
   const error = await packageSource(archive).then(() => undefined, (e: unknown) => e)
@@ -86,6 +102,16 @@ describe('packageSource: valid packages', () => {
     }
     expect((await packageSource(new File([archive], 'mine.ouaf'))).label).toBe('mine.ouaf')
     expect((await packageSource(archive, { label: 'crown.ouaf' })).label).toBe('crown.ouaf')
+  })
+
+  it('opens a package whose files are just under 50 MB unpacked, although its archive is over 50 MB (spec §3)', async () => {
+    const archive = nearLimit()
+    expect(archive.length).toBeGreaterThan(PACKAGE_MAX_BYTES)
+    for (const input of [archive, new Blob([archive])]) {
+      const source = await packageSource(input)
+      expect(await source.manifest()).toEqual(manifest)
+      expect((await source.file('assets/0.bin')).size).toBe(50_000)
+    }
   })
 
   it('copies bytes given by the host, which may reuse its buffer', async () => {
@@ -153,11 +179,11 @@ describe('packageSource: refused packages', () => {
     expect(e.message).toContain('unpacked')
   })
 
-  it('an archive above the limit, before reading it', async () => {
-    const big = new Blob([new Uint8Array(PACKAGE_MAX_BYTES + 1)])
+  it('an archive above the content limit plus the zip structure, before reading it', async () => {
+    const big = new Blob([new Uint8Array(PACKAGE_MAX_ARCHIVE_BYTES + 1)])
     const e = await refused(big)
     expect(e).toMatchObject({ reason: 'package-too-large' })
-    expect(e.message).toContain('50.0 MB')
+    expect(e.message).toContain('The archive is 51.1 MB')
   })
 
   it('an entry that inflates beyond its declared size (zip bomb), stopping early', async () => {
@@ -214,8 +240,18 @@ describe('fetchPackage', () => {
     expect(await source.manifest()).toEqual(manifest)
   })
 
-  it('refuses a package above the limit from its Content-Length, or while it downloads', async () => {
-    const declared = respond('x', { headers: { 'content-length': String(PACKAGE_MAX_BYTES + 1) } })
+  it('opens a package whose files are just under the limit and whose archive is over 50 MB', async () => {
+    const archive = nearLimit()
+    const res = () => new Response(new Blob([archive]).stream(), { headers: { 'content-length': String(archive.length) } })
+    const source = await fetchPackage('https://host.test/big.ouaf', (() => Promise.resolve(res())) as typeof fetch)
+    expect(await source.manifest()).toEqual(manifest)
+    // Without Content-Length, streamed.
+    const streamed = await fetchPackage('https://host.test/big.ouaf', respond(new Blob([archive]).stream()))
+    expect((await streamed.file('assets/998.bin')).size).toBe(50_000)
+  })
+
+  it('refuses a package above the archive bound from its Content-Length, or while it downloads', async () => {
+    const declared = respond('x', { headers: { 'content-length': String(PACKAGE_MAX_ARCHIVE_BYTES + 1) } })
     await expect(fetchPackage('https://host.test/a.ouaf', declared)).rejects.toMatchObject({ reason: 'package-too-large' })
     let sent = 0
     const endless = new ReadableStream<Uint8Array>({
@@ -226,7 +262,7 @@ describe('fetchPackage', () => {
     })
     await expect(fetchPackage('https://host.test/a.ouaf', respond(endless))).rejects.toMatchObject({ reason: 'package-too-large' })
     // The download stops just past the limit (the stream reads a few chunks ahead).
-    expect(sent).toBeLessThan(PACKAGE_MAX_BYTES + 5_000_000)
+    expect(sent).toBeLessThan(PACKAGE_MAX_ARCHIVE_BYTES + 5_000_000)
   })
 
   it('reports HTTP errors and HTML fallbacks as filter-load errors', async () => {
