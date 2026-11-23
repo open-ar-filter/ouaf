@@ -42,10 +42,13 @@ Check it, then preview it:
 
 ```sh
 npx ouaf validate filters/hello        # exit 0: valid; 1: errors (listed with a fix); 2: usage error
+npx ouaf preview filters/hello         # screenshots on reference faces: ouaf-preview/<reference>.png
 npm run dev                            # https://localhost:5173 (self-signed certificate: accept it)
 ```
 
-Open `https://localhost:5173/engine.html?filter=/filters/hello/&source=pesquet-talk&autostart`: the engine page
+`ouaf preview` renders the filter in headless Chromium on a few frames of the test clips and writes one screenshot
+per reference face (section 17); it needs Playwright's Chromium once: `npx playwright install chromium`. To see it
+live, open `https://localhost:5173/engine.html?filter=/filters/hello/&source=pesquet-talk&autostart`: the engine page
 plays a [test clip](test-media/README.md) (`source=<clip>`, `autostart` starts it) with your filter on top. Without
 `source`, click **Start** to use the camera. Other query parameters: `filter` can be repeated to stack filters,
 `maxFaces=<1–16>` (default 1), `seed=<n>` fixes random choices. Parameters (section 7) appear as controls on the page;
@@ -71,11 +74,12 @@ A filter is a folder; `ouaf pack` turns it into a `.ouaf` package (a zip) for di
   `npx ouaf pack filters/my-filter -o filters/my-filter.ouaf`, then open
   `/engine.html?filter=/filters/my-filter.ouaf&source=pesquet-talk&autostart` (`.ouaf` files under `filters/` are
   git-ignored); pack again and reload after each edit. A `.ouaf` from anywhere else can be opened with the page's
-  **Open .ouaf** button or dropped on the page (it is read locally). `ouaf preview` is planned (#30).
+  **Open .ouaf** button or dropped on the page (it is read locally). `npx ouaf preview <folder>` packs it in memory
+  and renders it, nothing to serve (section 17).
 - A manifest folder may also hold a hand-written `script.js` (a self-contained ES module, as in
   `filters/fixtures/canvas-screen/`), but then you write the manifest's `script` section yourself (§12.2): prefer
   `filter.ts`.
-- `--json` (both commands) prints a machine-readable report; `--strict` fails on warnings too.
+- `--json` (every command) prints a machine-readable report; `--strict` fails on warnings too.
 
 ## 3. Manifest
 
@@ -522,7 +526,6 @@ engine from dropping them on slow devices).
 
 Specified, or reserved, but not working in the reference engine today. Do not rely on them:
 
-- `ouaf preview` (#30): pack, then load the `.ouaf` (section 2).
 - `pairContact` / `pairSeparate` and `frame.pairs` (`uses: ["pairs"]`): no detector yet, `frame.pairs` is empty (#116).
 - Adaptive quality: dropping capabilities on slow devices, hiding below 15 Hz, `performance` events (§16; #34, #90).
 - A host file as a video or spritesheet sticker (only images), or as a shader texture: `textures` take assets only.
@@ -758,9 +761,18 @@ spec and the schema. An agent writing a filter follows this loop:
 2. **Validate**: `npx ouaf validate filters/<id> --json`, or `npx ouaf pack filters/<id> -o filters/<id>.ouaf --json`
    for `filter.ts`. Exit code 0 means valid. Each issue has a `code`, a `file` (with `line` / `column` when known), a
    JSON `path` and a `hint`: apply the hint, then validate again until there are no errors and, ideally, no warnings.
-3. **Preview**: `npm run dev`, then `https://localhost:5173/engine.html?filter=/filters/<id>/&source=pesquet-talk&autostart`
-   (for `filter.ts`, the packed `?filter=/filters/<id>.ouaf` of section 2). An agent with a browser tool reads the errors
-   printed on the page (or `window.ouaf.errors` / `window.ouaf.warnings`); without one, ask the human to look.
+3. **Preview**: `npx ouaf preview filters/<id> --json` (a manifest folder, a `filter.ts` folder or a `.ouaf`; several
+   stack, the first at the bottom). It renders the filter in headless Chromium on reference faces, frames of the test
+   clips (`talk`, `walk`, `two-faces`, `no-face`; `--ref <id>` picks some, `--input <clip.mp4 | image.png>` uses
+   another file, `--at <s>` its time) and writes `ouaf-preview/<reference>.png` (`-o <dir>` elsewhere). Look at
+   each screenshot: is every layer where it should be, at the right size? In the JSON, each reference has
+   `errors` and `warnings` from the engine (a shader that does not compile, an asset that fails to decode: things
+   `validate` cannot see), `faces` (faces tracked), `changed` (share of the pixels the filter changed: near 0 means
+   nothing shows), `pixelsSha256` and `perf` (frame times, measured with software rendering: compare filters, do
+   not predict a phone). Exit code 0: rendered without engine errors; 1: errors; 2: usage error (also when
+   Playwright's Chromium is missing: `npx playwright install chromium`). The same command gives the same pixels on
+   every run on one machine. For a live view, `npm run dev`, then
+   `https://localhost:5173/engine.html?filter=/filters/<id>/&source=pesquet-talk&autostart` (section 1).
 4. **Report** what the filter does, the commands run and their result, and anything section 14 made impossible.
 
 Rules for agents: do not invent properties, anchors, events or data paths (the validator rejects them); do not use
@@ -776,5 +788,6 @@ To give an agent these instructions in a project of your own, put this in its `A
 This folder is an Ouaf (Open Universal AR Filter) filter. Before writing or changing it, read the authoring guide
 (AUTHORING.md of https://github.com/open-ar-filter/ouaf) and follow its section 17: create, then validate with
 `npx ouaf validate <folder> --json` (`npx ouaf pack <folder> -o <id>.ouaf --json` when the folder has a filter.ts)
-until there are no errors, then preview in the playground. Use only what the guide documents.
+until there are no errors, then render it with `npx ouaf preview <folder> --json` and look at the screenshots.
+Use only what the guide documents.
 ```

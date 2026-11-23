@@ -11,3 +11,5 @@ dist/
 /packages/builtins/.work/
 # Packages built from filters/ with `ouaf pack` (served by the playground, AUTHORING.md section 2)
 /filters/**/*.ouaf
+# Screenshots of `ouaf preview` (default output folder)
+/ouaf-preview/
