@@ -10,14 +10,11 @@
  * camera space (`videoToCamera`), mirrored like the anchors when the image is, through the camera's projection, which
  * holds the cover crop. The mask therefore lines up with the video and the objects whatever the fit.
  */
+import { FACE_OVAL } from '../../anchoring/face-mesh.ts'
 import { videoToCamera } from '../../anchoring/face-pose.ts'
 import { LANDMARKS_STRIDE, type FaceFrame } from '../../face.ts'
 
-/** MediaPipe face mesh contour (FACEMESH_FACE_OVAL), in order around the face, starting at the forehead. */
-export const FACE_OVAL: readonly number[] = [
-  10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
-  172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109,
-]
+export { FACE_OVAL }
 const N = FACE_OVAL.length
 
 /** Half-width of the soft edge, relative to the centre-to-contour distance. */
