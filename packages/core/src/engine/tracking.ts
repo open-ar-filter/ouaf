@@ -51,6 +51,8 @@ export class TrackingHub {
   #times = new Float64Array(RATE_CAPACITY)
   /** Time from submit to completion of the same results (ms). */
   #durations = new Float64Array(RATE_CAPACITY)
+  /** Faces found by the same results. */
+  #faceCounts = new Uint8Array(RATE_CAPACITY)
   #submittedAt = 0
   #timesStart = 0
   #timesCount = 0
@@ -171,6 +173,37 @@ export class TrackingHub {
       }
     }
     return n > 0 ? sum / n : Number.NaN
+  }
+
+  /**
+   * Tracking rate (Hz) and pipeline time (ms) over the same window, from the results that found at least `faces`
+   * faces only: a tracker is much faster without a face to analyse (MediaPipe then runs only its detector), so these
+   * say what tracking costs with the faces. The rate is 1000 / the mean interval before such results. NaN without
+   * at least two such results. Writes `[rate, pipeline]` into `out`.
+   */
+  rateWithFaces(faces: number, out: Float64Array): void {
+    const cutoff = Math.max(this.#lastNow - TRACKING_RATE_WINDOW_MS, this.#rateFrom)
+    let intervals = 0
+    let gaps = 0
+    let n = 0
+    let sum = 0
+    let previous = Number.NaN
+    for (let i = 0; i < this.#timesCount; i++) {
+      const k = (this.#timesStart + i) % RATE_CAPACITY
+      const t = this.#times[k]!
+      if (t < cutoff) continue
+      if (this.#faceCounts[k]! >= faces) {
+        n++
+        sum += this.#durations[k]!
+        if (!Number.isNaN(previous)) {
+          intervals++
+          gaps += t - previous
+        }
+      }
+      previous = t
+    }
+    out[0] = intervals > 0 && gaps > 0 ? (1000 * intervals) / gaps : Number.NaN
+    out[1] = n > 0 ? sum / n : Number.NaN
   }
 
   /**
@@ -312,10 +345,12 @@ export class TrackingHub {
       const k = (this.#timesStart + this.#timesCount) % RATE_CAPACITY
       this.#times[k] = t
       this.#durations[k] = t - this.#submittedAt
+      this.#faceCounts[k] = Math.min(255, done.count)
       this.#timesCount++
     } else {
       this.#times[this.#timesStart] = t
       this.#durations[this.#timesStart] = t - this.#submittedAt
+      this.#faceCounts[this.#timesStart] = Math.min(255, done.count)
       this.#timesStart = (this.#timesStart + 1) % RATE_CAPACITY
     }
   }

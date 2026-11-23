@@ -49,6 +49,44 @@ describe('TrackingHub: tracking rate and configuration (spec §16.1, §16.2)', (
     now.mockRestore()
   })
 
+  it('measures the rate and pipeline time of the results with faces apart (no face: detector only, faster)', async () => {
+    let clock = 0
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    let faces = 1
+    let cost = 0
+    const tracker: FrameTracker = {
+      description: 'sync',
+      track: (_i, _t, mediaTime, out) => {
+        clock += cost // the call takes `cost` ms
+        out.count = faces
+        out.mediaTime = mediaTime
+      },
+      configure: () => {},
+      dispose: () => {},
+    }
+    const hub = new TrackingHub({ impl: { id: 'sync', create: async () => tracker }, env, maxFaces: 1, modifiers: [], onError: () => {} })
+    await hub.setNeeds({ face: true, blendshapes: true })
+    // 1 s at 10 Hz with a face (80 ms per result), then 1 s at 30 Hz without (10 ms per result).
+    for (let end = clock + 1000; clock < end; clock += 100 - 80) {
+      cost = 80
+      hub.submit(input, clock, clock / 1000)
+    }
+    faces = 0
+    for (let end = clock + 1000; clock < end; clock += 33 - 10) {
+      cost = 10
+      hub.submit(input, clock, clock / 1000)
+    }
+    hub.submit(input, clock, clock / 1000) // the window ends at the last submit
+    const out = new Float64Array(2)
+    hub.rateWithFaces(1, out)
+    expect(out[0]).toBeCloseTo(10, 0)
+    expect(out[1]).toBeCloseTo(80, 0)
+    expect(hub.rateHz).toBeGreaterThan(18) // all results: mostly the fast ones
+    hub.rateWithFaces(2, out)
+    expect(out[0]).toBeNaN()
+    now.mockRestore()
+  })
+
   it('passes the faces, blendshapes and analysis resolution to the tracker, clamped', async () => {
     const { hub, configs, created } = syncHub(4)
     await hub.setNeeds({ face: true, blendshapes: true })
