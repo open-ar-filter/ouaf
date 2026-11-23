@@ -438,7 +438,7 @@ vec4 effect(vec2 uv) {
   `ouaf_faceCount` or `ouaf_faceSize` in the source (comments do not count). Without it, no face is tracked and they
   read as when no face is visible. A validator that can read the shader file (a package or a folder) reports a face
   input used without `requires.face` as an error, and does not report `requires.face` as unused when a shader uses
-  one.
+  one. An engine that loads such a shader anyway SHOULD warn.
 - An engine only allocates what a shader uses: `ouaf_prevFrame` costs an extra image buffer, so the engine provides
   it only to a shader that calls it.
 - Reserved for later versions: `ouaf_personMask` (segmentation, phase 2), `ouaf_audioLevel` (audio, phase 3).
