@@ -29,7 +29,7 @@
       "type": "text",
       "text": { "param": "message" },
       "anchor": "forehead",
-      "offset": [1.55, 0.82, 0.15],
+      "offset": [1.55, 0.82, 0.02],
       "orient": "screen",
       "size": { "param": "size" },
       "color": { "param": "color" },

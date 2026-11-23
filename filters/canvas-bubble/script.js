@@ -68,10 +68,10 @@ export default {
       const face = frame.faces[0]
       eyes(ctx, 48, 52, face?.pose?.yaw ?? 0)
 
-      // The canvas has no access to the filter's fonts: a generic family, drawn with the platform's font.
+      // The manifest's font asset "rounded" (a built-in font, bold): the same text on every device.
       const phrase = PHRASES[Math.floor(frame.time / 2.5) % PHRASES.length]
       ctx.fillStyle = '#1a1a2e'
-      ctx.font = 'bold 24px sans-serif'
+      ctx.font = 'bold 24px rounded'
       ctx.textAlign = 'left'
       ctx.textBaseline = 'middle'
       ctx.fillText(phrase, 82, 52, W - 98)
