@@ -29,12 +29,12 @@
       "type": "text",
       "text": { "param": "message" },
       "anchor": "forehead",
-      "offset": [1.6, 0.84, 0.02],
+      "offset": [1.55, 0.82, 0.15],
       "orient": "screen",
       "size": { "param": "size" },
       "color": { "param": "color" },
       "font": "builtin:font/rounded-bold",
-      "maxWidth": 1.9,
+      "maxWidth": 1.8,
       "lineHeight": 1.05
     },
     {

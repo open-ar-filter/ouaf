@@ -4,8 +4,8 @@
   "name": { "en": "Big eyes", "fr": "Grands yeux" },
   "version": "1.0.0",
   "description": {
-    "en": "Warp and bindings: the eyes grow as the mouth opens (jawOpen 0–0.5 mapped to a bulge of 0.5–1) and the mouth shrinks; eye radius and mouth pinch are parameters.",
-    "fr": "Déformation et liaisons : les yeux grossissent quand la bouche s'ouvre (jawOpen 0–0,5 → gonflement 0,5–1), la bouche rétrécit ; rayon et pincement en paramètres."
+    "en": "Warp and bindings: the eyes grow as the mouth opens (jawOpen 0–0.5 mapped to a bulge of 0.75–1) and the mouth shrinks; eye radius and mouth pinch are parameters.",
+    "fr": "Déformation et liaisons : les yeux grossissent quand la bouche s'ouvre (jawOpen 0–0,5 → gonflement 0,75–1), la bouche rétrécit ; rayon et pincement en paramètres."
   },
   "author": "Ouaf contributors",
   "license": "CC0-1.0",
@@ -25,7 +25,7 @@
       "kind": "bulge",
       "anchor": ["leftEye", "rightEye"],
       "radius": { "param": "radius" },
-      "strength": { "bind": "face.blendshapes.jawOpen", "range": [0, 0.5], "to": [0.5, 1], "default": 0.5 }
+      "strength": { "bind": "face.blendshapes.jawOpen", "range": [0, 0.5], "to": [0.75, 1], "default": 0.75 }
     },
     { "type": "warp", "kind": "pinch", "anchor": "mouth", "radius": 0.7, "strength": { "param": "mouth" } }
   ]
