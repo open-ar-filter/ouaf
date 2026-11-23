@@ -31,13 +31,29 @@ export interface ShaderWrapOptions {
   anchors?: readonly string[]
 }
 
-/** What the author's source uses among the inputs that cost resources (spec §11.1: only allocate what is used). */
+/**
+ * What the author's source uses among the engine inputs that cost resources (spec §11.1: only allocate what is used)
+ * or that come from face tracking. Comments are ignored.
+ */
 export interface ShaderUses {
   /** Calls `ouaf_prevFrame`: the engine keeps this shader's previous output (an extra image buffer). */
   prevFrame: boolean
   /** Calls `ouaf_faceMask`: the engine draws the face mask into a texture. */
   faceMask: boolean
+  /** Reads `ouaf_faceSize`: the engine projects the size of every face each frame. */
+  faceSize: boolean
+  /**
+   * The face-tracking inputs it uses, among `SHADER_FACE_INPUTS`, in that order: each one needs `requires.face`
+   * (spec §11.1); without it they read as no face.
+   */
+  faceInputs: readonly string[]
 }
+
+/**
+ * Engine inputs of spec §11.1 that come from face tracking: a shader using one uses the face (`requires.face`). The
+ * declared anchors (`ouaf_anchor_<name>`) are not listed: declaring them in the manifest already uses the face.
+ */
+export const SHADER_FACE_INPUTS = ['ouaf_faceMask', 'ouaf_faceCount', 'ouaf_faceSize'] as const
 
 export interface WrappedShader extends ShaderUses {
   /** The fragment shader, without the `#version 300 es` line (the first line of the program, added by the caller). */
@@ -105,10 +121,19 @@ export function stripGlslComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (c) => c.replace(/[^\n]/g, ' '))
 }
 
-/** What the source uses among the costly inputs (comments ignored). */
+/**
+ * What the source uses among the costly and the face-tracking inputs (see `ShaderUses`): pure string analysis, shared
+ * by the engine (which inputs to set up) and the validator (`requires.face`), comments ignored.
+ */
 export function shaderUses(src: string): ShaderUses {
   const code = stripGlslComments(src)
-  return { prevFrame: /\bouaf_prevFrame\b/.test(code), faceMask: /\bouaf_faceMask\b/.test(code) }
+  const uses = (name: string) => new RegExp(`\\b${name}\\b`).test(code)
+  return {
+    prevFrame: uses('ouaf_prevFrame'),
+    faceMask: uses('ouaf_faceMask'),
+    faceSize: uses('ouaf_faceSize'),
+    faceInputs: SHADER_FACE_INPUTS.filter(uses),
+  }
 }
 
 /** A problem found in a shader source without compiling it. */

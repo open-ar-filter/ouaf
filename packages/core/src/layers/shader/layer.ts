@@ -231,8 +231,7 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
     throw cause
   }
   const wrapped = prepare(decl, ctx, uniforms, stage)
-  const source = ctx.assets.get<string>(decl.src)
-  const usesSizes = /\bouaf_faceSize\b/.test(source)
+  const usesSizes = wrapped.faceSize
   const anchors = decl.anchors ?? []
   const inputs = anchors.length > 0 || usesSizes ? new ShaderFaceInputs(ctx.maxFaces, anchors, usesSizes) : undefined
   const visible = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: 'visible', name: 'visible' }, env)

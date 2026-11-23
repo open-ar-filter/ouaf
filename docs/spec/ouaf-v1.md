@@ -405,7 +405,12 @@ vec4 effect(vec2 uv) {
   `i < ouaf_faceCount`.
 - **Anchors are declared**, since GLSL has no strings: `"anchors": ["noseTip", "leftEye"]` in the layer gives
   `ouaf_anchor_noseTip` and `ouaf_anchor_leftEye`. Only declared anchors are computed and uploaded. Face anchors only
-  (5.3); declaring anchors, using `stage: "face"` or calling `ouaf_faceMask` requires `requires.face`.
+  (5.3).
+- **Face inputs need `requires.face`**: declaring anchors, using `stage: "face"`, or using `ouaf_faceMask`,
+  `ouaf_faceCount` or `ouaf_faceSize` in the source (comments do not count). Without it, no face is tracked and they
+  read as when no face is visible. A validator that can read the shader file (a package or a folder) reports a face
+  input used without `requires.face` as an error, and does not report `requires.face` as unused when a shader uses
+  one.
 - An engine only allocates what a shader uses: `ouaf_prevFrame` costs an extra image buffer, so the engine provides
   it only to a shader that calls it.
 - Reserved for later versions: `ouaf_personMask` (segmentation, phase 2), `ouaf_audioLevel` (audio, phase 3).

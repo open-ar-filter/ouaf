@@ -301,6 +301,27 @@ describe('script API and shaders (spec §11, §12, #66)', () => {
     }
   })
 
+  it('counts the face inputs of a readable shader source as a use of the face (spec §11.1)', () => {
+    const sources: Record<string, string> = {
+      'assets/fx.frag': 'vec4 effect(vec2 uv) { return ouaf_sample(uv) * ouaf_faceMask(uv); }',
+      'assets/count.frag': 'vec4 effect(vec2 uv) { return vec4(float(ouaf_faceCount), ouaf_faceSize[0], 0.0, 1.0); }',
+      'assets/plain.frag': '// ouaf_faceMask(uv)\nvec4 effect(vec2 uv) { return ouaf_sample(uv); }',
+    }
+    const files = { shaderSource: (path: string) => sources[path] }
+    const masked = { ...base, assets: { fx: 'assets/fx.frag' }, layers: [{ type: 'shader', id: 'mask', src: 'fx' }] }
+    // Without the files, nothing to go on: requires.face looks unused.
+    expect(codes(validateManifest(masked).warnings)).toEqual(['unused-requirement@/requires/face'])
+    expect(validateManifest(masked, undefined, files)).toMatchObject({ errors: [], warnings: [] })
+    const missing = validateManifest({ ...masked, requires: {} }, undefined, files)
+    expect(codes(missing.errors)).toEqual(['requires-face@/requires'])
+    expect(missing.errors[0]!.message).toContain('ouaf_faceMask in the shader of layer "mask"')
+    const count = validateManifest({ ...base, requires: {}, layers: [shader({ src: 'assets/count.frag' })] }, undefined, files)
+    expect(count.errors[0]!.message).toContain('ouaf_faceCount, ouaf_faceSize in the shader of /layers/0')
+    // A commented-out call is not a use; a built-in shader has no file to read.
+    expect(codes(validateManifest({ ...base, layers: [shader({ src: 'assets/plain.frag' })] }, undefined, files).warnings))
+      .toEqual(['unused-requirement@/requires/face'])
+  })
+
   it('needs GLSL names for uniforms and textures (#24)', () => {
     const r = validateManifest({
       ...base,
