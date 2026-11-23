@@ -21,7 +21,7 @@ async function colorsAt(page: Page, points: ReadonlyArray<readonly [number, numb
   const png = await page.locator('#canvas').screenshot()
   return page.evaluate(
     async ([bytes, pts]) => {
-      const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+      const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
       const c = new OffscreenCanvas(bitmap.width, bitmap.height)
       const ctx = c.getContext('2d')!
       ctx.drawImage(bitmap, 0, 0)
@@ -39,7 +39,7 @@ async function colorsAt(page: Page, points: ReadonlyArray<readonly [number, numb
         return sum.map((v) => Math.round(v / 9)) as [number, number, number]
       })
     },
-    [[...png], points] as const,
+    [png.toString('base64'), points] as const,
   )
 }
 

@@ -8,7 +8,8 @@ const port = Number(process.env.OUAF_PORT) || 5173
 export default defineConfig({
   testDir: 'e2e',
   timeout: 120_000,
-  fullyParallel: false,
+  // Tests still run one at a time (one worker), but CI shards (`--shard`) split them per test rather than per file.
+  fullyParallel: true,
   workers: 1,
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: {

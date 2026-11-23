@@ -31,7 +31,7 @@ async function means(page: Page, regions: Array<[number, number, number, number]
   const png = await page.locator('#canvas').screenshot()
   return page.evaluate(
     async ([bytes, regions]) => {
-      const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+      const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
       const c = new OffscreenCanvas(bitmap.width, bitmap.height)
       const ctx = c.getContext('2d')!
       ctx.drawImage(bitmap, 0, 0)
@@ -55,7 +55,7 @@ async function means(page: Page, regions: Array<[number, number, number, number]
         return { r: r / n, g: g / n, b: b / n, chroma: chroma / n }
       })
     },
-    [[...png], regions] as const,
+    [png.toString('base64'), regions] as const,
   )
 }
 
@@ -100,7 +100,7 @@ test('a shader that does not compile rejects its filter with the line in the aut
 async function discs(page: Page): Promise<Array<{ red: { x: number; y: number; n: number }; green: { x: number; y: number; n: number } }>> {
   const png = await page.locator('#canvas').screenshot()
   return page.evaluate(async (bytes) => {
-    const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
     const c = new OffscreenCanvas(bitmap.width, bitmap.height)
     const ctx = c.getContext('2d')!
     ctx.drawImage(bitmap, 0, 0)
@@ -124,7 +124,7 @@ async function discs(page: Page): Promise<Array<{ red: { x: number; y: number; n
       out.push({ red, green })
     }
     return out
-  }, [...png])
+  }, png.toString('base64'))
 }
 
 for (const mirror of [false, true]) {
@@ -195,7 +195,7 @@ async function shot(page: Page, name: string, time: number): Promise<void> {
     const png = await page.locator('#canvas').screenshot()
     const black = await page.evaluate(
       async ([bytes, key]) => {
-        const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+        const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
         const c = new OffscreenCanvas(bitmap.width, bitmap.height)
         const ctx = c.getContext('2d')!
         ctx.drawImage(bitmap, 0, 0)
@@ -209,7 +209,7 @@ async function shot(page: Page, name: string, time: number): Promise<void> {
         for (let i = 0; i < image.data.length; i += 4) if (image.data[i]! + image.data[i + 1]! + image.data[i + 2]! === 0) black++
         return black / (image.data.length / 4)
       },
-      [[...png], name] as const,
+      [png.toString('base64'), name] as const,
     )
     if (black < 0.5) return
     console.log(`shot ${name}: black frame, again`)

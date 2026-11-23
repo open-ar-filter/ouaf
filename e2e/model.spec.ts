@@ -14,7 +14,7 @@ async function colorsAt(page: Page, points: ReadonlyArray<readonly [number, numb
   const png = await page.locator('#canvas').screenshot()
   return page.evaluate(
     async ([bytes, pts]) => {
-      const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+      const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
       const c = new OffscreenCanvas(bitmap.width, bitmap.height)
       const ctx = c.getContext('2d')!
       ctx.drawImage(bitmap, 0, 0)
@@ -32,7 +32,7 @@ async function colorsAt(page: Page, points: ReadonlyArray<readonly [number, numb
         return sum.map((v) => Math.round(v / 9)) as [number, number, number]
       })
     },
-    [[...png], points] as const,
+    [png.toString('base64'), points] as const,
   )
 }
 
@@ -42,7 +42,7 @@ async function countPixels(page: Page, test: string): Promise<number> {
   return page.evaluate(
     async ([bytes, body]) => {
       const accept = new Function('r', 'g', 'b', `return ${body}`) as (r: number, g: number, b: number) => boolean
-      const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+      const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
       const c = new OffscreenCanvas(bitmap.width, bitmap.height)
       const ctx = c.getContext('2d')!
       ctx.drawImage(bitmap, 0, 0)
@@ -51,7 +51,7 @@ async function countPixels(page: Page, test: string): Promise<number> {
       for (let i = 0; i < d.length; i += 4) if (accept(d[i]!, d[i + 1]!, d[i + 2]!)) n++
       return n
     },
-    [[...png], test] as const,
+    [png.toString('base64'), test] as const,
   )
 }
 
@@ -109,7 +109,7 @@ test('screen models: GLB, Draco, meshopt, sRGB output with and without a pass, f
   const yellowCentre = async () => {
     const png = await page.locator('#canvas').screenshot()
     return page.evaluate(async (bytes) => {
-      const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+      const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
       const c = new OffscreenCanvas(bitmap.width, bitmap.height)
       const ctx = c.getContext('2d')!
       ctx.drawImage(bitmap, 0, 0)
@@ -126,10 +126,13 @@ test('screen models: GLB, Draco, meshopt, sRGB output with and without a pass, f
       }
       // In screen units (+y up, origin at the centre).
       return n > 50 ? 0.5 - (y0 + sum / n) / c.height : Number.NaN
-    }, [...png])
+    }, png.toString('base64'))
   }
   let low = Infinity
   let high = -Infinity
+  // Uneven pauses (100 to 580 ms) between samples: a sample takes a few hundred ms, and a steady pace close to a
+  // divisor of the 2 s period would always see the same phases of the animation and never reach its full range.
+  const uneven = Array.from({ length: 200 }, (_, i) => 100 + ((i * 7) % 13) * 40)
   await expect
     .poll(async () => {
       const y = await yellowCentre()
@@ -138,7 +141,7 @@ test('screen models: GLB, Draco, meshopt, sRGB output with and without a pass, f
         high = Math.max(high, y)
       }
       return Math.round((high - low) * 100) / 100
-    }, { timeout: 30_000, intervals: [100] })
+    }, { timeout: 30_000, intervals: uneven })
     .toBeGreaterThan(0.07)
   expect(low).toBeGreaterThan(-0.14)
   expect(high).toBeLessThan(0.06)
