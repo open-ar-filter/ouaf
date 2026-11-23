@@ -398,8 +398,9 @@ be plain JSON (no `Date`, `Map`, getters, `undefined` in lists). The top level o
 Easings: `linear`, and `in`, `out`, `inOut` × `Quad`, `Cubic`, `Back`, `Elastic`, `Bounce` (e.g. `outBack`);
 default `inOutQuad`.
 
-**`frame`**: `time` (s), `dt` (s since the previous call), `faces` (each with `id`, stable while tracked, `index`,
-`state`) and, depending on `script: { uses: [...] }` (data minimization, §12.4, §15.2):
+**`frame`**: `time` (s), `dt` (s since the previous call), `aspect` (displayed width / height), `faces` (each with
+`id`, stable while tracked, `index`, `state`) and, depending on `script: { uses: [...] }` (data minimization, §12.4,
+§15.2):
 
 | `uses` | Per face |
 |---|---|
@@ -409,7 +410,8 @@ default `inOutQuad`.
 | `face.landmarks` | `landmarks`: `Float32Array` of 478 × (x, y, z), same space |
 
 Declare only what the script reads: `script: { uses: [] }` when it reads nothing but ids; `face.*` uses need
-`requires.face`. Without `uses`, the script gets pose and blendshapes.
+`requires.face`. Without `uses`, the script gets pose and blendshapes. Positions are normalized over the width and
+the height: multiply x differences by `frame.aspect` to measure on-screen distances or keep circles round.
 
 **Canvas fonts**: a `draw` function sees only the platform's fonts, which differ between devices, plus the `font`
 assets of the manifest under their asset name: declare `"assets": { "title": "builtin:font/rounded-bold" }` (or a

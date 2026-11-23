@@ -579,7 +579,8 @@ changes nothing. The 64 KB are measured as for `f.emit` (reference engine: a wal
 bytes a character, numbers at 8, typed arrays and `ArrayBuffer`s at their byte length, keys included).
 
 **`frame` data.** `frame.time` (media time, s), `frame.dt` (s since the previous call to the script, which covers the
-frames it skipped, 12.7), `frame.faces` (list) and, with `uses: ["pairs"]`, `frame.pairs`. Each face has `id`
+frames it skipped, 12.7), `frame.aspect` (the displayed width / height, e.g. 0.5625 for a 9:16 portrait image),
+`frame.faces` (list) and, with `uses: ["pairs"]`, `frame.pairs`. Each face has `id`
 (stable while the face is tracked, 5.4), `index`, `state`, and, depending on `uses`:
 
 | `uses` | Per face |
@@ -591,7 +592,10 @@ frames it skipped, 12.7), `frame.faces` (list) and, with `uses: ["pairs"]`, `fra
 | `pairs` | (on `frame`) `pairs`: one `{ a, b, distance, contact }` per pair of faces (below). |
 
 - **Positions** (`anchors`, `landmarks`) are in **display space, normalized**: from 0 to 1 over the displayed image,
-  origin at the top left, **y down** (as in a canvas), mirroring applied, so they match what the person sees.
+  origin at the top left, **y down** (as in a canvas), mirroring applied, so they match what the person sees. x is
+  over the width and y over the height: `dx * frame.aspect` and `dy` measure an on-screen distance in screen heights
+  (a circle on screen has the same radius in both). There are no pixel sizes: they depend on the device, and a
+  canvas has its own size (12.6).
   `landmarks` `z` is a relative depth at the scale of `x` (smaller is closer to the camera).
 - **Pairs**: `a` and `b` are faces of `frame.faces`; `distance` is the on-screen distance between the two head
   centres, in **face units** (the mean eye distance of the two faces), so it does not depend on how far the people

@@ -336,6 +336,11 @@ export class Engine {
       get videoToClip() {
         return engine.#compositor.videoToClip
       },
+      // The rendered image is what is displayed (the host keeps its aspect ratio), cover crop included.
+      get aspect() {
+        const c = engine.#compositor
+        return c.width > 0 && c.height > 0 ? c.width / c.height : 1
+      },
     }
     this.#openSandbox = options.openSandbox ?? openSandbox
   }

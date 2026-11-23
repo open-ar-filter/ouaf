@@ -1,10 +1,10 @@
 {
   "ouaf": "1",
   "id": "canvas-fonts",
-  "name": "Canvas fonts (engine test fixture)",
+  "name": "Canvas fonts and frame.aspect (engine test fixture)",
   "version": "1.0.0",
   "license": "CC0-1.0",
-  "description": "A declared font drawn in a canvas next to the platform fallback (#150, spec §12.6).",
+  "description": "A declared font drawn in a canvas next to the platform fallback (#150, spec §12.6), and frame.aspect (spec §12.4).",
   "requires": {},
   "assets": {
     "title": "builtin:font/handwritten"
@@ -16,6 +16,7 @@
   "script": {
     "entry": "script.js",
     "uses": [],
+    "update": true,
     "on": ["message:redraw"],
     "draw": ["declared", "fallback"]
   }

@@ -227,7 +227,9 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
   (`BindableProperty.name`) is wrapped by the bindings compiler (`BindingEnv.overrides`), so `.set()` and
   `.animate()` reach every layer type without code in the layers. Values are per face id or for every instance;
   animations run on a media-time clock. Layer types only need to pass `name` when they compile their properties.
-- **Frame data** (`frame-data.ts`): only what `script.uses` declares, in normalized display space.
+- **Frame data** (`frame-data.ts`): only what `script.uses` declares, in normalized display space, plus
+  `frame.aspect` (the render size's width / height: the displayed image, cover crop included; no pixel sizes, which
+  depend on the device).
 - **Canvas fonts** (#150, spec §12.6): the `font` assets of the manifest (files, or `builtin:font/…` under a name of
   the filter) are preloaded with the others; the font loader keeps their bytes (`LoadedFont.data`) and the host sends
   them with `init` (copied, since text layers keep using them). The runtime registers each one in the Worker's

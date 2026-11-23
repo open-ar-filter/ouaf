@@ -23,7 +23,7 @@
  *
  * Messages (structured clone over the port):
  * - engine → runtime: `{ t: 'init', code, layers, canvases, params, seed, clock, assets, fonts }`, `{ t: 'frame',
- *   seq, time, dt, clock, faces, pairs?, params?, events }`.
+ *   seq, time, dt, aspect, clock, faces, pairs?, params?, events }`.
  * - runtime → engine: `{ t: 'done', seq, commands, emits, warnings, bitmaps? }` (`seq` 0 answers `init`),
  *   `{ t: 'fatal', message }` when `script.js` cannot be loaded.
  */
@@ -94,6 +94,8 @@ export interface WireFrame {
   time: number
   /** Seconds since the previous frame sent to the script. */
   dt: number
+  /** Displayed width / height (spec §12.4). */
+  aspect: number
   clock: number
   faces: WireFace[]
   pairs?: Array<{ a: number; b: number; distance: number; contact: boolean }>
@@ -530,7 +532,7 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
       byId.set(face.id as number, face)
       return face
     })
-    const frameData: Obj = { time: m.time, dt: m.dt, faces }
+    const frameData: Obj = { time: m.time, dt: m.dt, aspect: m.aspect, faces }
     if (m.pairs) {
       frameData.pairs = (m.pairs as Array<{ a: number; b: number; distance: number; contact: boolean }>).map((p) => ({
         a: eventFace(p.a),

@@ -2,7 +2,7 @@
 //
 // The same word in two canvases: one in the declared font asset "title" (a built-in font under a name of the
 // filter), one in a family nobody declared (the platform's fallback). Each draw reports a hash of its pixels and the
-// measured width of the word.
+// measured width of the word, and `update` reports frame.aspect.
 
 /** FNV-1a over the pixels: equal images give equal hashes. */
 function hash(ctx) {
@@ -12,29 +12,36 @@ function hash(ctx) {
   return h >>> 0
 }
 
-function word(ctx, f, id, font) {
+function word(ctx, f, frame, id, font) {
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, 160, 40)
   ctx.font = font
   ctx.fillStyle = '#000000'
   ctx.textBaseline = 'middle'
   ctx.fillText('Ouaf ouaf', 8, 20)
-  f.emit('drawn', { id, font: ctx.font, width: ctx.measureText('Ouaf ouaf').width, hash: hash(ctx) })
+  f.emit('drawn', { id, font: ctx.font, width: ctx.measureText('Ouaf ouaf').width, hash: hash(ctx), aspect: frame.aspect })
 }
 
 export default {
+  state: { aspect: 0 },
   on: {
     'message:redraw'(f) {
       f.layer('declared').invalidate()
       f.layer('fallback').invalidate()
     },
   },
+  update(f, frame) {
+    if (frame.aspect !== f.state.aspect) {
+      f.state.aspect = frame.aspect
+      f.emit('aspect', frame.aspect)
+    }
+  },
   draw: {
-    declared(ctx, f) {
-      word(ctx, f, 'declared', '28px title')
+    declared(ctx, f, frame) {
+      word(ctx, f, frame, 'declared', '28px title')
     },
-    fallback(ctx, f) {
-      word(ctx, f, 'fallback', '28px undeclared-family')
+    fallback(ctx, f, frame) {
+      word(ctx, f, frame, 'fallback', '28px undeclared-family')
     },
   },
 }

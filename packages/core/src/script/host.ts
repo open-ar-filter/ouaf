@@ -211,6 +211,7 @@ export class ScriptHost {
       seq: ++this.#seq,
       time,
       dt,
+      aspect: source.aspect,
       clock: this.#o.overrides.clock.time,
       faces: this.#o.frameData.build(source),
       events: this.#events,

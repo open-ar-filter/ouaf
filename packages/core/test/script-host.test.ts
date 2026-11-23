@@ -47,6 +47,7 @@ function hostSetup(code: string, options: Partial<ScriptHostOptions> = {}) {
     bindingData: new FaceBindingData(faces),
     camera: new PerspectiveCamera(),
     videoToClip: { ax: 2, bx: -1, ay: -2, by: 1 },
+    aspect: 0.75,
   }
   const out = new Float64Array(1)
   return { host, overrides, opacity: () => (opacity.write(0, out, 0), out[0]!), warnings, errors, emits, source, conn: () => conn! }
@@ -200,6 +201,20 @@ describe('script host', () => {
     expect(drawn).toEqual([[0, [1, 16, 8]]])
     expect(s.emits).toEqual([['star', 2]])
     expect(s.warnings).toEqual([])
+  })
+
+  it('gives frame.aspect, the displayed width / height, to update and draw (spec §12.4)', async () => {
+    const s = hostSetup(`export default { update(f, frame) { f.emit('update', frame.aspect) }, draw: { label(ctx, f, frame) { f.emit('draw', frame.aspect) } } }`, {
+      canvases: [{ layer: 0, width: 16, height: 8, fps: 0 }],
+      drawn: () => {},
+    })
+    await s.host.start({}, 0)
+    await idle(s.host)
+    s.host.beginFrame()
+    s.host.endFrame(0, s.source)
+    await idle(s.host)
+    s.host.beginFrame()
+    expect(s.emits).toEqual([['update', 0.75], ['draw', 0.75]])
   })
 
   it('sends the font assets with init when the script draws canvases (spec §12.6)', async () => {
