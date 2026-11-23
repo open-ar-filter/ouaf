@@ -704,9 +704,11 @@ The sandbox runs the script off the rendering thread: a slow script makes its ow
   produced in between are not sent to the script (the next `frame.dt` covers them); events are queued and delivered
   in order, never dropped.
 - **Watchdog**: a script that does not answer within **1 s** (`setup` included) MUST be stopped (the reference
-  engine terminates its Worker). The engine emits an `error` event with the code `SCRIPT_STOPPED`; the rest of the
-  filter (layers, bindings, animations already started) keeps working. The script stays stopped until the filter is
-  activated again.
+  engine terminates its Worker). The second is the script's: an engine SHOULD NOT count its own preparation of the
+  sandbox (canvases, fonts) before `script.js` is evaluated, nor the time a host thread too busy to receive the
+  answer adds, so that a slow device does not stop a script that does not loop. The engine emits an `error` event
+  with the code `SCRIPT_STOPPED`; the rest of the filter (layers, bindings, animations already started) keeps
+  working. The script stays stopped until the filter is activated again.
 - An engine SHOULD emit a warning when the script answers more slowly than the rendering frame rate.
 
 ## 13. Events

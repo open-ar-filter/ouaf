@@ -32,8 +32,9 @@ export interface TestConnection {
 }
 
 /**
- * A fake `OffscreenCanvas` for canvas layers: it records the 2D calls of each draw (`log`), and its "image" is an
- * `ArrayBuffer` (transferable in Node) holding `[draw number, width, height]`.
+ * A fake `OffscreenCanvas` for canvas layers: it records the 2D calls (`log`). Reading the whole canvas
+ * (`getImageData`) counts a draw: its first pixel holds `[draw number, width, height]` (opaque), its second one the
+ * straight-alpha color `STRAIGHT`, the rest is transparent.
  */
 export class FakeCanvas {
   static all: FakeCanvas[] = []
@@ -41,12 +42,15 @@ export class FakeCanvas {
   height: number
   draws = 0
   log: string[] = []
+  /** The options of `getContext`. */
+  options: unknown
   constructor(width: number, height: number) {
     this.width = width
     this.height = height
     FakeCanvas.all.push(this)
   }
-  getContext(): unknown {
+  getContext(_type: '2d', options: unknown): unknown {
+    this.options = options
     const log = this.log
     return {
       canvas: this,
@@ -55,15 +59,23 @@ export class FakeCanvas {
       setTransform: (...a: number[]) => log.push(`setTransform ${a.join(',')}`),
       clearRect: (...a: number[]) => log.push(`clearRect ${a.join(',')}`),
       fillRect: (...a: number[]) => log.push(`fillRect ${a.join(',')}`),
+      getImageData: (x: number, y: number, w: number, h: number) => {
+        log.push(`getImageData ${x},${y},${w},${h}`)
+        const data = new Uint8ClampedArray(w * h * 4)
+        if (w === this.width && h === this.height) {
+          data.set([++this.draws, this.width, this.height, 255, ...STRAIGHT])
+        }
+        return { data }
+      },
     }
-  }
-  transferToImageBitmap(): unknown {
-    return new Uint16Array([++this.draws, this.width, this.height]).buffer
   }
 }
 
+/** The second pixel of a fake canvas image, straight alpha: the runtime premultiplies it. */
+export const STRAIGHT = [200, 100, 51, 128]
+
 /** Reads a fake canvas image: `[draw number, width, height]`. */
-export const fakeImage = (image: unknown) => [...new Uint16Array(image as ArrayBuffer)]
+export const fakeImage = (image: unknown) => [...(image as Uint8ClampedArray).subarray(0, 3)]
 
 /** Starts the runtime in-process; returns the engine's end of the channel (script.js comes with `init`). */
 export function runtime(options: Partial<RuntimeOptions> = {}): TestConnection {
@@ -84,10 +96,12 @@ export function runtime(options: Partial<RuntimeOptions> = {}): TestConnection {
 
 export const tick = () => new Promise((resolve) => setTimeout(resolve, 15))
 
-/** Sends one message and waits for the answer. */
+/** Sends one message and waits for the answer (`done` or `fatal`; `started` is skipped). */
 export async function ask(conn: Pick<TestConnection, 'port'>, message: unknown): Promise<WireDone> {
   const answer = new Promise<WireDone>((resolve) => {
-    conn.port.onmessage = (e) => resolve(e.data as WireDone)
+    conn.port.onmessage = (e) => {
+      if ((e.data as { t?: unknown }).t !== 'started') resolve(e.data as WireDone)
+    }
   })
   conn.port.postMessage(message)
   return answer

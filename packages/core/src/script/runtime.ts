@@ -15,16 +15,26 @@
  *
  * Canvas layers (spec §12.6): one `OffscreenCanvas` per drawn canvas layer, in the Worker. A canvas is drawn at the
  * first frame, then when `fps` allows it (in media time: at most `fps` draws per second of `frame.time`) or after
- * `.invalidate()`. Each draw starts from a transparent canvas; its image goes to the engine as an `ImageBitmap`
- * (transferred, not copied), which the layer uploads to the GPU. The filter's font assets are registered in the
- * Worker's font set (`self.fonts`) under their asset name before `setup`, from the bytes the engine sends: a `draw`
- * function writes `ctx.font = '24px title'`. Without `FontFace` in the Worker, canvas text falls back to the
- * platform's fonts, with one warning.
+ * `.invalidate()`. Each draw starts from a transparent canvas; its image goes to the engine as premultiplied RGBA
+ * pixels (a transferred `Uint8ClampedArray`, not copied), which the layer uploads to the GPU.
+ *
+ * The canvases are CPU-backed (`willReadFrequently`) and read with `getImageData`: drawing and reading them never wait
+ * on the browser's GPU process. A GPU-backed canvas would hand over an `ImageBitmap` (`transferToImageBitmap`), but
+ * each transfer waits for the GPU process, which is busy with the engine's own rendering: under load (software WebGL,
+ * 2 CPU cores) it took about 1 s per draw, and the watchdog stopped scripts that never looped (#158). Canvases are
+ * small (spec §12.6), so reading them back is cheap (0.5 ms for 192 × 192 px). The first use of a canvas is slow (a
+ * few hundred ms under load): `init` draws and reads each canvas once before it tells the engine that the script
+ * starts (`started`), so that this cost is not counted by the watchdog (spec §12.7).
+ *
+ * The filter's font assets are registered in the Worker's font set (`self.fonts`) under their asset name before
+ * `setup`, from the bytes the engine sends: a `draw` function writes `ctx.font = '24px title'`. Without `FontFace` in
+ * the Worker, canvas text falls back to the platform's fonts, with one warning.
  *
  * Messages (structured clone over the port):
  * - engine → runtime: `{ t: 'init', code, layers, canvases, params, seed, clock, assets, fonts }`, `{ t: 'frame',
  *   seq, time, dt, aspect, clock, faces, pairs?, params?, events }`.
- * - runtime → engine: `{ t: 'done', seq, commands, emits, warnings, bitmaps? }` (`seq` 0 answers `init`),
+ * - runtime → engine: `{ t: 'started' }` once the runtime has prepared the canvases and fonts and starts the script
+ *   (`script.js` and `setup`), `{ t: 'done', seq, commands, emits, warnings, images? }` (`seq` 0 answers `init`),
  *   `{ t: 'fatal', message }` when `script.js` cannot be loaded.
  */
 
@@ -119,8 +129,11 @@ export interface WireDone {
   /** `f.emit()` calls: `[name, data]`. */
   emits: Array<[string, unknown]>
   warnings: string[]
-  /** Canvas images drawn for this answer: `[layer index, image]` (transferred). */
-  bitmaps?: Array<[number, ImageBitmap]>
+  /**
+   * Canvas images drawn for this answer: `[layer index, pixels]`, premultiplied RGBA, top row first, `width` ×
+   * `height` of the canvas (transferred).
+   */
+  images?: Array<[number, Uint8ClampedArray]>
 }
 
 /** What the runtime needs from its global scope (the Worker's `self`, or a test double). */
@@ -154,8 +167,8 @@ export interface RuntimeFonts {
 export interface RuntimeCanvas {
   width: number
   height: number
-  getContext(type: '2d'): unknown
-  transferToImageBitmap(): unknown
+  /** The context must have `getImageData` too. */
+  getContext(type: '2d', options: { willReadFrequently: boolean }): unknown
 }
 
 /**
@@ -177,6 +190,7 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
     restore(): void
     setTransform(a: number, b: number, c: number, d: number, e: number, f: number): void
     clearRect(x: number, y: number, w: number, h: number): void
+    getImageData(x: number, y: number, w: number, h: number): { data: Uint8ClampedArray }
   }
   interface Canvas {
     layer: number
@@ -237,7 +251,7 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
   let params: Obj = {}
   let assets: Obj = {}
   let canvases: Canvas[] = []
-  let bitmaps: Array<[number, unknown]> = []
+  let images: Array<[number, Uint8ClampedArray]> = []
   let state: unknown
   let clock = 0
   let commands: unknown[] = []
@@ -437,26 +451,41 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
         c.canvas.height = c.height
         continue
       }
-      if (ok) bitmaps.push([c.layer, c.canvas.transferToImageBitmap()])
+      if (ok) images.push([c.layer, pixels(c)])
     }
+  }
+
+  /** The canvas image, premultiplied (as the engine's textures are): `getImageData` gives straight alpha. */
+  function pixels(c: Canvas): Uint8ClampedArray {
+    const data = c.ctx.getImageData(0, 0, c.width, c.height).data
+    for (let i = 0; i < data.length; i += 4) {
+      const a = data[i + 3]!
+      if (a === 255) continue
+      // Rounded to the nearest (a Uint8ClampedArray rounds): this gives back the canvas's own premultiplied values.
+      data[i] = (data[i]! * a) / 255
+      data[i + 1] = (data[i + 1]! * a) / 255
+      data[i + 2] = (data[i + 2]! * a) / 255
+    }
+    return data
   }
 
   function answer(seq: number): void {
     const message: Obj = { t: 'done', seq, commands, emits, warnings }
-    const images = bitmaps
-    if (images.length > 0) message.bitmaps = images
+    const drawn = images
+    if (drawn.length > 0) message.images = drawn
     commands = []
     emits = []
     warnings = []
-    bitmaps = []
+    images = []
+    const transfer = drawn.map(([, data]) => data.buffer)
     try {
-      port!.postMessage(message, images.map(([, b]) => b))
+      port!.postMessage(message, transfer)
     } catch (error) {
       // A value the script passed cannot be cloned (a function, a DOM object…): report it without the payload. The
       // canvas images were not transferred (cloning failed first): they still go.
       const fallback: Obj = { t: 'done', seq, commands: [], emits: [], warnings: [`The script's commands or messages cannot be sent: ${describe(error)}`] }
-      if (images.length > 0) fallback.bitmaps = images
-      port!.postMessage(fallback, images.map(([, b]) => b))
+      if (drawn.length > 0) fallback.images = drawn
+      port!.postMessage(fallback, transfer)
     }
   }
 
@@ -493,8 +522,12 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
       const id = layerIds[w.layer] ?? ''
       try {
         const canvas = makeCanvas(w.width, w.height)
-        const ctx = canvas.getContext('2d') as Context2D | null
+        // CPU-backed: drawing and reading never wait on the GPU process (see the top of this file).
+        const ctx = canvas.getContext('2d', { willReadFrequently: true }) as Context2D | null
         if (!ctx) throw new Error('no 2D context')
+        // Its first use is slow (setting up the canvas's memory and raster): paid now, before the script starts.
+        ctx.clearRect(0, 0, 1, 1)
+        ctx.getImageData(0, 0, 1, 1)
         canvases.push({ layer: w.layer, id, width: w.width, height: w.height, fps: w.fps, canvas, ctx, last: -1, invalid: false })
       } catch (error) {
         warn(`canvas layer "${id}" cannot be drawn: ${describe(error)}`)
@@ -504,6 +537,8 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
     seedRandom(m.seed as number)
     // The fonts are ready before `setup` (spec §12.6), as the page's are before the filter is activated (spec §10.4).
     await registerFonts((m.fonts as WireFont[] | undefined) ?? [])
+    // From now on the script runs (its module, then `setup`): the engine's watchdog starts counting (spec §12.7).
+    port!.postMessage({ t: 'started' })
     let mod: { default?: unknown }
     try {
       mod = await load(m.code as string)

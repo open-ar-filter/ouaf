@@ -46,11 +46,8 @@ const frame = (faces: number): FrameContext => ({
   mirrored: false,
 })
 
-/** A stand-in for an `ImageBitmap`. */
-function image(width: number, height: number) {
-  return { width, height, closed: false, close() { this.closed = true } }
-}
-const asBitmap = (i: ReturnType<typeof image>) => i as unknown as ImageBitmap
+/** Premultiplied RGBA pixels of a `width` × `height` image. */
+const image = (width: number, height: number) => new Uint8ClampedArray(width * height * 4)
 
 const meshes = (o: { children: unknown[] }) => o.children as Array<Mesh<BufferGeometry, StickerMaterial>>
 const scaleOf = (m: Matrix4) => new Vector3().setFromMatrixScale(m).toArray().map((v) => Math.round(v * 1000) / 1000)
@@ -63,33 +60,32 @@ describe('canvas layer', () => {
     expect(layer.object.visible).toBe(false)
 
     const first = image(200, 100)
-    layer.setImage(asBitmap(first))
+    layer.setImage(first)
     layer.update(frame(2))
     expect(layer.object.visible).toBe(true)
     const [a, b] = meshes(layer.object)
     expect([a!.visible, b!.visible]).toEqual([true, true])
     expect(scaleOf(a!.matrix)).toEqual([6, 3, 6]) // 0.5 units high, twice as wide (200 × 100 px)
     const texture = a!.material.asset!.texture
-    expect(texture.image).toBe(first)
+    // Uploaded as they are: premultiplied, top row first, no copy.
+    expect(texture.image).toMatchObject({ width: 200, height: 100 })
+    expect((texture.image as { data: Uint8Array }).data.buffer).toBe(first.buffer)
     expect(b!.material.asset!.texture).toBe(texture) // one image for every face
-    expect(texture.flipY).toBe(false)
-    expect(texture.generateMipmaps).toBe(false)
+    expect([texture.flipY, texture.premultiplyAlpha, texture.generateMipmaps]).toEqual([false, false, false])
 
-    // A new image replaces the previous one, which is closed; dispose closes the last.
+    // A new image replaces the previous one.
     const second = image(200, 100)
     const version = texture.version
-    layer.setImage(asBitmap(second))
-    expect(first.closed).toBe(true)
-    expect(texture.image).toBe(second)
+    layer.setImage(second)
+    expect((texture.image as { data: Uint8Array }).data.buffer).toBe(second.buffer)
     expect(texture.version).toBe(version + 1)
     expect(layer.draws).toBe(2)
     layer.dispose()
-    expect(second.closed).toBe(true)
   })
 
   it('scale multiplies the size, as on a sticker', () => {
     const layer = createCanvasLayer({ type: 'canvas', id: 'bubble', width: 200, height: 100, size: 0.5, scale: [2, 1, 1] } as LayerDecl, context())
-    layer.setImage(asBitmap(image(200, 100)))
+    layer.setImage(image(200, 100))
     layer.update(frame(1))
     expect(scaleOf(meshes(layer.object)[0]!.matrix)).toEqual([12, 3, 6])
     layer.dispose()
@@ -98,18 +94,16 @@ describe('canvas layer', () => {
   it('refuses an image of another size than declared', () => {
     const warnings: string[] = []
     const layer = createCanvasLayer({ type: 'canvas', id: 'c', width: 64, height: 64 } as LayerDecl, context(warnings))
-    const big = image(4096, 4096)
-    layer.setImage(asBitmap(big))
-    expect(big.closed).toBe(true)
+    layer.setImage(image(4096, 4096))
     expect(layer.draws).toBe(0)
-    expect(warnings).toEqual(['layer "c": a canvas image of 4096×4096 px instead of 64×64 was ignored.'])
+    expect(warnings).toEqual(['layer "c": a canvas image of 67108864 bytes instead of 64×64 px was ignored.'])
   })
 
   it('goes to the overlay stage with overlay: true, and can be left out of captures', () => {
     const layer = createCanvasLayer({ type: 'canvas', id: 'ui', width: 16, height: 16, anchor: 'screen', overlay: true, excludeFromCapture: true } as LayerDecl, context())
     expect(layer.stage).toBe('overlay')
     expect(layer.excludeFromCapture).toBe(true)
-    layer.setImage(asBitmap(image(16, 16)))
+    layer.setImage(image(16, 16))
     layer.update(frame(0))
     expect(meshes(layer.object).map((m) => m.visible)).toEqual([true])
   })

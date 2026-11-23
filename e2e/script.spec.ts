@@ -3,7 +3,8 @@ import { expect, test, type Page } from '@playwright/test'
 /**
  * Scripts (#26) on `/engine.html`, in the real sandbox (sandboxed iframe, CSP, Worker): host messages reach the
  * script, its `.set()` / `.animate()` drive a color layer, `f.emit` reaches the host, the sandbox blocks the ways out,
- * and an endless loop is stopped by the watchdog while rendering goes on.
+ * an endless loop is stopped by the watchdog while rendering goes on, and a busy page does not stop a script that
+ * answers (#158).
  */
 
 const FILTER = '/filters/fixtures/script-grade/'
@@ -12,6 +13,8 @@ const POLL = { timeout: 30_000, intervals: [250, 500, 1000] }
 declare global {
   interface Window {
     received?: Array<[string, unknown]>
+    /** Busy-page test: frames sent to the script sandbox (`{ t: 'frame' }` on a `MessagePort`). */
+    scriptFrames?: number
   }
 }
 
@@ -105,4 +108,54 @@ test('an endless loop is stopped by the watchdog; rendering never stops', async 
   await send(page, 'tint', '#00ff00')
   await page.waitForTimeout(500)
   expect(await received(page, 'tinted')).toEqual([1])
+})
+
+/**
+ * #158: the `stress` demo (every layer type on 4 faces, a script that receives every landmark and draws two canvases
+ * at 30 and 15 fps) on a busy page: 4 × CDP CPU throttling of the page, software WebGL, frames pushed one after the
+ * other as in the demo test (`e2e/demos.spec.ts`), each one tracked and rendered in a long task.
+ *
+ * The script never loops: it is never stopped, and it answers each frame before the next one is rendered, so that
+ * every frame reaches it (one frame in flight: a frame rendered while the script is busy is not sent). Before #158
+ * its canvases were GPU-backed and each `transferToImageBitmap` waited on the GPU process, busy with the engine's
+ * rendering: 250 ms per draw here (less than half of the frames reached the script), about 1 s with 2 cores, which
+ * tripped the watchdog on CI.
+ */
+test('a busy page does not stop a script that answers: the stress demo under CPU throttling', async ({ page }) => {
+  test.slow()
+  await page.addInitScript(() => {
+    window.scriptFrames = 0
+    const post = MessagePort.prototype.postMessage as (this: MessagePort, ...args: unknown[]) => void
+    MessagePort.prototype.postMessage = function (this: MessagePort, ...args: unknown[]) {
+      if ((args[0] as { t?: unknown } | null)?.t === 'frame') window.scriptFrames!++
+      return post.apply(this, args)
+    } as typeof MessagePort.prototype.postMessage
+  })
+  await page.goto('/engine.html?maxFaces=4')
+  await page.waitForFunction(() => !!window.ouaf)
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 })
+  const result = await page.evaluate(async () => {
+    const { engine, core } = window.ouaf!
+    await engine.addFilter('/filters/stress/')
+    const source = await core.OfflineVideoSource.open('/test-media/four-faces-grid.mp4')
+    let pushed = 0
+    for (; pushed < 20; pushed++) {
+      const frame = await source.read()
+      if (!frame) break
+      await engine.pushFrame(frame.image, frame.time)
+      frame.close()
+      // Time for the script to answer before the next frame, much less than a GPU-bound draw took before #158.
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    source.dispose()
+    return { pushed, sent: window.scriptFrames!, errors: window.ouaf!.errors, warnings: window.ouaf!.warnings }
+  })
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 })
+  console.log(`stress under 4× CPU throttling: ${result.sent} of ${result.pushed} frames reached the script`)
+  expect(result.errors).toEqual([])
+  expect(result.warnings).toEqual([])
+  expect(result.pushed).toBe(20)
+  // It kept up (a little slack for a hiccup of a CI runner).
+  expect(result.sent).toBeGreaterThanOrEqual(18)
 })
