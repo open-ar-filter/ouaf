@@ -229,6 +229,13 @@ Normative behavior:
 - `model.animation`: the clip plays from its start when the filter is activated and, for each face, when that face
   appears (a new face id).
 - `model.occlusion: "head"`: the part of the object hidden by the head is not drawn (hat, glasses temples).
+  *Informative*: the reference implementation hides it with an invisible surface per face that only writes depth,
+  drawn before the objects: the face landmark mesh (forehead, eyes, cheeks, temples, jaw, as tracked, expressions
+  included), moved back by 0.35 face units (≈ 2 cm) along the camera rays, and closed behind by the back of an
+  average adult head on the `head` anchor. So the face's outline in the image is exact, while what lies on the face or
+  just under its surface stays drawn: stickers, the front of glasses, temples that touch the side of the head. Ears,
+  hair and the neck are not part of it. A face without usable landmarks gets an ellipsoid of an average head on the
+  `head` anchor instead. Another engine MAY use another head shape.
 - `model.fit`: the object is rescaled so its bounding box has the requested width or height.
 - `model.src: { shape }`: primitives `box`, `sphere`, `torus`, `ring`, `cone`, `cylinder`, `plane`, of size 1, usable
   without any file, centred on the anchor: `box` 1 × 1 × 1; `sphere` diameter 1; `cylinder` diameter 1 and height 1,
