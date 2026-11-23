@@ -5,7 +5,10 @@
  * Every issue names the file it is about and, when it relates to the manifest, the JSON pointer of the element;
  * line and column are given when known, so humans and AI agents can go straight to the fix.
  */
-import { assetKind, checkShaderSource, closest, createRegistry, kindFromPath, validateManifest } from '@ouaf/spec'
+import {
+  assetKind, checkPackageEntries, checkPackageSize, checkShaderSource, closest, createRegistry, formatBytes, kindFromPath, missingManifestHint,
+  PACKAGE_RECOMMENDED_BYTES, validateManifest,
+} from '@ouaf/spec'
 import type { Issue, Severity, SpecRegistry, TAssetEntry, TAssetKind } from '@ouaf/spec'
 import type { TSchema } from 'typebox'
 import { Value } from 'typebox/value'
@@ -17,10 +20,8 @@ import { ZipError } from './zip.ts'
 // ---------------------------------------------------------------------------------------------
 // Limits (spec §3 and §10.4)
 
-/** §3: recommended package size; a warning above. Decimal megabytes, the stricter reading. */
-export const PACKAGE_RECOMMENDED_BYTES = 5_000_000
-/** §3: an engine MAY refuse packages above this size. */
-export const PACKAGE_MAX_BYTES = 50_000_000
+/** §3: package limits, shared with the engine's package reader. */
+export { PACKAGE_MAX_BYTES, PACKAGE_MAX_ENTRIES, PACKAGE_RECOMMENDED_BYTES } from '@ouaf/spec'
 /** §10.4: images ≤ 4096 px per side. */
 export const IMAGE_MAX_SIDE = 4096
 /** §10.4: videos ≤ 1080p (long side × short side, either orientation), 720p recommended. */
@@ -223,45 +224,25 @@ async function read(ctx: Ctx, file: string, path?: string): Promise<Uint8Array |
 // ---------------------------------------------------------------------------------------------
 // Layout (spec §3)
 
-function unsafePath(path: string): boolean {
-  return path.startsWith('/') || path.includes('\\') || /^[A-Za-z]:/.test(path) || path.split('/').some((s) => s === '..' || s === '.' || s === '')
-}
-
+/** The rules of `@ouaf/spec` (`checkPackageEntries`), the ones the engine's package reader applies. */
 function checkLayout(ctx: Ctx) {
   const zip = ctx.source.kind === 'zip'
-  const seen = new Set<string>()
+  const layout = checkPackageEntries(ctx.source.entries)
   const outside = new Map<string, string[]>()
-  for (const e of ctx.source.entries) {
-    const loc = { file: e.path }
-    if (seen.has(e.path)) {
-      add(ctx, 'error', 'duplicate-entry', loc, `"${e.path}" appears several times in the archive.`, 'Rebuild the archive.')
-      continue
-    }
-    seen.add(e.path)
-    if (unsafePath(e.path)) {
-      add(ctx, 'error', 'unsafe-path', loc, `Unsafe path "${e.path}": package paths are relative, use "/" and contain no "..".`,
-        'Rebuild the archive from the filter folder (spec §3).')
-      continue
-    }
-    if (e.type === 'symlink') {
-      add(ctx, 'error', 'symlink', loc, `"${e.path}" is a symbolic link: packages MUST NOT contain links (an engine ignores them).`,
-        'Replace the link with a copy of the file.')
-      continue
-    }
-    if (e.type !== 'file') {
-      add(ctx, 'error', 'not-a-file', loc, `"${e.path}" is not a regular file.`, 'Remove it from the package.')
-      continue
-    }
-    if (e.path === 'manifest.json' || e.path === 'script.js' || e.path.startsWith('assets/')) {
-      ctx.files.set(e.path, e.size)
-      continue
-    }
+  for (const p of layout.problems) add(ctx, 'error', p.code, { file: p.path }, p.message, p.hint)
+  for (const c of layout.caseConflicts) {
+    add(ctx, 'warning', 'case-conflict', { file: c.path },
+      `"${c.path}" differs from "${c.other}" only by case or Unicode normalization: an engine reads them as two files, ` +
+        'most file systems as one.', 'Rename one of them (spec §3).')
+  }
+  for (const e of layout.files) ctx.files.set(e.path, e.size)
+  for (const e of layout.outside) {
     const top = e.path.includes('/') ? `${e.path.split('/')[0]}/` : e.path
     outside.set(top, [...(outside.get(top) ?? []), e.path])
   }
   for (const [top, paths] of outside) {
     const what = paths.length > 1 ? `"${top}" (${paths.length} files)` : `"${top}"`
-    add(ctx, zip ? 'error' : 'warning', 'outside-layout', { file: top },
+    add(ctx, 'warning', 'outside-layout', { file: top },
       `${what} is outside the package layout (manifest.json, script.js, assets/): an engine ignores it.`,
       zip ? 'Remove it from the archive (spec §3).' : 'It is left out of the package; move it elsewhere to silence this warning.')
   }
@@ -591,19 +572,20 @@ async function checkShader(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array) 
 
 // ---------------------------------------------------------------------------------------------
 
-function formatBytes(n: number): string {
-  return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)} MB` : n >= 1000 ? `${(n / 1000).toFixed(0)} kB` : `${n} B`
-}
-
+/**
+ * Limits shared with the engine (`checkPackageSize`: entries, unpacked size, and the archive bound), then the
+ * recommended size. Both sizes are those of the files unpacked (spec §3), whatever the compression.
+ */
 function checkBudget(ctx: Ctx) {
   const bytes = [...ctx.files.values()].reduce((a, b) => a + b, 0)
-  const size = ctx.source.archiveSize ?? bytes
-  const what = ctx.source.archiveSize !== undefined ? 'The package is' : 'The package files total'
-  if (size > PACKAGE_MAX_BYTES) {
-    add(ctx, 'error', 'package-too-large', { file: '' }, `${what} ${formatBytes(size)}: an engine may refuse packages above 50 MB (spec §3).`,
-      'Compress the assets (KTX2 textures, Draco/meshopt models, shorter or smaller videos).')
-  } else if (size > PACKAGE_RECOMMENDED_BYTES) {
-    add(ctx, 'warning', 'package-size', { file: '' }, `${what} ${formatBytes(size)}: 5 MB or less is recommended (spec §3).`,
+  const archiveBytes = ctx.source.archiveSize
+  const problems = checkPackageSize({ entries: ctx.source.entries.length, bytes, ...(archiveBytes !== undefined ? { archiveBytes } : {}) })
+  for (const p of problems) add(ctx, 'error', p.code, { file: '' }, p.message, p.hint)
+  if (problems.some((p) => p.code === 'package-too-large')) return
+  if (bytes > PACKAGE_RECOMMENDED_BYTES) {
+    const unpacked = archiveBytes !== undefined ? ' unpacked' : ''
+    add(ctx, 'warning', 'package-size', { file: '' },
+      `The package files total ${formatBytes(bytes)}${unpacked}: 5 MB or less is recommended (spec §3).`,
       'Compress the assets (KTX2 textures, Draco/meshopt models, shorter or smaller videos).')
   }
 }
@@ -643,17 +625,8 @@ export async function validatePackage(source: PackageSource, options: ValidateOp
 
   // Manifest (spec §4, §18).
   if (!ctx.files.has('manifest.json')) {
-    const nested = source.entries.filter((e) => /^[^/]+\/manifest\.json$/.test(e.path))
-    const near = closest('manifest.json', source.entries.filter((e) => !e.path.includes('/')).map((e) => e.path))
-    const sourceFolder = source.entries.some((e) => e.path === 'filter.js' || e.path === 'filter.ts')
     add(ctx, 'error', 'missing-manifest', { file: 'manifest.json' }, 'The package has no manifest.json at its root.',
-      nested.length === 1
-        ? `Found "${nested[0]!.path}": zip the content of the folder, not the folder itself.`
-        : sourceFolder
-          ? 'This is a source folder (filter.js): validate the package that `ouaf pack` builds from it.'
-          : near
-            ? `Found "${near}": the name is case-sensitive, rename it to "manifest.json".`
-            : 'Add a manifest.json describing the filter (spec §4).')
+      missingManifestHint(source.entries.map((e) => e.path)))
     return report()
   }
   const bytes = await read(ctx, 'manifest.json')

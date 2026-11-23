@@ -68,25 +68,53 @@ async function start(): Promise<void> {
       : await CameraSource.open({ facingMode: 'user', video })
     await engine.setSource(source)
     show('source', SOURCE ? `test-media/${SOURCE}.mp4` : 'camera')
-    for (const url of FILTERS) {
-      const handle = await engine.addFilter(url)
-      show(`filter ${handle.index}`, `${handle.id} (${url})${handle.warnings.length ? ` — ${handle.warnings.join('; ')}` : ''}`)
-      // Expression events delivered to the filter (spec §13): counts and the last one.
-      const counts = new Map<string, number>()
-      handle.on('expression', (e) => {
-        counts.set(e.name, (counts.get(e.name) ?? 0) + 1)
-        hook.events.push(e)
-        const last = `${e.name}${e.side ? ` (${e.side})` : ''}, face ${e.faceId}`
-        show(`events ${handle.id}`, `last: ${last} — ${[...counts].map(([n, c]) => `${n} ×${c}`).join(', ')}`)
-      })
-    }
-    renderParams(document.getElementById('params') as HTMLElement, engine.filters, (message) => show('param error', message))
+    // A folder URL, or a `.ouaf` package URL (`?filter=/filters/crown.ouaf`).
+    for (const url of FILTERS) await addFilter(url, url)
   } catch (error) {
     hook.errors.push(String(error))
     show('error', error instanceof Error ? error.message : String(error))
     startButton.disabled = false
   }
 }
+
+/** Adds a filter on top of the stack, logs its expression events and refreshes the params panel. */
+async function addFilter(src: string | File, label: string): Promise<void> {
+  const handle = await engine.addFilter(src)
+  show(`filter ${handle.index}`, `${handle.id} (${label})${handle.warnings.length ? ` — ${handle.warnings.join('; ')}` : ''}`)
+  // Expression events delivered to the filter (spec §13): counts and the last one.
+  const counts = new Map<string, number>()
+  handle.on('expression', (e) => {
+    counts.set(e.name, (counts.get(e.name) ?? 0) + 1)
+    hook.events.push(e)
+    const last = `${e.name}${e.side ? ` (${e.side})` : ''}, face ${e.faceId}`
+    show(`events ${handle.id}`, `last: ${last} — ${[...counts].map(([n, c]) => `${n} ×${c}`).join(', ')}`)
+  })
+  renderParams(document.getElementById('params') as HTMLElement, engine.filters, (message) => show('param error', message))
+}
+
+/** Opens `.ouaf` packages chosen in the file picker or dropped on the page (read locally, nothing is uploaded). */
+async function openPackages(files: Iterable<File>): Promise<void> {
+  for (const file of files) {
+    try {
+      await addFilter(file, file.name)
+    } catch (error) {
+      hook.errors.push(String(error))
+      show('error', error instanceof Error ? error.message : String(error))
+    }
+  }
+}
+const picker = document.getElementById('open') as HTMLInputElement
+picker.addEventListener('change', () => {
+  void openPackages([...(picker.files ?? [])]).finally(() => (picker.value = ''))
+})
+document.addEventListener('dragover', (e) => {
+  if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
+})
+document.addEventListener('drop', (e) => {
+  if (!e.dataTransfer?.files.length) return
+  e.preventDefault()
+  void openPackages(e.dataTransfer.files)
+})
 
 // Diagnostic: the media time the engine receives for each frame (it drives smoothing, prediction and transitions).
 let lastMediaTime = -1

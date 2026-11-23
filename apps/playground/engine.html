@@ -25,14 +25,17 @@
     <h1>Ouaf engine</h1>
     <p>
       <code>?source=&lt;clip&gt;</code> plays <code>test-media/&lt;clip&gt;.mp4</code> (camera otherwise),
-      <code>&amp;filter=&lt;url&gt;</code> (repeatable) loads filter folders, e.g. <code>/filters/&lt;id&gt;/</code>,
+      <code>&amp;filter=&lt;url&gt;</code> (repeatable) loads filter folders, e.g. <code>/filters/&lt;id&gt;/</code>, or
+      <code>.ouaf</code> packages, e.g. <code>/filters/&lt;id&gt;.ouaf</code>,
       <code>&amp;maxFaces=N</code>, <code>&amp;seed=N</code>, <code>&amp;autostart</code>.
+      Open a <code>.ouaf</code> file below, or drop it on the page.
     </p>
     <details id="demos">
       <summary>Demo filters</summary>
       <p>Each demo on a test clip, or on the camera (then press Start).</p>
       <div></div>
     </details>
+    <label>Open .ouaf <input id="open" type="file" accept=".ouaf" multiple /></label>
     <button id="start" type="button">Start</button>
     <button id="snapshot" type="button">Snapshot</button>
     <button id="record" type="button">Record</button>

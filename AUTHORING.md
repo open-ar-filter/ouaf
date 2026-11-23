@@ -58,18 +58,20 @@ A filter is a folder; `ouaf pack` turns it into a `.ouaf` package (a zip) for di
 | Form | Folder content | Check | Preview |
 |---|---|---|---|
 | **Manifest folder** (no code) | `manifest.json`, optional `assets/` | `npx ouaf validate <folder>` | the folder itself |
-| **Source folder** (with a script) | `filter.ts` or `filter.js`, optional `assets/` | `npx ouaf pack <folder> -o <file.ouaf>` (packs and validates) | the unpacked package (below) |
-| **Package** | `<id>.ouaf`: `manifest.json`, `script.js`, `assets/` | `npx ouaf validate <file.ouaf>` | not yet (#135) |
+| **Source folder** (with a script) | `filter.ts` or `filter.js`, optional `assets/` | `npx ouaf pack <folder> -o <file.ouaf>` (packs and validates) | the package it packs to (below) |
+| **Package** | `<id>.ouaf`: `manifest.json`, `script.js`, `assets/` | `npx ouaf validate <file.ouaf>` | `?filter=/filters/<id>.ouaf`, or open / drop the file on the page |
 
-- Asset files live under `assets/`; paths are relative, use `/`, never `..`; no symbolic links (§3).
+- Asset files live under `assets/`; paths are relative, use `/`, never `..`, and are case-sensitive; no symbolic
+  links (§3).
 - `ouaf pack` bundles `filter.ts` (TypeScript is fine, relative imports and npm packages are bundled), runs it once
   to read its default export, writes `manifest.json` from the data and `script.js` from the functions, then zips
   and validates the result. Nothing is written when there are errors. Other files of the folder (README…) are left out.
 - `ouaf validate` on a source folder fails with `missing-manifest`: pack it instead.
-- To preview a source folder, unpack the package into a folder the dev server serves, e.g.
-  `npx ouaf pack filters/my-filter -o my-filter.ouaf && unzip -o my-filter.ouaf -d filters/my-filter.preview`, then
-  open `/engine.html?filter=/filters/my-filter.preview/&source=pesquet-talk&autostart` (`*.preview/` folders are
-  git-ignored). The engine cannot load a `.ouaf` directly yet (#135), and `ouaf preview` is planned (#30).
+- To preview a source folder, pack it where the dev server serves it, e.g.
+  `npx ouaf pack filters/my-filter -o filters/my-filter.ouaf`, then open
+  `/engine.html?filter=/filters/my-filter.ouaf&source=pesquet-talk&autostart` (`.ouaf` files under `filters/` are
+  git-ignored); pack again and reload after each edit. A `.ouaf` from anywhere else can be opened with the page's
+  **Open .ouaf** button or dropped on the page (it is read locally). `ouaf preview` is planned (#30).
 - A manifest folder may also hold a hand-written `script.js` (a self-contained ES module, as in
   `filters/fixtures/canvas-screen/`), but then you write the manifest's `script` section yourself (§12.2): prefer
   `filter.ts`.
@@ -435,7 +437,7 @@ alpha 0 leaves the image unchanged.
 
 | What | Limit |
 |---|---|
-| Package | ≤ 5 MB recommended (warning), an engine may refuse above 50 MB |
+| Package | files unpacked: ≤ 5 MB recommended (warning), an engine may refuse above 50 MB or 1000 files |
 | Layers / assets / params | 64 / 256 / 64 |
 | Images | ≤ 4096 px per side |
 | Videos | ≤ 1080p (720p recommended), at most 2 playing at once on phones |
@@ -461,7 +463,7 @@ engine from dropping them on slow devices).
 
 Specified, or reserved, but not working in the reference engine today. Do not rely on them:
 
-- `ouaf preview` (#30) and loading a `.ouaf` in the engine (#135): preview the folder (section 2).
+- `ouaf preview` (#30): pack, then load the `.ouaf` (section 2).
 - `pairContact` / `pairSeparate` and `frame.pairs` (`uses: ["pairs"]`): no detector yet, `frame.pairs` is empty (#116).
 - Adaptive quality: dropping capabilities on slow devices, hiding below 15 Hz, `performance` events (§16; #34, #90).
 - Script `.set()` / `.animate()` of `src`, `font`, `lut`, `animation`, and of `scale` outside `model` layers: ignored
@@ -684,7 +686,8 @@ then `→` a hint. Fix errors first; warnings do not block (unless `--strict`). 
 | `function-in-data`, `not-json`, `accessor-in-data`, `script-section` | in `filter.ts`: a function outside `setup` / `update` / `on` / `draw`, a non-JSON value, a getter, or `script.<key>` other than `uses` | keep data plain; let `ouaf pack` write the `script` section |
 | `run-error`, `no-default-export`, `build-error` | the top level of `filter.ts` throws, has no default export, or imports something that cannot be bundled (Node built-ins) | `export default defineFilter({ … })`; no browser or Node APIs at the top level |
 | `outside-layout` | extra files in a manifest folder (README…) | warning only: they are left out of the package |
-| `package-size` | over 5 MB | compress assets (WebP, GLB with Draco/meshopt, 720p videos) |
+| `case-conflict` | two paths that differ only by case (`assets/Hat.png`, `assets/hat.png`) | rename one |
+| `package-size`, `package-too-large`, `too-many-entries` | files over 5 MB unpacked (warning), over 50 MB or 1000 files (error) | compress assets (WebP, GLB with Draco/meshopt, 720p videos); merge small images |
 
 ## 17. Working with an AI agent
 
@@ -694,11 +697,11 @@ spec and the schema. An agent writing a filter follows this loop:
 1. **Create** `filters/<id>/` with `manifest.json` (no logic) or `filter.ts` (logic), and `assets/` for files.
    Start from the closest example of section 15. Use only the vocabulary of this guide; for an exact bound or
    default, read the [JSON Schema](docs/spec/ouaf-v1.schema.json).
-2. **Validate**: `npx ouaf validate filters/<id> --json`, or `npx ouaf pack filters/<id> -o <id>.ouaf --json` for
-   `filter.ts`. Exit code 0 means valid. Each issue has a `code`, a `file` (with `line` / `column` when known), a
+2. **Validate**: `npx ouaf validate filters/<id> --json`, or `npx ouaf pack filters/<id> -o filters/<id>.ouaf --json`
+   for `filter.ts`. Exit code 0 means valid. Each issue has a `code`, a `file` (with `line` / `column` when known), a
    JSON `path` and a `hint`: apply the hint, then validate again until there are no errors and, ideally, no warnings.
 3. **Preview**: `npm run dev`, then `https://localhost:5173/engine.html?filter=/filters/<id>/&source=pesquet-talk&autostart`
-   (for `filter.ts`, the unpacked `.preview` folder of section 2). An agent with a browser tool reads the errors
+   (for `filter.ts`, the packed `?filter=/filters/<id>.ouaf` of section 2). An agent with a browser tool reads the errors
    printed on the page (or `window.ouaf.errors` / `window.ouaf.warnings`); without one, ask the human to look.
 4. **Report** what the filter does, the commands run and their result, and anything section 14 made impossible.
 

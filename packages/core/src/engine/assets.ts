@@ -1,8 +1,8 @@
 /**
  * Where a filter's files come from, and how its assets are resolved and preloaded (spec §10).
  *
- * - A `FilterSource` reads `manifest.json` and the package files: a folder served over HTTP (`urlSource`), or files
- *   in memory (`memorySource`; the `.ouaf` zip reader of #29 produces one).
+ * - A `FilterSource` reads `manifest.json` and the package files: a folder served over HTTP (`urlSource`), files in
+ *   memory (`memorySource`), or a `.ouaf` package (`packageSource`, `fetchPackage` in `package.ts`).
  * - Asset references (`src`, `font`, `lut`, `textures`…) are resolved to a name of the `assets` table, an `assets/…`
  *   path, or a `builtin:…` resource; anything else (remote URLs, `data:`…) is refused (spec §10.1, §15.4), even though
  *   the validator already rejects it.
@@ -67,7 +67,7 @@ export interface MemorySourceInit {
   label?: string
 }
 
-/** A filter held in memory (tests, editors, a `.ouaf` package once unzipped). */
+/** A filter held in memory (tests, editors). A `.ouaf` package is read by `packageSource`. */
 export function memorySource(init: MemorySourceInit): FilterSource {
   const files = init.files ?? {}
   return {
