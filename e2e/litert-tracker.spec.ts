@@ -35,6 +35,17 @@ test('LiteRT.js fallbacks: 2D-canvas crops and ImageBitmap transfer', async ({ p
   expect((await stats(page)).faces).toBe(1)
 })
 
+test('async readback: tracks the clip, one frame late', async ({ page }) => {
+  await open(page, 'source=pesquet-closeup&autostart&backend=litert&readback=async&filter=/filters/fixtures/dot-tint/')
+  await expect.poll(async () => (await stats(page)).tracker, POLL).toBe('LiteRT.js wasm in a worker, WebGL2 crops read back async, VideoFrame (forced)')
+  await page.waitForTimeout(2000)
+  const s = await stats(page)
+  expect(s.faces).toBe(1)
+  expect(s.trackingHz).toBeGreaterThan(10)
+  expect(s.trackerTimings?.readMs).toBeLessThan(s.trackerTimings!.landmarksMs!)
+  expect(await page.evaluate(() => window.ouaf!.warnings)).toEqual([])
+})
+
 test('with maxFaces > 1, MediaPipe tracks (LiteRT.js tracks one face)', async ({ page }) => {
   await open(page, 'source=two-faces-stacked&autostart&maxFaces=2&filter=/filters/fixtures/dot-tint/')
   await expect.poll(async () => (await stats(page)).tracker, POLL).toMatch(/^MediaPipe GPU, main thread/)

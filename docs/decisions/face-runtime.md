@@ -33,6 +33,16 @@ GPU and CPU delegates by measuring them ([`device-adaptation.md`](device-adaptat
 - **Per-step timings** (`FrameTracker.timings`, `EngineStats.trackerTimings`, `pipelineMs`, a line of the engine
   page's panel): capture, hand-off to the worker, queue, worker idle, run (detect, upload, crop, landmarks,
   blendshapes), hand-off back, result, total; and the period (1000 / Hz) against the pipeline time.
+- **Redmi Note 11S with these timings** (camera, `glasses`, blendshapes dropped; battery at 3 %, display 14–16 fps, so
+  absolute numbers are pessimistic): 13.2–15.2 Hz, period 66–76 ms = the worker's run, 56–73 ms: crop 14.5–23 ms
+  (upload 0.1–0.2 ms: the readback waits for the GPU) and landmarks 38–50 ms; blendshapes 6.8 ms when on. 2D-canvas
+  crops are slower (crop 38–41 ms); the camera track and the `<video>`'s `VideoFrame` give the same rate.
+- **Async readback** (`readback: 'async'`, `?readback=async`, opt-in until the phone confirms it): the crop of
+  frame N is read back into a pixel buffer (PBO and fence) while the landmark model runs on frame N − 1, so that the
+  worker does not wait for the GPU. Results are one frame late (the worker says which frame a result describes, and
+  the page gives its media time), and frame N's ROI is extrapolated from the two previous results. On the desktop the
+  readback is 1–2 ms and the time is in the frame's upload (`texImage2D(VideoFrame)` 47–60 ms for a clip, ≈ 22 ms for
+  the fake camera, main thread throttled 4×), which it does not hide.
 - **Loading LiteRT.js in a module worker**: one shim left of the three. Its loader runs the Emscripten script with
   `importScripts`, which throws in module workers: the worker fetches the script (the build LiteRT.js would pick) and
   replaces `importScripts` during the load by an indirect `eval` of it; `Module.locateFile` (Emscripten's own hook)

@@ -24,6 +24,13 @@ export interface GpuCropper {
   upload(source: TexImageSource, width: number, height: number): void
   /** Crops the uploaded frame to `roi` into `out` (RGBA, `size`×`size`×4 bytes, top row first); `size` ≤ `maxSize`. */
   crop(roi: Roi, size: number, out: Uint8Array): void
+  /**
+   * Like `crop`, without waiting for the GPU: the crop is read back into a pixel buffer, and `read` copies it out once
+   * the GPU is done. The worker runs a model meanwhile instead of stalling in `readPixels`.
+   */
+  cropAsync(roi: Roi, size: number): void
+  /** Copies the crop of the last `cropAsync` into `out`, after waiting for the GPU (polled); false if none. */
+  read(out: Uint8Array): Promise<boolean>
   /** The WebGL context was lost: crops read back black. */
   readonly lost: boolean
   dispose(): void
@@ -86,6 +93,26 @@ export function createGpuCropper(maxSize: number): GpuCropper {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
   gl.bindVertexArray(gl.createVertexArray())
+  // Pixel buffer of `cropAsync`, and the fence that says its readback is done.
+  const pbo = gl.createBuffer()
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo)
+  gl.bufferData(gl.PIXEL_PACK_BUFFER, maxSize * maxSize * 4, gl.STREAM_READ)
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null)
+  let fence: WebGLSync | null = null
+  let fenceSize = 0
+
+  const draw = (roi: Roi, size: number) => {
+    if (size > maxSize) throw new Error(`crop size ${size} > ${maxSize}`)
+    const k = roi.size / size
+    const cos = Math.cos(roi.rotation) * k
+    const sin = Math.sin(roi.rotation) * k
+    gl.viewport(0, 0, size, size)
+    gl.uniform1f(halfSize, size / 2)
+    gl.uniform2f(center, roi.cx, roi.cy)
+    gl.uniform2f(axisX, cos, sin)
+    gl.uniform2f(axisY, -sin, cos)
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
+  }
 
   return {
     upload(source, width, height) {
@@ -93,22 +120,37 @@ export function createGpuCropper(maxSize: number): GpuCropper {
       gl.uniform2f(frameSize, width, height)
     },
     crop(roi, size, out) {
-      if (size > maxSize) throw new Error(`crop size ${size} > ${maxSize}`)
-      const k = roi.size / size
-      const cos = Math.cos(roi.rotation) * k
-      const sin = Math.sin(roi.rotation) * k
-      gl.viewport(0, 0, size, size)
-      gl.uniform1f(halfSize, size / 2)
-      gl.uniform2f(center, roi.cx, roi.cy)
-      gl.uniform2f(axisX, cos, sin)
-      gl.uniform2f(axisY, -sin, cos)
-      gl.drawArrays(gl.TRIANGLES, 0, 3)
+      draw(roi, size)
       gl.readPixels(0, 0, size, size, gl.RGBA, gl.UNSIGNED_BYTE, out)
+    },
+    cropAsync(roi, size) {
+      draw(roi, size)
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo)
+      gl.readPixels(0, 0, size, size, gl.RGBA, gl.UNSIGNED_BYTE, 0)
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null)
+      if (fence) gl.deleteSync(fence)
+      fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
+      fenceSize = size
+      gl.flush()
+    },
+    async read(out) {
+      const f = fence
+      if (!f) return false
+      // WebGL allows no blocking wait (`MAX_CLIENT_WAIT_TIMEOUT_WEBGL` is 0 in practice): poll.
+      while (gl.clientWaitSync(f, 0, 0) === gl.TIMEOUT_EXPIRED) await new Promise((resolve) => setTimeout(resolve, 1))
+      gl.deleteSync(f)
+      fence = null
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo)
+      gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, out, 0, fenceSize * fenceSize * 4)
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null)
+      return true
     },
     get lost() {
       return gl.isContextLost()
     },
     dispose() {
+      if (fence) gl.deleteSync(fence)
+      gl.deleteBuffer(pbo)
       gl.deleteTexture(texture)
       gl.deleteProgram(program)
       gl.getExtension('WEBGL_lose_context')?.loseContext()

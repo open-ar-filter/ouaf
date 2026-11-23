@@ -7,7 +7,7 @@
  * buffer comes back with `dropped`).
  */
 import { BLENDSHAPE_COUNT, LANDMARK_COUNT } from '../face.ts'
-import type { Crop, StageTimings } from './pipeline.ts'
+import type { Crop, Readback, StageTimings } from './pipeline.ts'
 
 /** Floats of a result buffer: 478 × xyz landmarks (normalized, as in `FaceFrame`), then 52 blendshape scores. */
 export const RESULT_FLOATS = LANDMARK_COUNT * 3 + BLENDSHAPE_COUNT
@@ -17,6 +17,7 @@ export interface InitMessage {
   /** Absolute URL: `litert/wasm/` and `models/` resolve against it. */
   assetsBaseUrl: string
   crop: Crop
+  readback: Readback
 }
 
 export interface FrameMessage {
@@ -49,8 +50,9 @@ export type ToWorker = InitMessage | FrameMessage | StreamMessage
 
 export interface ReadyMessage {
   type: 'ready'
-  /** Crops actually used (after fallbacks). */
+  /** Crops and readback actually used (after fallbacks). */
   crop: Crop
+  readback: Readback
   /** Fallbacks taken in the worker. */
   warnings: string[]
 }
@@ -58,6 +60,8 @@ export interface ReadyMessage {
 export interface ResultMessage {
   type: 'result'
   id: number
+  /** The frame the result describes: `id`, or an earlier frame with the async readback. */
+  frame: number
   buffer: ArrayBuffer
   found: boolean
   hasBlendshapes: boolean

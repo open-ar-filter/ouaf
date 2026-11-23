@@ -151,11 +151,11 @@ async function init(msg: InitMessage): Promise<void> {
     }
     const loader = await prepareLoader(msg.assetsBaseUrl)
     try {
-      pipeline = await createPipeline({ assetsBaseUrl: msg.assetsBaseUrl, crop, liteRtUrl: loader.url }, (w) => pending.push(w))
+      pipeline = await createPipeline({ assetsBaseUrl: msg.assetsBaseUrl, crop, readback: msg.readback, liteRtUrl: loader.url }, (w) => pending.push(w))
     } finally {
       loader.restore()
     }
-    post({ type: 'ready', crop: pipeline.crop, warnings: pending.splice(0) })
+    post({ type: 'ready', crop: pipeline.crop, readback: pipeline.readback, warnings: pending.splice(0) })
   } catch (err) {
     post({ type: 'error', message: errorText(err) })
   }
@@ -193,8 +193,9 @@ function drop(msg: FrameMessage): void {
       buffer: msg.buffer,
       found: false,
       hasBlendshapes: false,
+      frame: msg.id,
       dropped: true,
-      timings: { detectMs: NaN, uploadMs: NaN, cropMs: NaN, landmarksMs: NaN, blendshapesMs: NaN },
+      timings: { detectMs: NaN, uploadMs: NaN, cropMs: NaN, readMs: NaN, convertMs: NaN, landmarksMs: NaN, blendshapesMs: NaN },
       warnings: [],
       receivedAt: now,
       startedAt: now,
@@ -223,15 +224,17 @@ async function run(msg: FrameMessage, receivedAt: number): Promise<void> {
       result.hasBlendshapes = false
     } else {
       if (msg.reset) pipeline.reset()
-      await pipeline.run(frame, msg.width, msg.height, msg.blendshapes, result)
+      await pipeline.run(frame, msg.width, msg.height, msg.blendshapes, result, msg.id)
     }
   } catch (err) {
     result.found = false
     result.hasBlendshapes = false
+    result.frame = msg.id
     error = errorText(err)
   } finally {
     frame?.close()
   }
+  if (unusable) result.frame = msg.id
   if (result.found) {
     out.set(result.landmarks, 0)
     out.set(result.blendshapes, result.landmarks.length)
@@ -241,10 +244,11 @@ async function run(msg: FrameMessage, receivedAt: number): Promise<void> {
     {
       type: 'result',
       id: msg.id,
+      frame: result.frame,
       buffer: msg.buffer,
       found: result.found,
       hasBlendshapes: result.hasBlendshapes,
-      timings: { ...(pipeline?.timings ?? { detectMs: NaN, uploadMs: NaN, cropMs: NaN, landmarksMs: NaN, blendshapesMs: NaN }) },
+      timings: { ...(pipeline?.timings ?? { detectMs: NaN, uploadMs: NaN, cropMs: NaN, readMs: NaN, convertMs: NaN, landmarksMs: NaN, blendshapesMs: NaN }) },
       warnings: pending.splice(0),
       receivedAt,
       startedAt,

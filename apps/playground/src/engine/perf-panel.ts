@@ -73,6 +73,8 @@ const STEP_NAMES: Record<string, string> = {
   workerMs: 'worker',
   detectMs: 'detect',
   uploadMs: 'upload',
+  readMs: 'read',
+  convertMs: 'convert',
   cropMs: 'crop',
   landmarksMs: 'lmk',
   blendshapesMs: 'bs',

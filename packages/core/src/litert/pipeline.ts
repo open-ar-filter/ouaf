@@ -46,7 +46,16 @@ export interface PipelineOptions {
   crop: Crop
   /** The LiteRT.js script to load (default: the single-threaded build chosen by LiteRT.js under `litert/wasm/`). */
   liteRtUrl?: string
+  /**
+   * GPU crops only. `sync` (default): each frame's crop is read back (`readPixels`) before its landmark model runs.
+   * `async`: the crop of frame N is read back into a pixel buffer while the landmark model runs on frame N − 1, so
+   * that the worker does not stall on the GPU (15–23 ms per result on the Redmi Note 11S's Mali-G57). Costs: results
+   * one frame late, and frame N's ROI comes from frame N − 2's landmarks (extrapolated from N − 3).
+   */
+  readback?: Readback
 }
+
+export type Readback = 'sync' | 'async'
 
 /** Per-stage timings of the last run (ms; NaN when the stage did not run). */
 export interface StageTimings {
@@ -54,7 +63,11 @@ export interface StageTimings {
   detectMs: number
   /** Frame upload to the GPU crops' texture (`texImage2D`; part of `detectMs` or `cropMs`). */
   uploadMs: number
+  /** Landmark crop: drawing and reading it back (`readPixels`, or waiting for the pixel buffer), then `convertMs`. */
   cropMs: number
+  readMs: number
+  /** RGBA bytes → the model's float input. */
+  convertMs: number
   landmarksMs: number
   blendshapesMs: number
 }
@@ -71,12 +84,16 @@ export interface PipelineResult {
   blendshapes: Float32Array
   /** Blendshapes were computed for this result. */
   hasBlendshapes: boolean
+  /** The frame this result describes (`run`'s `frame`): an earlier one with `readback: 'async'`. */
+  frame: number
 }
 
 export interface Pipeline {
   readonly crop: Crop
   readonly timings: StageTimings
-  run(source: FrameSource, width: number, height: number, blendshapes: boolean, out: PipelineResult): Promise<void>
+  readonly readback: Readback
+  /** Tracks `frame` (an id) of `width`×`height`; `out.frame` says which frame the result describes. */
+  run(source: FrameSource, width: number, height: number, blendshapes: boolean, out: PipelineResult, frame?: number): Promise<void>
   /** Forgets the tracked face: the next run starts with the detector. */
   reset(): void
   dispose(): void
@@ -89,6 +106,7 @@ export function createPipelineResult(): PipelineResult {
     landmarks: new Float32Array(LANDMARK_COUNT * 3),
     blendshapes: new Float32Array(BLENDSHAPE_COUNT),
     hasBlendshapes: false,
+    frame: 0,
   }
 }
 
@@ -189,9 +207,15 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
   const raw = new Float32Array(LANDMARK_COUNT * 3)
   const presence = new Float32Array(1)
   const pixels = new Float32Array(LANDMARK_COUNT * 3)
-  const timings: StageTimings = { detectMs: NaN, uploadMs: NaN, cropMs: NaN, landmarksMs: NaN, blendshapesMs: NaN }
+  const timings: StageTimings = { detectMs: NaN, uploadMs: NaN, cropMs: NaN, readMs: NaN, convertMs: NaN, landmarksMs: NaN, blendshapesMs: NaN }
   let tracked: Roi | undefined
+  /** The ROI tracked before `tracked` (async readback: extrapolation), undefined after a loss. */
+  let trackedBefore: Roi | undefined
   let uploaded = false
+  const asyncReadback = options.readback === 'async'
+  /** Async readback: the crop read back for the next run, and the last result, repeated while the pipe fills. */
+  let pending: { roi: Roi; width: number; height: number; frame: number } | undefined
+  const last = createPipelineResult()
 
   /** RGBA bytes → RGB floats in [lo, hi]. */
   const toFloats = (rgba: Uint8Array | Uint8ClampedArray, out: Float32Array, lo: number, hi: number) => {
@@ -246,8 +270,12 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
     const g = gpuCropper()
     if (g) {
       upload(g, source, width, height)
+      let t = performance.now()
       g.crop(roi, LANDMARKS_SIZE, gpuCrop)
+      timings.readMs = performance.now() - t
+      t = performance.now()
       toFloats(gpuCrop, landmarksInput, 0, 1)
+      timings.convertMs = performance.now() - t
       return
     }
     const ctx = (cropCtx ??= context2d(LANDMARKS_SIZE))
@@ -260,59 +288,137 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
     ctx.rotate(-roi.rotation)
     ctx.translate(-roi.cx, -roi.cy)
     ctx.drawImage(source, 0, 0, width, height)
-    toFloats(ctx.getImageData(0, 0, LANDMARKS_SIZE, LANDMARKS_SIZE).data, landmarksInput, 0, 1)
+    let t = performance.now()
+    const data = ctx.getImageData(0, 0, LANDMARKS_SIZE, LANDMARKS_SIZE).data
+    timings.readMs = performance.now() - t
+    t = performance.now()
+    toFloats(data, landmarksInput, 0, 1)
+    timings.convertMs = performance.now() - t
+  }
+
+  /** Landmark model on `landmarksInput` (the crop of `roi` in a `width`×`height` frame), then blendshapes. */
+  async function infer(roi: Roi, width: number, height: number, withBlendshapes: boolean, out: PipelineResult): Promise<void> {
+    let t = performance.now()
+    await runModel(landmarker, landmarksInput, [1, LANDMARKS_SIZE, LANDMARKS_SIZE, 3], [raw, presence])
+    timings.landmarksMs = performance.now() - t
+    out.presence = 1 / (1 + Math.exp(-(presence[0] ?? -Infinity)))
+    if (!(out.presence >= MIN_PRESENCE)) {
+      tracked = trackedBefore = undefined
+      return
+    }
+    out.found = true
+    projectLandmarks(raw, roi, LANDMARK_COUNT, pixels)
+    trackedBefore = tracked
+    tracked = landmarksToRoi(pixels, LANDMARK_COUNT)
+    // Normalized like MediaPipe's: x and z by the width, y by the height.
+    const L = out.landmarks
+    for (let i = 0; i < LANDMARK_COUNT * 3; i += 3) {
+      L[i] = pixels[i]! / width
+      L[i + 1] = pixels[i + 1]! / height
+      L[i + 2] = pixels[i + 2]! / width
+    }
+
+    if (withBlendshapes) {
+      t = performance.now()
+      // The blendshapes model reads x, y in frame pixels.
+      for (let i = 0; i < BLENDSHAPE_LANDMARKS.length; i++) {
+        const index = BLENDSHAPE_LANDMARKS[i]!
+        blendshapesInput[i * 2] = pixels[index * 3]!
+        blendshapesInput[i * 2 + 1] = pixels[index * 3 + 1]!
+      }
+      await runModel(blendshaper, blendshapesInput, [1, BLENDSHAPE_LANDMARKS.length, 2], [out.blendshapes])
+      out.hasBlendshapes = true
+      timings.blendshapesMs = performance.now() - t
+    }
+  }
+
+  /** The ROI of the next frame, extrapolated from the last two (async readback: it is one frame older). */
+  function predictRoi(): Roi | undefined {
+    const a = tracked
+    const b = trackedBefore
+    if (!a || !b) return a
+    return { cx: 2 * a.cx - b.cx, cy: 2 * a.cy - b.cy, size: a.size, rotation: a.rotation }
+  }
+
+  function remember(out: PipelineResult): void {
+    last.found = out.found
+    last.presence = out.presence
+    last.hasBlendshapes = out.hasBlendshapes
+    last.frame = out.frame
+    last.landmarks.set(out.landmarks)
+    last.blendshapes.set(out.blendshapes)
+  }
+
+  function repeat(out: PipelineResult): void {
+    out.found = last.found
+    out.presence = last.presence
+    out.hasBlendshapes = last.hasBlendshapes
+    out.frame = last.frame
+    out.landmarks.set(last.landmarks)
+    out.blendshapes.set(last.blendshapes)
   }
 
   return {
     get crop() {
       return gpu ? 'gpu' : 'canvas'
     },
+    get readback() {
+      return asyncReadback && gpu ? 'async' : 'sync'
+    },
     timings,
     reset() {
-      tracked = undefined
+      tracked = trackedBefore = undefined
+      pending = undefined
+      last.found = false
     },
-    async run(source, width, height, withBlendshapes, out) {
-      timings.detectMs = timings.uploadMs = timings.cropMs = timings.landmarksMs = timings.blendshapesMs = NaN
+    async run(source, width, height, withBlendshapes, out, frame = 0) {
+      timings.detectMs = timings.uploadMs = timings.cropMs = timings.readMs = timings.convertMs = timings.landmarksMs = timings.blendshapesMs = NaN
       uploaded = false
       out.found = false
       out.presence = 0
       out.hasBlendshapes = false
-      const roi = tracked ?? (await detect(source, width, height))
-      tracked = undefined
-      if (!roi) return
-
-      let t = performance.now()
+      out.frame = frame
+      const g = asyncReadback ? gpuCropper() : undefined
+      if (g && (tracked || pending)) {
+        // Async readback: read the crop of the previous frame, start this frame's, then run the model on the former.
+        const previous = pending
+        pending = undefined
+        let t = performance.now()
+        const have = previous !== undefined && (await g.read(gpuCrop))
+        timings.readMs = performance.now() - t
+        if (have) {
+          t = performance.now()
+          toFloats(gpuCrop, landmarksInput, 0, 1)
+          timings.convertMs = performance.now() - t
+        }
+        const roi = predictRoi()
+        if (roi) {
+          t = performance.now()
+          upload(g, source, width, height)
+          g.cropAsync(roi, LANDMARKS_SIZE)
+          timings.cropMs = performance.now() - t + (Number.isNaN(timings.readMs) ? 0 : timings.readMs) + (Number.isNaN(timings.convertMs) ? 0 : timings.convertMs)
+          pending = { roi, width, height, frame }
+        }
+        if (have && previous) {
+          out.frame = previous.frame
+          await infer(previous.roi, previous.width, previous.height, withBlendshapes, out)
+          remember(out)
+        } else repeat(out) // the pipe fills: the last result once more
+        return
+      }
+      // `infer` moves `tracked` (the ROI from the previous landmarks; none after a detection) to `trackedBefore`.
+      const fromTracking = tracked
+      const roi = fromTracking ?? (await detect(source, width, height))
+      tracked = fromTracking
+      if (!roi) {
+        tracked = trackedBefore = undefined
+        return
+      }
+      const t = performance.now()
       crop(source, width, height, roi)
       timings.cropMs = performance.now() - t
-
-      t = performance.now()
-      await runModel(landmarker, landmarksInput, [1, LANDMARKS_SIZE, LANDMARKS_SIZE, 3], [raw, presence])
-      timings.landmarksMs = performance.now() - t
-      out.presence = 1 / (1 + Math.exp(-(presence[0] ?? -Infinity)))
-      if (!(out.presence >= MIN_PRESENCE)) return
-      out.found = true
-      projectLandmarks(raw, roi, LANDMARK_COUNT, pixels)
-      tracked = landmarksToRoi(pixels, LANDMARK_COUNT)
-      // Normalized like MediaPipe's: x and z by the width, y by the height.
-      const L = out.landmarks
-      for (let i = 0; i < LANDMARK_COUNT * 3; i += 3) {
-        L[i] = pixels[i]! / width
-        L[i + 1] = pixels[i + 1]! / height
-        L[i + 2] = pixels[i + 2]! / width
-      }
-
-      if (withBlendshapes) {
-        t = performance.now()
-        // The blendshapes model reads x, y in frame pixels.
-        for (let i = 0; i < BLENDSHAPE_LANDMARKS.length; i++) {
-          const index = BLENDSHAPE_LANDMARKS[i]!
-          blendshapesInput[i * 2] = pixels[index * 3]!
-          blendshapesInput[i * 2 + 1] = pixels[index * 3 + 1]!
-        }
-        await runModel(blendshaper, blendshapesInput, [1, BLENDSHAPE_LANDMARKS.length, 2], [out.blendshapes])
-        out.hasBlendshapes = true
-        timings.blendshapesMs = performance.now() - t
-      }
+      await infer(roi, width, height, withBlendshapes, out)
+      remember(out)
     },
     dispose() {
       detector.delete()

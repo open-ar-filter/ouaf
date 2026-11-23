@@ -60,8 +60,8 @@ async function open(options: { crop?: 'gpu' | 'canvas'; warnings?: string[] } = 
   const warnings: string[] = []
   const env = { assetsBaseUrl: 'https://example.test/app/', warn: (m: string) => void warnings.push(m) }
   const opening = openLiteRtTracker(CONFIG, env, { createWorker: () => worker as unknown as Worker })
-  expect(worker.posted[0]!.message).toEqual({ type: 'init', assetsBaseUrl: 'https://example.test/app/', crop: 'gpu' })
-  worker.reply({ type: 'ready', crop: options.crop ?? 'gpu', warnings: options.warnings ?? [] })
+  expect(worker.posted[0]!.message).toEqual({ type: 'init', assetsBaseUrl: 'https://example.test/app/', crop: 'gpu', readback: 'sync' })
+  worker.reply({ type: 'ready', crop: options.crop ?? 'gpu', readback: 'sync', warnings: options.warnings ?? [] })
   const tracker = await opening
   return { tracker, worker, warnings }
 }
@@ -78,10 +78,11 @@ function answer(frame: FrameMessage, options: { found?: boolean; blendshapes?: b
   return {
     type: 'result' as const,
     id: frame.id,
+    frame: frame.id,
     buffer: frame.buffer,
     found: options.found ?? true,
     hasBlendshapes: options.blendshapes ?? frame.blendshapes,
-    timings: { detectMs: Number.NaN, uploadMs: 2, cropMs: 3, landmarksMs: 7, blendshapesMs: 1 },
+    timings: { detectMs: Number.NaN, uploadMs: 2, cropMs: 3, readMs: 2.5, convertMs: 0.4, landmarksMs: 7, blendshapesMs: 1 },
     warnings: [],
     receivedAt: frame.sentAt + 1,
     startedAt: frame.sentAt + 1,
@@ -283,6 +284,20 @@ describe('LiteRtFrameTracker (page side of the worker)', () => {
     void tracker.track(video, 3, 0.3, out)
     expect(worker.frames[2]!.frame).toBeInstanceOf(FakeVideoFrame)
     expect(tracker.description).toBe('LiteRT.js wasm in a worker, WebGL2 crops, VideoFrame')
+  })
+
+  it('with the async readback, a result describes an earlier frame: its time and size', async () => {
+    const { tracker, worker } = await open()
+    const video = { videoWidth: 640, videoHeight: 480 } as HTMLVideoElement
+    const out = createFaceFrame(1)
+    const first = tracker.track(video, 1, 0.1, out)
+    worker.reply(answer(worker.frames[0]!))
+    await first
+    const second = tracker.track(video, 2, 0.2, out)
+    // The worker answers frame 2 with the landmarks of frame 1 (one frame late).
+    worker.reply({ ...answer(worker.frames[1]!), frame: 1 })
+    await second
+    expect([out.count, out.mediaTime]).toEqual([1, 0.1])
   })
 
   it('reports a failed run once as a warning; a dead worker fails the call and every later one', async () => {

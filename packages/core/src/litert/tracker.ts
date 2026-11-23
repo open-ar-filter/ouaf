@@ -25,7 +25,7 @@ import { BLENDSHAPES_STRIDE, LANDMARKS_STRIDE, MATRIX_STRIDE, type FaceFrame, ty
 import { trackerInputHeight, trackerInputWidth } from '../face-tracker.ts'
 import type { FaceTrackerImpl, FrameTracker, TrackerConfig, TrackerEnv } from '../engine/plugin.ts'
 import type { Capability } from '../engine/governor.ts'
-import type { Crop } from './pipeline.ts'
+import type { Crop, Readback } from './pipeline.ts'
 import { RESULT_FLOATS, type FromWorker, type ReadyMessage, type ResultMessage, type ToWorker } from './protocol.ts'
 
 export type FrameTransfer = 'videoframe' | 'bitmap'
@@ -33,6 +33,11 @@ export type FrameTransfer = 'videoframe' | 'bitmap'
 export interface LiteRtTrackerOptions {
   /** Crops on WebGL2 (`gpu`, default, with a 2D-canvas fallback) or on a 2D canvas (`canvas`, to test the fallback). */
   crop?: Crop
+  /**
+   * WebGL2 crops: `sync` (default) or `async` readback (the crop is read back while the landmark model runs on the
+   * previous frame: results one frame late, see `PipelineOptions.readback`).
+   */
+  readback?: Readback
   /** How frames reach the worker: `videoframe` (default, `ImageBitmap` where missing) or `bitmap`. */
   transfer?: FrameTransfer
   /**
@@ -61,7 +66,8 @@ const TIMING_WEIGHT = 1 / 8
  * `ImageBitmap`, main thread), `toWorkerMs` (message hand-off), `queueMs` (waiting in the worker for the run before),
  * `idleMs` (the worker without a frame before this run: it waits for the page), `workerMs` (the run), of which
  * `detectMs`, `cropMs`, `landmarksMs`, `blendshapesMs` (0 when a stage did not run; `uploadMs`, the frame's upload
- * to the GPU, is part of the first of detect or crop), `toPageMs` (hand-off back),
+ * to the GPU, is part of the first of detect or crop; `readMs` and `convertMs` are the crop's readback and its
+ * conversion to the model's floats), `toPageMs` (hand-off back),
  * `resultMs` (copying the result and fitting the matrix, main thread), `totalMs` (capture to result).
  */
 export type LiteRtTimings = {
@@ -73,6 +79,8 @@ export type LiteRtTimings = {
   detectMs: number
   uploadMs: number
   cropMs: number
+  readMs: number
+  convertMs: number
   landmarksMs: number
   blendshapesMs: number
   toPageMs: number
@@ -122,7 +130,7 @@ export async function openLiteRtTracker(config: TrackerConfig, env: TrackerEnv, 
         }
       }
       const assetsBaseUrl = new URL(env.assetsBaseUrl, typeof location === 'undefined' ? undefined : location.href).href
-      worker.postMessage({ type: 'init', assetsBaseUrl, crop: options.crop ?? 'gpu' } satisfies ToWorker)
+      worker.postMessage({ type: 'init', assetsBaseUrl, crop: options.crop ?? 'gpu', readback: options.readback ?? 'sync' } satisfies ToWorker)
     })
   } catch (err) {
     worker.terminate()
@@ -130,7 +138,9 @@ export async function openLiteRtTracker(config: TrackerConfig, env: TrackerEnv, 
   }
   for (const w of ready.warnings) env.warn(w)
   if (config.maxFaces > 1) env.warn(`The LiteRT.js face tracker tracks one face (${config.maxFaces} asked).`)
-  return new LiteRtFrameTracker(worker, ready.crop, transfer, config, env, options.queue ?? true, options.frames ?? 'track')
+  const tracker = new LiteRtFrameTracker(worker, ready.crop, transfer, config, env, options.queue ?? true, options.frames ?? 'track')
+  tracker.readback = ready.readback
+  return tracker
 }
 
 /** A frame posted to the worker, until its result comes back. */
@@ -159,6 +169,10 @@ interface Claim {
 export class LiteRtFrameTracker implements FrameTracker {
   readonly crop: Crop
   readonly transfer: FrameTransfer
+  /** WebGL2 crops' readback in use (`LiteRtTrackerOptions.readback`). */
+  readback: Readback = 'sync'
+  /** Media time and size of the recent frames: an async readback's result describes an earlier frame. */
+  readonly #recent = new Map<number, { mediaTime: number; width: number; height: number }>()
   /** Mean time per result of each step (`LiteRtTimings`). */
   readonly timings: LiteRtTimings = {
     captureMs: 0,
@@ -169,6 +183,8 @@ export class LiteRtFrameTracker implements FrameTracker {
     detectMs: 0,
     uploadMs: 0,
     cropMs: 0,
+    readMs: 0,
+    convertMs: 0,
     landmarksMs: 0,
     blendshapesMs: 0,
     toPageMs: 0,
@@ -220,7 +236,8 @@ export class LiteRtFrameTracker implements FrameTracker {
 
   get description(): string {
     const frames = this.#streamTrack ? 'camera track' : this.transfer === 'videoframe' ? 'VideoFrame' : 'ImageBitmap'
-    return `LiteRT.js wasm in a worker, ${this.crop === 'gpu' ? 'WebGL2' : '2D-canvas'} crops, ${frames}${this.#queue ? '' : ', no queue'}`
+    const crops = this.crop === 'gpu' ? (this.readback === 'async' ? 'WebGL2 crops read back async' : 'WebGL2 crops') : '2D-canvas crops'
+    return `LiteRT.js wasm in a worker, ${crops}, ${frames}${this.#queue ? '' : ', no queue'}`
   }
 
   /** Runs on the newest frame as soon as the previous run completes: the main thread is not blocked meanwhile. */
@@ -340,6 +357,8 @@ export class LiteRtFrameTracker implements FrameTracker {
     const flight: Flight = { id, input, mediaTime, width, height, capturedAt, captureMs: 0, sentAt: Number.NaN }
     this.#flights.set(id, flight)
     this.#latest = id
+    this.#recent.set(id, { mediaTime, width, height })
+    this.#recent.delete(id - 8)
     // A camera: the worker takes its newest frame from the track itself.
     if (this.#fromTrack(input)) {
       this.#post(flight, undefined)
@@ -440,6 +459,8 @@ export class LiteRtFrameTracker implements FrameTracker {
     s.detectMs = msg.timings.detectMs || 0
     s.uploadMs = msg.timings.uploadMs || 0
     s.cropMs = msg.timings.cropMs || 0
+    s.readMs = msg.timings.readMs || 0
+    s.convertMs = msg.timings.convertMs || 0
     s.landmarksMs = msg.timings.landmarksMs || 0
     s.blendshapesMs = msg.timings.blendshapesMs || 0
     s.toPageMs = receivedWall - msg.postedAt
@@ -458,12 +479,13 @@ export class LiteRtFrameTracker implements FrameTracker {
     } else this.#free.push(msg.buffer) // superseded by a newer frame, or from before a reset
   }
 
-  /** Writes the result of `flight` into `out`. */
+  /** Writes the result of `flight` into `out` (of an earlier frame with the async readback: its time and size). */
   #write(flight: Flight, msg: ResultMessage, out: FaceFrame): void {
+    const frame = (msg.frame !== flight.id && this.#recent.get(msg.frame)) || flight
     out.count = 0
-    out.mediaTime = flight.mediaTime
-    out.width = flight.width
-    out.height = flight.height
+    out.mediaTime = frame.mediaTime
+    out.width = frame.width
+    out.height = frame.height
     if (!msg.found) return
     const data = new Float32Array(msg.buffer, 0, RESULT_FLOATS)
     out.landmarks.set(data.subarray(0, LANDMARKS_STRIDE), 0)
