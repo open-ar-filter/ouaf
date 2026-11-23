@@ -556,7 +556,9 @@ describe('model layer: src bound to a param, src and animation set by a script (
   })
 })
 
-describe('model layer: allocation', () => {
+// Long on a slow runner: up to 120 000 frames each (bytesPerCall's warm-up and windows; an animated model never gives a
+// clean window), and every frame now rebuilds a fitted head occluder per face (#155).
+describe('model layer: allocation', { timeout: 60_000 }, () => {
   /** Bytes allocated per frame by `layers`, with 1 to 4 faces in turn. */
   const perFrame = (layers: ModelLayerInstance[]) => {
     const anchors = fakeAnchors([1, 2, 3, 4])
