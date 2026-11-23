@@ -27,9 +27,15 @@ async function shot(page: Page, name: string, params: Record<string, boolean>, t
     const filter = window.ouaf!.engine.filters[0]!
     for (const [k, v] of Object.entries(p)) filter.setParam(k, v)
   }, params)
-  // Each seek presents the frame again, so the engine tracks and draws it once more; three of them let the smoothing
-  // settle on the still frame.
-  for (let i = 0; i < 3; i++) {
+  // Each seek presents the frame again, so the engine tracks and draws it once more, until three tracking results of
+  // this still frame have come (`window.ouaf.results`: a result describing a frame presented after the first seek), so
+  // that the smoothing settles on it. Seeking a fixed number of times depended on the tracker's latency: the default
+  // one (LiteRT.js, #165) answers a live frame a call or two later (its queued frame, the async readback), so the first
+  // results after a seek are of a frame shown before.
+  const since = await page.evaluate(() => performance.now() / 1000)
+  let fresh = 0
+  for (let i = 0; i < 12 && fresh < 3; i++) {
+    const count = await page.evaluate(() => window.ouaf!.results.count)
     await page.evaluate(
       (t) =>
         new Promise<void>((resolve) => {
@@ -39,9 +45,12 @@ async function shot(page: Page, name: string, params: Record<string, boolean>, t
           setTimeout(resolve, 3000) // in case the seek never completes
           video.currentTime = t
         }),
-      time + i * 0.001, // the same frame of the clip, but a new seek each time
+      time + (i % 3) * 0.001, // the same frame of the clip, but a new seek each time
     )
-    await page.waitForTimeout(300)
+    // This seek's result (of this frame or an earlier one), then its rendering.
+    await page.waitForFunction((n) => window.ouaf!.results.count > n, count, { timeout: 5000 }).catch(() => {})
+    await page.waitForTimeout(150)
+    if (await page.evaluate((s) => window.ouaf!.results.time >= s, since)) fresh++
   }
   const png = await page.locator('#canvas').screenshot(SHOTS ? { path: `${SHOTS}/occlusion-${time.toFixed(2)}-${name}.png` } : {})
   await page.evaluate(
@@ -130,14 +139,12 @@ function analyse(page: Page, nearIsGreen: boolean): Promise<Temples> {
 
 for (const mirror of [false, true]) {
   test(`glasses on a turned head: the far temple is hidden over the face, the near one shows up to the ear${mirror ? ' (mirrored)' : ''}`, async ({ page }) => {
-    // `readback=sync`: this test checks the occluder on still frames, redrawn by seeking the paused clip. With the async
-    // readback (the default since #165) a live frame's result comes one or two calls later, and on a paused clip the
-    // seeks did not settle reliably on a 2-vCPU runner; no real source re-presents a frame that way (still images
-    // are tracked synchronously). The async path is covered by e2e/litert-tracker.spec.ts.
-    await open(page, `source=pesquet-turn&autostart&readback=sync${mirror ? '&mirror=1' : ''}&filter=${FIXTURE}`)
+    await open(page, `source=pesquet-turn&autostart${mirror ? '&mirror=1' : ''}&filter=${FIXTURE}`)
     // Still frames where the head is turned (the tracker finds no face before 0.8 s), until five are usable: a face
     // found, and the far temple crossing the face without occlusion (else hiding it proves nothing).
     const samples: Temples[] = []
+    // A first shot, not analysed: right after the clip stops playing, the smoothing still carries its motion.
+    await shot(page, 'warm-up', { occluded: true, plain: false, face: false }, 0.85 + 1 / 60)
     for (let t = 0.85 + 1 / 60; t < 2.3 && samples.length < 5; t += 0.2) {
       await shot(page, 'occluded', { occluded: true, plain: false, face: false }, t)
       await shot(page, 'plain', { occluded: false, plain: true, face: false }, t)
