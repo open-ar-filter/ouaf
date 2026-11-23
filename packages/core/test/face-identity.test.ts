@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { FaceIdentityTracker, LANDMARK_COUNT, LANDMARKS_STRIDE, createFaceFrame, type FaceFrame } from '../src/index.ts'
-import { heapGrowth, noise } from './synthetic-face.ts'
+import { BOXED_NUMBER, bytesPerCall } from './allocation.ts'
+import { noise } from './synthetic-face.ts'
 
 /** Writes a square "face" of landmarks centred on (`cx`, `cy`) (normalized), `size` wide, in slot `slot`. */
 function writeBox(faces: FaceFrame, slot: number, cx: number, cy: number, size: number): void {
@@ -149,13 +150,15 @@ describe('FaceIdentityTracker', () => {
     const f = frame(4)
     f.count = 4
     for (let i = 0; i < 4; i++) writeBox(f, i, 0.15 + i * 0.23, 0.5, 0.15)
-    let time = 0
+    const time = new Float64Array(1) // not a captured variable: Node 24 boxes a fractional number stored there
     expect(
-      heapGrowth(() => {
-        time += 1 / 15
-        t.update(f, time)
-      }, 2000),
-    ).toBeLessThan(32 * 1024)
+      bytesPerCall(() => {
+        time[0]! += 1 / 15
+        t.update(f, time[0]!)
+      }),
+      // The time passed in, boxed by the call (a fractional number passed to a function V8 does not inline), as at
+      // the engine's own call. Anything allocated per face would add at least 4 × 16 bytes.
+    ).toBeLessThan(BOXED_NUMBER + 1)
     expect(Array.from(t.ids)).toEqual([1, 2, 3, 4])
   })
 })

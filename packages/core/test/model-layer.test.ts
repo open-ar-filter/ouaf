@@ -1,7 +1,5 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { runInNewContext } from 'node:vm'
-import { setFlagsFromString } from 'node:v8'
 import { Box3, Matrix4, Mesh, Quaternion, Vector3, type Material, type Object3D } from 'three'
 import { describe, expect, it } from 'vitest'
 import type { AnchorProvider } from '../src/engine/anchor-provider.ts'
@@ -18,6 +16,7 @@ import type { TParams } from '@ouaf/spec'
 import { bindingParams } from '../src/engine/filter.ts'
 import { ParamStore } from '../src/params/index.ts'
 import { ScriptOverrides } from '../src/script/overrides.ts'
+import { bytesPerCall } from './allocation.ts'
 import { writeSyntheticFace } from './synthetic-face.ts'
 
 const FIXTURES = resolve(import.meta.dirname, '../../../filters/fixtures/model-screen/assets')
@@ -558,37 +557,24 @@ describe('model layer: src bound to a param, src and animation set by a script (
 })
 
 describe('model layer: allocation', () => {
-  setFlagsFromString('--expose-gc')
-  const gc = runInNewContext('gc') as () => void
-
   /** Bytes allocated per frame by `layers`, with 1 to 4 faces in turn. */
   const perFrame = (layers: ModelLayerInstance[]) => {
     const anchors = fakeAnchors([1, 2, 3, 4])
     const frame = frameAt(0, anchors) as { -readonly [K in keyof FrameContext]: FrameContext[K] }
-    const state = new Float64Array(1)
-    const run = (frames: number) => {
-      for (let i = 0; i < frames; i++) {
-        state[0]! += 0.033
-        frame.time = state[0]!
-        frame.now = state[0]! * 1000
-        anchors.count = 1 + (i % 4)
-        for (let l = 0; l < layers.length; l++) layers[l]!.update(frame)
-      }
+    const state = new Float64Array(2) // time, frame
+    const render = () => {
+      state[0]! += 0.033
+      frame.time = state[0]!
+      frame.now = state[0]! * 1000
+      anchors.count = 1 + (state[1]!++ % 4)
+      for (let l = 0; l < layers.length; l++) layers[l]!.update(frame)
     }
-    const measure = (frames: number) => {
-      gc()
-      const before = process.memoryUsage().heapUsed
-      run(frames)
-      return process.memoryUsage().heapUsed - before
-    }
-    measure(20_000)
-    let best = Infinity
-    for (let r = 0; r < 3; r++) best = Math.min(best, (measure(60_000) - measure(10_000)) / 50_000)
+    const bytes = bytesPerCall(render, { warmup: 20_000 })
     for (const l of layers) l.dispose()
-    return best
+    return bytes
   }
 
-  it('allocates nothing per frame for still models', { timeout: 30_000 }, async () => {
+  it('allocates nothing per frame for still models', async () => {
     const lift = await parseModel(glb('lift.glb'), undefined)
     const ctx = context({ lift, a: createShapeAsset({ shape: 'box' }), b: createShapeAsset({ shape: 'torus' }) }, 4)
     const bytes = perFrame([
@@ -596,12 +582,12 @@ describe('model layer: allocation', () => {
       make({ src: { pick: ['a', 'b'] }, orient: 'screen', faces: 'largest', scale: { bind: 'face.index', range: [0, 3], to: [1, 2] } }, ctx),
       make({ src: 'a', anchor: 'screen', fit: { height: 0.2 }, scale: [1, 2, 1] }, ctx),
     ])
-    expect(bytes).toBeLessThan(16)
+    expect(bytes).toBeLessThan(1)
   })
 
   // three's AnimationMixer passes fractional numbers through calls V8 does not inline, so each update boxes a few of
-  // them (about 50 bytes per animated face and frame). A budget, so a regression still shows.
-  it('allocates a bounded amount per animated face', { timeout: 30_000 }, async () => {
+  // them (80 to 130 bytes per animated face and frame, by Node version). A budget, so a regression still shows.
+  it('allocates a bounded amount per animated face', async () => {
     const lift = await parseModel(glb('lift.glb'), undefined)
     const bytes = perFrame([make({ src: 'lift', animation: 'lift', occlusion: 'head' }, context({ lift }, 4))])
     expect(bytes).toBeLessThan(2.5 * 160) // 2.5 animated faces per frame on average

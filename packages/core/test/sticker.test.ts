@@ -1,5 +1,3 @@
-import { runInNewContext } from 'node:vm'
-import { setFlagsFromString } from 'node:v8'
 import { CustomBlending, DstColorFactor, Matrix4, OneFactor, OneMinusSrcAlphaFactor, OneMinusSrcColorFactor, Texture, Vector3, Vector4 } from 'three'
 import { describe, expect, it } from 'vitest'
 import type { AnchorProvider } from '../src/engine/anchor-provider.ts'
@@ -16,6 +14,7 @@ import type { TParams } from '@ouaf/spec'
 import { bindingParams } from '../src/engine/filter.ts'
 import { ParamStore } from '../src/params/index.ts'
 import { ScriptOverrides } from '../src/script/overrides.ts'
+import { bytesPerCall } from './allocation.ts'
 
 describe('sticker playback math', () => {
   it('advances the clock with the frame time; a backwards jump or a long gap counts as no time', () => {
@@ -593,9 +592,7 @@ describe('sticker layer: src bound to a param or set by a script (spec §8, §12
 })
 
 describe('sticker layer: allocation', () => {
-  it('allocates nothing per frame', { timeout: 30_000 }, () => {
-    setFlagsFromString('--expose-gc')
-    const gc = runInNewContext('gc') as () => void
+  it('allocates nothing per frame', () => {
     const sheet = asset('spritesheet', 400, 200, { width: 100, height: 100, frames: { cols: 4, rows: 2, count: 8, fps: 12 } })
     const ctx = context({ walk: sheet, a: asset('image', 10, 20), b: asset('image', 20, 10) }, 4)
     const layers = [
@@ -607,26 +604,15 @@ describe('sticker layer: allocation', () => {
     const ids = [1, 2, 3, 4]
     const anchors = fakeAnchors(ids)
     const frame = frameAt(0, anchors) as { -readonly [K in keyof FrameContext]: FrameContext[K] }
-    const state = new Float64Array(1)
-    const run = (frames: number) => {
-      for (let i = 0; i < frames; i++) {
-        state[0]! += 0.033
-        frame.time = state[0]!
-        frame.now = state[0]! * 1000
-        anchors.count = 1 + (i % 4)
-        for (let l = 0; l < layers.length; l++) layers[l]!.update(frame)
-      }
+    const state = new Float64Array(2) // time, frame
+    const render = () => {
+      state[0]! += 0.033
+      frame.time = state[0]!
+      frame.now = state[0]! * 1000
+      anchors.count = 1 + (state[1]!++ % 4)
+      for (let l = 0; l < layers.length; l++) layers[l]!.update(frame)
     }
-    const measure = (frames: number) => {
-      gc()
-      const before = process.memoryUsage().heapUsed
-      run(frames)
-      return process.memoryUsage().heapUsed - before
-    }
-    measure(20_000)
-    let perFrame = Infinity
-    for (let r = 0; r < 3; r++) perFrame = Math.min(perFrame, (measure(60_000) - measure(10_000)) / 50_000)
-    expect(perFrame).toBeLessThan(16)
+    expect(bytesPerCall(render, { warmup: 20_000 })).toBeLessThan(1)
     for (const l of layers) l.dispose()
   })
 })

@@ -20,7 +20,8 @@ import {
   headOccluderIndices,
   writeHeadOccluder,
 } from '../src/layers/model/occluder.ts'
-import { heapGrowth, posePoint, writeSyntheticFace, type SyntheticPose } from './synthetic-face.ts'
+import { bytesPerCall } from './allocation.ts'
+import { posePoint, writeSyntheticFace, type SyntheticPose } from './synthetic-face.ts'
 
 const POSES: SyntheticPose[] = [
   {},
@@ -243,6 +244,6 @@ describe('head occluder', () => {
     const head = new Float32Array(16)
     computeAnchorMatrix(faces, 0, 'head', 'rigid', true, head)
     const out = new Float32Array(OCCLUDER_VERTICES * 3)
-    expect(heapGrowth(() => writeHeadOccluder(faces, 0, true, head, out))).toBeLessThan(32 * 1024)
+    expect(bytesPerCall(() => writeHeadOccluder(faces, 0, true, head, out))).toBeLessThan(1)
   })
 })
