@@ -227,6 +227,33 @@ describe('actionable errors', () => {
     expect(codes(r.warnings)).toContain('reserved@/script/on/0')
   })
 
+  it('warns about map keys that can never match the data (spec §8)', () => {
+    const text = (bind: string, map: Record<string, unknown>) =>
+      ({ ...base, layers: [{ type: 'text', id: 't', text: { bind, map, default: '?' } }] })
+    const r = validateManifest(text('face.index', { '0': 'A', '1': 'B', '1.0': 'C', '01': 'D', x: 'E', '0.5': 'F', '-1': 'G' }))
+    expect(r.errors).toEqual([])
+    expect(codes(r.warnings)).toEqual(['binding-map-key@/layers/0/text/map/1.0', 'binding-map-key@/layers/0/text/map/01', 'binding-map-key@/layers/0/text/map/x'])
+    expect(r.warnings[0]!.message).toContain('"face.index" is a number')
+    expect(r.warnings[0]!.hint).toBe('Write the key "1".')
+    expect(r.warnings[2]!.hint).toContain('"range"/"to"')
+    // Boolean and string data of plugins: only "true" / "false" match a boolean; any key matches a string.
+    const reg = createRegistry()
+    extendRegistry(reg, {
+      plugin: 'mood',
+      version: '1.0.0',
+      data: [
+        { path: 'ext.mood.happy', type: 'boolean', description: '' },
+        { path: 'ext.mood.name', type: 'string', description: '' },
+      ],
+    })
+    const plugin = { requires: { face: true, plugins: ['mood@^1'] } }
+    const bool = validateManifest({ ...text('ext.mood.happy', { true: 'yes', false: 'no', 1: 'one', TRUE: 'YES' }), ...plugin }, reg)
+    expect(codes(bool.warnings)).toEqual(['binding-map-key@/layers/0/text/map/1', 'binding-map-key@/layers/0/text/map/TRUE'])
+    expect(bool.warnings[0]!.hint).toBe('Use the keys "true" and "false".')
+    const str = validateManifest({ ...text('ext.mood.name', { '1.0': 'a', '': 'b', 'a/b': 'c' }), ...plugin }, reg)
+    expect(str.warnings).toEqual([])
+  })
+
   it('formatIssues produces readable text', () => {
     const r = validateManifest({ ...base, assets: { star: { emoji: '⭐' } }, layers: [{ type: 'sticker', src: 'star', anchor: 'nose' }] })
     const text = formatIssues(r, 'filters/test')

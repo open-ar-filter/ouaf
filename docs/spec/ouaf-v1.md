@@ -276,11 +276,30 @@ A property marked *bindable* accepts, instead of a fixed value:
 | `{ "param": "name" }` | Value of the `name` parameter (section 9). Types must be compatible (e.g. a size cannot bind to a text parameter). |
 | `{ "bind": "path" }` | Tracking data, updated every frame. |
 | `{ "bind": "…", "range": [a, b], "to": [c, d] }` | Value clamped to `[a, b]` then linearly mapped to `[c, d]`. `range` and `to` go together. |
-| `{ "bind": "…", "map": { … } }` | Lookup table (required to transform string data). |
+| `{ "bind": "…", "map": { … } }` | Lookup table: data value → property value (keys: below). |
 | `"default": …` | Value used when the data is missing (no face). |
 
 v1 data paths: `time`, `faces.count`, `face.index`, `face.size`, `face.pose.yaw`, `face.pose.pitch`,
 `face.pose.roll`, `face.blendshapes.<name>` (appendix B). Plugins MAY add more (e.g. `face.mood`).
+
+**Per data type.** v1 data paths are all numbers; plugins MAY add `string` and `boolean` data (their registry gives
+each path's type). What a `{ "bind" }` can feed:
+
+| Data | Plain `{ "bind" }` | `range` / `to` | `map` keys that match |
+|---|---|---|---|
+| number | A number property; or a text property, as JSON writes the number (`2`, `0.5`) | Yes, into a number property | The number written as JSON writes it: `"1"` matches 1, `"0.5"` matches 0.5; `"1.0"`, `"01"`, `"1e0"`, `"x"` never match |
+| boolean | A boolean property | No | `"true"`, `"false"` |
+| string | A string property (e.g. `text`) | No | The same string |
+
+- Any other conversion needs `map`: a color, a vector (`offset`, `rotation`) or a boolean (`visible`) from numeric
+  data, a color or a number from string data, e.g. `{ "bind": "face.index", "map": { "0": "#ff0000",
+  "1": "#0000ff" } }`. `map` values MUST have the property's type; `map` and `range` cannot be combined.
+- A `map` key that can never match its data (above) is dead: a validator SHOULD warn about it.
+- **Missing data** (no face at that slot, blendshapes dropped, a value with no `map` entry) gives the binding's
+  `default`, used as it is: it is not passed through `map` or `range`/`to`, so it MUST have the property's type.
+  Without `default`, the property takes its default value (section 6).
+- `{ "param" }`: a number property takes a `number` parameter, a boolean property a `boolean`, a text property a
+  `string`, `text`, `select` or `color`, a color property a `color`, a vector property a `vec2` or `vec3` of its size.
 
 Blendshapes are an optional capability (16.2): while the engine has dropped them, `face.blendshapes.<name>` bindings
 take their `default` value, as when no face is visible.

@@ -6,10 +6,11 @@ import type { TSchema } from 'typebox'
 import { Value } from 'typebox/value'
 import { ManifestEnvelope, type TManifest } from './manifest.ts'
 import { ParamTypes, type ParamTypeName } from './params.ts'
-import { createRegistry, findEvent, type SpecRegistry } from './registry.ts'
+import { createRegistry, findEvent, type DataPathDef, type SpecRegistry } from './registry.ts'
 import { assetKind, type TAssetEntry } from './assets.ts'
 import type { TShaderLayer } from './layers.ts'
 import { shaderNameProblem, shaderUses } from './shader.ts'
+import { mapKeyValue } from './bindings.ts'
 
 export type Severity = 'error' | 'warning'
 
@@ -344,6 +345,25 @@ function checkBinding(ctx: Ctx, b: { param?: string; bind?: string }, valueSchem
     if ((m.range === undefined) !== (m.to === undefined)) {
       err(ctx, 'binding-range', path, '"range" and "to" go together.', 'E.g. { "bind": "face.blendshapes.jawOpen", "range": [0, 1], "to": [0.1, 0.6] }.')
     }
+    if (m.map && typeof m.map === 'object' && !Array.isArray(m.map)) checkMapKeys(ctx, b.bind, d.type, m.map as Json, `${path}/map`)
+  }
+}
+
+/** `map` keys that can never match data of `type` (spec §8): the entry is dead, the binding gives its `default`. */
+function checkMapKeys(ctx: Ctx, bind: string, type: DataPathDef['type'], map: Json, path: string) {
+  if (type === 'string') return
+  for (const key of Object.keys(map)) {
+    if (mapKeyValue(key, type) !== undefined) continue
+    const at = `${path}/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`
+    if (type === 'boolean') {
+      warn(ctx, 'binding-map-key', at, `"map" key "${key}" never matches: "${bind}" is a boolean, only "true" and "false" match.`,
+        'Use the keys "true" and "false".')
+      continue
+    }
+    const n = Number(key)
+    const canonical = key.trim() !== '' && Number.isFinite(n) ? String(n) : undefined
+    warn(ctx, 'binding-map-key', at, `"map" key "${key}" never matches: "${bind}" is a number, and keys match a number only when written as JSON writes it.`,
+      canonical !== undefined ? `Write the key "${canonical}".` : 'Use number keys such as "0", "1" or "0.5", or "range"/"to" for a continuous value.')
   }
 }
 
