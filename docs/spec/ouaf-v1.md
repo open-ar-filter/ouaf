@@ -504,7 +504,12 @@ export default defineFilter({
 **Messages.** `data` of `f.emit` MUST be structured-cloneable and at most 64 KB; an engine MUST refuse larger
 messages with a warning, and MAY drop messages above 60 per second. The host sends messages the other way with
 `handle.send(name, data)` (one filter) or `engine.send(name, data)` (every filter of the stack); the script receives
-them as the `message:<name>` event (13).
+them as the `message:<name>` event (13), with the payload `{ data }`. The same rules apply in that direction, but an
+engine checks them **at the call**, which throws (reference engine: `OuafError` with the code `invalid-message`): the
+name is a letter, then letters, digits, `_` or `-` (`startGame`, `level-2`); `data` is optional, MUST be
+structured-cloneable and at most 64 KB, and is copied at the call (as by `postMessage`), so changing it afterwards
+changes nothing. The 64 KB are measured as for `f.emit` (reference engine: a walk of the data counting strings at 2
+bytes a character, numbers at 8, typed arrays and `ArrayBuffer`s at their byte length, keys included).
 
 **`frame` data.** `frame.time` (media time, s), `frame.dt` (s since the previous call to the script, which covers the
 frames it skipped, 12.7), `frame.faces` (list) and, with `uses: ["pairs"]`, `frame.pairs`. Each face has `id`
@@ -581,7 +586,7 @@ The sandbox runs the script off the rendering thread: a slow script makes its ow
 | `nod`, `shake` | Vertical / horizontal head oscillation | 0.5 |
 | `paramChange` | A parameter changed: `{ name, value, previous }` | — |
 | `pairContact`, `pairSeparate` | Two faces touch / move apart on screen; `payload.faces` = `[a, b]` (12.4) | 0 |
-| `message:<name>` | Message from the host (`handle.send(name, data)` or `engine.send(name, data)`) | — |
+| `message:<name>` | Message from the host (`handle.send(name, data)` or `engine.send(name, data)`); payload `{ data }`, a structured clone of `data` (12.4). `name`: a letter, then letters, digits, `_`, `-` | — |
 
 - Pair events carry the two faces instead of one. Their threshold is the gap between the two face outlines, in face
   units: `0` fires when the outlines touch, `0.2` slightly before.
