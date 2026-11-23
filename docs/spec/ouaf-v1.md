@@ -883,7 +883,8 @@ phase 1 work they depend on.
 
 - Offset of the `head` origin (Appendix D), to be checked once rigid anchors are rendered.
 - Default event thresholds, after measurements on a variety of faces, and the mapping of the geometric measures used
-  when blendshapes are dropped (13, 16.2) onto the same scale.
+  when blendshapes are dropped (13, 16.2) onto the same scale. The reference engine's first mapping is fitted on the
+  test clips (#90): it covers blinks, smiles and speech; a wide-open mouth, raised eyebrows and a kiss are extrapolated.
 - Numeric limits (package size, dimensions, number of layers) after measurements on mobile: the phase 0 runs only
   drew a debug overlay (1–3 ms per frame), so rendering limits are measured with real layers (benchmark page,
   adaptive quality).

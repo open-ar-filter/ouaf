@@ -509,6 +509,12 @@ Performance: prefer bindings to `update`, keep canvases small and slow, few vide
 `invalidate()`, GLB with compressed meshes, and `requires.blendshapes` only when truly needed (it prevents the
 engine from dropping them on slow devices).
 
+On a slow device (§16), the engine first drops blendshapes (`face.blendshapes.*` bindings take their `default`,
+scripts get none, expression events still fire, from the landmarks), then the faces beyond those tracked, then the
+analysis resolution; below 15 Hz of tracking for 3 s it hides face filters and shows the plain camera until the rate
+is back above 18 Hz. Give blendshape bindings a sensible `default`. To see it on a desktop, open
+`/engine.html?throttle=120&filter=…` (simulated slow tracking, also a slider in the panel).
+
 ## 13. Privacy and security
 
 - A filter cannot send data anywhere: no network in scripts, no remote assets, SVGs without scripts (§15).
@@ -524,7 +530,8 @@ Specified, or reserved, but not working in the reference engine today. Do not re
 
 - `ouaf preview` (#30): pack, then load the `.ouaf` (section 2).
 - `pairContact` / `pairSeparate` and `frame.pairs` (`uses: ["pairs"]`): no detector yet, `frame.pairs` is empty (#116).
-- Adaptive quality: dropping capabilities on slow devices, hiding below 15 Hz, `performance` events (§16; #34, #90).
+- Lowering the rendering resolution when the frame budget is exceeded (#34): the engine only adapts face tracking
+  (§16) and warns about heavy stacks.
 - A host file as a video or spritesheet sticker (only images), or as a shader texture: `textures` take assets only.
 - Starting a sticker with `autoplay: false` from a script; `f.sound()` and audio assets; `lottie` and `data` assets
   (reserved: import JSON in `filter.ts`, section 6).
