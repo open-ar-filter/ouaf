@@ -27,9 +27,11 @@ async function shot(page: Page, name: string, params: Record<string, boolean>, t
     const filter = window.ouaf!.engine.filters[0]!
     for (const [k, v] of Object.entries(p)) filter.setParam(k, v)
   }, params)
-  // Each seek presents the frame again, so the engine tracks and draws it once more; three of them let the smoothing
-  // settle on the still frame.
-  for (let i = 0; i < 3; i++) {
+  // Each seek presents the frame again, so the engine tracks and draws it once more; five of them let the smoothing
+  // settle on the still frame. Five, not three: the default tracker (LiteRT.js, async readback, #165) answers a live
+  // frame one or two calls later (the crop read back during the next run, and the worker's queued frame from before
+  // the seek), so the first results after a seek are of the previous frame.
+  for (let i = 0; i < 5; i++) {
     await page.evaluate(
       (t) =>
         new Promise<void>((resolve) => {
