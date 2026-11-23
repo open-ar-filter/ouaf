@@ -1,9 +1,8 @@
-import { runInNewContext } from 'node:vm'
-import { setFlagsFromString } from 'node:v8'
 import { Group, Matrix4, Mesh, Object3D, PerspectiveCamera, Vector3 } from 'three'
 import { describe, expect, it } from 'vitest'
 import { DrawOrder, createPlacement, type DrawItem } from '../src/engine/draw-order.ts'
 import type { ObjectLayer, ObjectPlacement } from '../src/engine/layer-type.ts'
+import { bytesPerCall } from './allocation.ts'
 
 const camera = new PerspectiveCamera(60, 1, 1, 10000)
 camera.updateMatrixWorld()
@@ -190,9 +189,7 @@ describe('draw order of transparent objects (spec §7)', () => {
     }
   })
 
-  it('allocates nothing per frame', { timeout: 30_000 }, () => {
-    setFlagsFromString('--expose-gc')
-    const gc = runInNewContext('gc') as () => void
+  it('allocates nothing per frame', () => {
     const layers = Array.from({ length: 8 }, (_, i) =>
       layer([
         { at: [i, 0, -50 - i], z: (i % 3) * 0.1, face: 1 },
@@ -204,28 +201,17 @@ describe('draw order of transparent objects (spec §7)', () => {
     const items = layers.flatMap((l) => l.placements.map((p) => item(p.object)))
     const state = new Float64Array(1)
     const sink = new Float64Array(1)
-    const run = (frames: number) => {
-      for (let f = 0; f < frames; f++) {
-        state[0]! += 0.01
-        for (let i = 0; i < layers.length; i++) {
-          const p = layers[i]!.placements[0]!
-          p.z = Math.sin(state[0]! + i) * 0.2
-          p.object.matrix.elements[12] = Math.cos(state[0]! * 3 + i) * 5
-        }
-        order.update(camera)
-        // Array.prototype.sort itself copies the array (V8), as three's sort does every frame anyway: compare by hand.
-        for (let i = 1; i < items.length; i++) sink[0]! += order.compare(items[i - 1]!, items[i]!)
+    const frame = () => {
+      state[0]! += 0.01
+      for (let i = 0; i < layers.length; i++) {
+        const p = layers[i]!.placements[0]!
+        p.z = Math.sin(state[0]! + i) * 0.2
+        p.object.matrix.elements[12] = Math.cos(state[0]! * 3 + i) * 5
       }
+      order.update(camera)
+      // Array.prototype.sort itself copies the array (V8), as three's sort does every frame anyway: compare by hand.
+      for (let i = 1; i < items.length; i++) sink[0]! += order.compare(items[i - 1]!, items[i]!)
     }
-    const measure = (frames: number) => {
-      gc()
-      const before = process.memoryUsage().heapUsed
-      run(frames)
-      return process.memoryUsage().heapUsed - before
-    }
-    measure(20_000)
-    let perFrame = Infinity
-    for (let r = 0; r < 3; r++) perFrame = Math.min(perFrame, (measure(60_000) - measure(10_000)) / 50_000)
-    expect(perFrame).toBeLessThan(16)
+    expect(bytesPerCall(frame, { warmup: 20_000 })).toBeLessThan(1)
   })
 })

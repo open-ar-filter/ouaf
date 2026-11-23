@@ -13,7 +13,8 @@ import { FACE_OVAL, FEATHER, MASK_INDICES, MASK_VERTICES, faceMaskIndices, faceM
 import { AMOUNT, AMOUNT_COUNT, GRAIN_AMPLITUDE, U, UNIFORM_COUNT, grainSeed, isNeutral, writeGradeUniforms } from '../src/layers/color/grade.ts'
 import { CubeError, LUT_1D_GRID, colorLayerType, colorPlugin, lutLoader, lutTextureData, parseCube } from '../src/layers/color/index.ts'
 import { TRACKER_FOV_Y } from '../src/engine/anchor-provider.ts'
-import { heapGrowth, writeSyntheticFace } from './synthetic-face.ts'
+import { bytesPerCall } from './allocation.ts'
+import { writeSyntheticFace } from './synthetic-face.ts'
 
 /** Identity `.cube` of the given size. */
 function identityCube(size: number, header = ''): string {
@@ -163,10 +164,7 @@ describe('writeGradeUniforms', () => {
 
   it('does not allocate', () => {
     const a = amounts({ saturation: 0.3 })
-    // Until V8 optimizes it, the function boxes the numbers it returns (16 bytes a call). Under the load of the whole
-    // suite the optimizing compiler can lag behind heapGrowth's own warm-up, so warm up longer first.
-    for (let i = 0; i < 200_000; i++) writeGradeUniforms(a, WHITE, 1.5, out)
-    expect(heapGrowth(() => writeGradeUniforms(a, WHITE, 1.5, out))).toBeLessThan(32 * 1024)
+    expect(bytesPerCall(() => writeGradeUniforms(a, WHITE, 1.5, out))).toBeLessThan(1)
   })
 })
 
@@ -229,7 +227,7 @@ describe('face mask', () => {
     const faces = ovalFace(0.5, 0.5, 0.2)
     const out = new Float32Array(MASK_VERTICES * 2)
     const p = camera.projectionMatrix.elements
-    expect(heapGrowth(() => writeFaceMask(faces, 0, 0, false, p, out))).toBeLessThan(32 * 1024)
+    expect(bytesPerCall(() => writeFaceMask(faces, 0, 0, false, p, out))).toBeLessThan(1)
   })
 })
 
@@ -315,7 +313,7 @@ describe('color layer', () => {
     bound!.update(frame(1))
     expect([face!.active, bound!.active]).toEqual([true, true])
     const steady = frame(1, 2)
-    expect(heapGrowth(() => face!.update(steady), 2000)).toBeLessThan(32 * 1024)
+    expect(bytesPerCall(() => face!.update(steady))).toBeLessThan(1)
     filter.dispose()
   })
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { cameraToVideo, createFaceFrame, estimateFacePose, estimateFacePoses, videoToCamera } from '../src/index.ts'
-import { heapGrowth, poseRotation, writeSyntheticFace, type SyntheticPose } from './synthetic-face.ts'
+import { bytesPerCall } from './allocation.ts'
+import { poseRotation, writeSyntheticFace, type SyntheticPose } from './synthetic-face.ts'
 
 const POSES: SyntheticPose[] = [
   {},
@@ -49,7 +50,7 @@ describe('estimateFacePose', () => {
     const f = createFaceFrame(1)
     f.count = 1
     writeSyntheticFace(f, 0, POSES[3]!)
-    expect(heapGrowth(() => estimateFacePose(f, 0, f.matrices))).toBeLessThan(32 * 1024)
+    expect(bytesPerCall(() => estimateFacePose(f, 0, f.matrices))).toBeLessThan(1)
   })
 })
 

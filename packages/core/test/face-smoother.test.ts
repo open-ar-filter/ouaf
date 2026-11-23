@@ -9,7 +9,8 @@ import {
   liveAnchorPosition,
   type FaceFrame,
 } from '../src/index.ts'
-import { heapGrowth, noise, shiftFace, writeSyntheticFace, type SyntheticPose } from './synthetic-face.ts'
+import { BOXED_NUMBER, bytesPerCall } from './allocation.ts'
+import { noise, shiftFace, writeSyntheticFace, type SyntheticPose } from './synthetic-face.ts'
 
 function setup(maxFaces = 2, options = {}) {
   const identity = new FaceIdentityTracker({ maxFaces })
@@ -144,13 +145,18 @@ describe('FaceSmoother', () => {
     raw.count = 2
     writeSyntheticFace(raw, 0, { yaw: 10, t: [-15, 0, -60] })
     writeSyntheticFace(raw, 1, { yaw: -10, t: [15, 0, -60] })
-    let time = 0
+    const time = new Float64Array(1) // not a captured variable: Node 24 boxes a fractional number stored there
     expect(
-      heapGrowth(() => {
-        time += 1 / 15
-        step(time)
-        smoother.predict(smoothed, time + 0.05, predicted)
-      }, 300),
-    ).toBeLessThan(32 * 1024)
+      bytesPerCall(
+        () => {
+          time[0]! += 1 / 15
+          step(time[0]!)
+          smoother.predict(smoothed, time[0]! + 0.05, predicted)
+        },
+        { warmup: 20_000, calls: 300 },
+      ),
+      // The time passed in, boxed by the call (a fractional number passed to a function V8 does not inline), as at
+      // the engine's own call. Anything allocated per face or per landmark would add far more.
+    ).toBeLessThan(BOXED_NUMBER + 1)
   })
 })
