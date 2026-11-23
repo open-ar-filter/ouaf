@@ -12,7 +12,8 @@
  * - `orient: "screen"`: the plane stays parallel to the screen, upright, at the anchor's position and scale.
  */
 import { NO_FACE, compileBinding, compileNumberBinding, type CompiledBinding, type NumberBinding } from '../../bindings/index.ts'
-import type { FrameContext, LayerContext, LayerDecl, ObjectLayer } from '../../engine/layer-type.ts'
+import { createPlacement } from '../../engine/draw-order.ts'
+import type { FrameContext, LayerContext, LayerDecl, ObjectLayer, ObjectPlacement } from '../../engine/layer-type.ts'
 import type { AnchorFollow } from '../../anchors.ts'
 import {
   CanvasTexture,
@@ -119,6 +120,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
   const root = new Group()
   const geometry = new PlaneGeometry(1, 1)
   const meshes: Mesh<PlaneGeometry, MeshBasicMaterial>[] = []
+  const placements: ObjectPlacement[] = []
   for (let i = 0; i < instances; i++) {
     const material = new MeshBasicMaterial({
       map: slots[perFace ? i : 0]!.texture,
@@ -134,6 +136,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
     mesh.visible = false
     root.add(mesh)
     meshes.push(mesh)
+    placements.push(createPlacement(mesh, anchor))
   }
 
   // Per-frame scratch, allocated once.
@@ -168,9 +171,11 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
   }
 
   /** Places `mesh`; the size and scale factors are in `num[1..4]`. */
-  const place = (mesh: Mesh, face: number, anchorMatrix: Matrix4, raster: TextRaster) => {
+  const place = (mesh: Mesh, placement: ObjectPlacement, face: number, anchorMatrix: Matrix4, raster: TextRaster) => {
     const sizeValue = num[1]!
     const off = offset.evaluate(face)
+    placement.face = onScreen ? 0 : frameRef!.anchors.id(face)
+    placement.z = off[2]
     const rot = rotation.evaluate(face)
     euler.set(MathUtils.degToRad(rot[0]), MathUtils.degToRad(rot[1]), MathUtils.degToRad(rot[2]))
     quat.setFromEuler(euler)
@@ -197,6 +202,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
     stage: overlay ? 'overlay' : 'objects',
     object: root,
     excludeFromCapture: overlay && decl.excludeFromCapture === true,
+    placements,
     update(frame) {
       frameRef = frame
       let n: number
@@ -236,7 +242,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
           continue
         }
         mesh.material.opacity = Math.min(1, alpha)
-        place(mesh, face, onScreen ? screenMatrix : anchorMatrices[face]!, slot.raster)
+        place(mesh, placements[k]!, face, onScreen ? screenMatrix : anchorMatrices[face]!, slot.raster)
         mesh.visible = true
       }
       frameRef = undefined

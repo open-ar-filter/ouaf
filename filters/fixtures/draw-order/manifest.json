@@ -1,0 +1,18 @@
+{
+  "ouaf": "1",
+  "id": "draw-order",
+  "name": "Same-anchor draw order (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Draw order on one anchor (#150, spec §7): texts 0.02 in front of red bubbles, off their centres, all facing the screen. Synthetic assets.",
+  "requires": { "face": true },
+  "assets": {
+    "bubble": { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10' fill='#ff0000'/></svg>" }
+  },
+  "layers": [
+    { "type": "text", "text": "OK", "anchor": "forehead", "offset": [-0.4, 0.2, 0.02], "orient": "screen", "size": 0.3, "color": "#00ff00" },
+    { "type": "text", "text": "OK", "anchor": "forehead", "offset": [0.4, 0.2, 0.02], "orient": "screen", "size": 0.3, "color": "#0000ff" },
+    { "type": "sticker", "src": "bubble", "anchor": "forehead", "offset": [-0.6, 0.2, 0], "orient": "screen", "size": 0.8 },
+    { "type": "sticker", "src": "bubble", "anchor": "forehead", "offset": [0.6, 0.2, 0], "orient": "screen", "size": 0.8 }
+  ]
+}

@@ -187,7 +187,7 @@ where they are when the layer is shown again. When they start is given by each t
 | Property | Default | Description |
 |---|---|---|
 | `anchor` | `head` | Anchor (section 5). |
-| `offset` | `[0,0,0]` | Offset in the anchor frame, *bindable*. |
+| `offset` | `[0,0,0]` | Offset in the anchor frame, *bindable*. Its z also orders the objects on one anchor (section 7). |
 | `rotation` | `[0,0,0]` | Rotation in degrees around the x, y, z axes of the anchor frame, *bindable*. Euler order XYZ: the rotation matrix is Rx · Ry · Rz, so z is applied first, then y, then x. |
 | `scale` | `1` | Size multiplier, a number or `[x, y, z]`, *bindable*; e.g. animated by a script for a "pop" (12.4). It multiplies the layer's size (`size`, `fit`) along the x, y, z axes of the layer (the anchor frame turned by `rotation`): a number scales uniformly, `[1, 1.4, 1]` stretches vertically. `scale` is a visual transform of the drawn layer: a `text` is scaled as drawn, around its anchor point, without being laid out or rasterized again (its wrapping, `maxWidth`, does not change), so it is cheap to animate but can blur when enlarged (above about 1.5×). `size` is the font size: the text is laid out at it, and an engine MAY rasterize it again at a matching resolution. An animated "pop" uses `scale`; a lasting larger text uses `size`. An instance with a factor of 0 or less is not drawn. |
 | `orient` | `face` | `face`: follows the head; `screen`: keeps facing the screen (readable text). |
@@ -275,17 +275,28 @@ background → video → face → warp → objects → color → overlay
 | `video` | Input image |
 | `face` | Face textures, shaders with `stage: "face"` |
 | `warp` | Deformations (applied to everything before) |
-| `objects` | `text`, `sticker`, `model`, `canvas`, depth-sorted |
+| `objects` | `text`, `sticker`, `model`, `canvas`, depth-sorted (below) |
 | `color` | `color` layers and shaders with `stage: "post"`, chained |
 | `overlay` | Layers with `overlay: true` |
 
 A host MAY stack several filters. Within a stage, order is the **stack** order, then the **layer** order.
 
 - Deformations, color grading and voice effects are **chained** in that order.
-- Objects are **merged** and depth-sorted.
+- Objects are **merged** and depth-sorted (below).
 - The background is **exclusive**: the last filter in the stack wins, and the engine SHOULD emit a warning.
 - Tracking (face, etc.) is **shared** by the whole stack: it is computed only once.
 - Filters are isolated from each other: each has its own sandbox and cannot read the others' state.
+
+**Order of objects.** Within the `objects` stage, and within the `overlay` stage, objects are drawn back to front by
+depth: the depth of each one's centre. Objects of the **same face on the same anchor** (the `screen` anchor counts
+as one anchor, whatever the face) are drawn in the order of their `offset` along the anchor frame's z axis instead,
+the lowest first (+z points towards the camera, 5.1): a higher `offset` z is drawn in front, whatever the head's
+rotation and the objects' `orient`. Equal offsets are drawn in stack order, then layer order, across filters. Objects
+of different anchors or faces keep the depth order; an engine places each same-anchor group among them by depth,
+without breaking the group's order. Only the order of drawing changes: an opaque model, and a head occluder
+(`occlusion: "head"`), still hide what is behind them with the depth buffer, whatever their order. A text 0.02 in
+front of its bubble on the same anchor thus stays in front when the head turns, which ordering by the depth of their
+centres does not ensure once they are not centred on each other.
 
 ## 8. Bindings
 

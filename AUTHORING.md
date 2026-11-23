@@ -126,8 +126,10 @@ engine. "Left/right" in anchor names are the person's side (their left eye is on
 
 Layers are drawn in fixed stages, whatever their order in the list (§7):
 `background → video → face → warp → objects → color → overlay`. Within a stage, list order applies; objects (`text`,
-`sticker`, `model`, `canvas`) are depth-sorted. Warps deform everything drawn before them; color layers and post
-shaders are chained.
+`sticker`, `model`, `canvas`) are depth-sorted, except objects of the same face on the same anchor: those are drawn
+by their `offset` z (higher in front, whatever the head's rotation), then list order. A text over a bubble on the
+same anchor only needs a small z gap (`[0.2, 1, 0.01]` over `[0, 1, 0]`). Warps deform everything drawn before
+them; color layers and post shaders are chained.
 
 **Every layer**: `type` (required), `id` (unique; needed to drive it from a script), `visible` (bindable),
 `opacity` 0–1 (bindable). Hiding a layer does not pause its animations (§6.1).

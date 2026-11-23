@@ -1185,6 +1185,7 @@ export class Engine {
     }
     for (const filter of enabled) for (const l of filter.layers) add(l.instance, filter)
     for (const p of this.#renderPasses) add(p, undefined)
+    this.#compositor.drawOrder.setLayers(this.#objects)
   }
 
   async #updateTracking(): Promise<void> {
