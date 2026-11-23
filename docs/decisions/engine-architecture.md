@@ -14,7 +14,8 @@ crown.setParam('size', 1.5)          // validated now, applied at the start of t
 crown.on('paramChange', (c) => …)
 crown.moveTo(0); crown.enabled = false; crown.remove()
 await engine.setFilters(['/filters/a/', { src: '/filters/b/', params: {…} }])  // atomic swap, no empty frame
-engine.on('stats' | 'warning' | 'error' | 'performance' | 'filter:<name>', …)
+engine.on('stats' | 'warning' | 'error' | 'performance' | 'sourceEnd' | 'filter:<name>', …)
+engine.send('tint', '#f00'); crown.send('tint', '#f00')          // to every script / to one (`message:tint`)
 const photo = await engine.snapshot({ type: 'image/jpeg' })      // Blob of the next frame (#33)
 const rec = engine.record({ audio: micStream }); const video = await rec.stop()
 const stream = engine.outputStream()                             // MediaStream, e.g. for WebRTC
@@ -25,6 +26,23 @@ Errors are typed and carry a stable `code` (`OuafError` and subclasses: `Invalid
 issues, `IncompatibleEngineError`, `MissingPluginError`, `IncompatibleSourceError`, `AssetError`, `InvalidParamError`).
 A failed `addFilter`/`setFilters` leaves the stack unchanged. Compatibility (spec §17) is checked against
 `ENGINE_VERSION` (`1.0.0`, the format level implemented), not the package version.
+
+- **Events**: listeners run synchronously, in subscription order. A throwing listener does not stop the others; its
+  error becomes a `warning` (a throwing `warning` listener goes to `console.error`, so it cannot loop). `stats`
+  (`fps`, `trackingHz`, `faces`, `frameMs`, `tracker`, `width`, `height`) comes about once per second while frames
+  are rendered, over a window that restarts with each source.
+- **Messages** (spec §12.4, §13): `send(name, data)` checks the name (a letter, then letters, digits, `_`, `-`) and
+  copies `data` at the call (`structuredClone`), so data that cannot reach the sandbox throws
+  `OuafError('invalid-message')` at the caller and later changes to `data` change nothing. Messages are delivered with
+  the next frame sent to each script that lists `message:<name>` in `script.on`; a disabled filter keeps them until it
+  is re-enabled; a removed filter ignores them.
+- **Ownership**: a source the host passes stays the host's: the engine never stops it, not even in `dispose()` (stop a
+  `CameraSource` yourself). A source a source plugin creates is the engine's and is disposed when replaced.
+- **`dispose()`** frees everything the engine holds: the feed, every filter (layers, assets, GPU resources, script
+  sandboxes and Workers), the render passes, the tracker, the outputs (recordings stop, output streams end, pending
+  snapshots reject) and the listeners. It also loses the canvas's WebGL context for good (`forceContextLoss`), so that
+  GPU memory is freed at once and the browser's cap on live contexts is not reached: **a new engine needs a new
+  canvas**. Pending and later calls reject or throw `OuafError('disposed')`; `dispose()` itself is idempotent.
 
 ## One frame
 
