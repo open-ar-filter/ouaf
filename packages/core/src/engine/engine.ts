@@ -1067,6 +1067,7 @@ export class Engine {
       bindingData: this.#bindingData,
       seed: (filterId) => this.#filterSeed(filterId),
       warn: (message) => this.#warn(message),
+      error: (error) => this.#error(error),
     }
   }
 

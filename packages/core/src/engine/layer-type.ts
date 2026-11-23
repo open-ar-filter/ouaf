@@ -78,6 +78,11 @@ export interface LayerContext {
   /** The filter's preloaded assets (spec §10.4: every asset is loaded before the filter is activated). */
   readonly assets: LoadedAssets
   /**
+   * The files the host gave the filter's `asset` parameters, loaded and checked (spec §9, §15), for the content
+   * properties bound to them (`compileContent`). Absent outside a filter.
+   */
+  readonly hostAssets?: HostAssetReader
+  /**
    * The filter's parameters (spec §9), read-only. Resolve a parameter once with `indexOf`, then read its **animated**
    * value every frame with `numberAt` / `numbers` (transitions); `get` gives the committed value (strings, selects).
    */
@@ -104,6 +109,15 @@ export interface LayerContext {
   random(): number
   /** Reports a non-fatal problem to the host (`engine.on('warning')`). */
   warn(message: string): void
+}
+
+/** The loaded files of a filter's `asset` parameters. */
+export interface HostAssetReader {
+  /**
+   * The loaded value of the file of asset parameter `name` (what the asset loader of its kind gives: a `StickerAsset`,
+   * a `ModelAsset`…), `null` while it has none. It changes at the start of a frame, once a new file is loaded.
+   */
+  get(name: string): unknown
 }
 
 interface LayerInstanceBase {

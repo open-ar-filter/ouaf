@@ -1,0 +1,11 @@
+# Inverts every color (2x2x2 grid).
+TITLE "invert"
+LUT_3D_SIZE 2
+1 1 1
+0 1 1
+1 0 1
+0 0 1
+1 1 0
+0 1 0
+1 0 0
+0 0 0

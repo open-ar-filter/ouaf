@@ -7,6 +7,9 @@ import { layoutBox, wrapText, type MeasureEm } from '../src/layers/text/layout.t
 import { TextRaster, splitAlpha, type TextContext, type TextStyle, type TextSurface } from '../src/layers/text/raster.ts'
 import { createTextLayer } from '../src/layers/text/text-layer.ts'
 import { builtinPlugins } from '../src/engine/builtin.ts'
+import { bindingParams } from '../src/engine/filter.ts'
+import { ParamStore } from '../src/params/index.ts'
+import { ScriptOverrides } from '../src/script/overrides.ts'
 
 /** Every character is half an em wide. */
 const half: MeasureEm = (s) => [...s].length * 0.5
@@ -376,5 +379,82 @@ describe('text layer', () => {
     p.set('s', 0.25) // 4 em: one line
     h.frame(1)
     expect(h.surfaces[0]!.calls.slice(2)).toEqual(['fill aa bb'])
+  })
+
+  it('font follows a select param, then the script; the default font without a map entry (#140)', () => {
+    const font = (family: string) => ({ family, weight: '400', style: 'normal', face: {} })
+    const fonts: Record<string, ReturnType<typeof font>> = { 'builtin:font/sans-bold': font('Default'), 'builtin:font/mono': font('Mono'), serif: font('Serif') }
+    const store = new ParamStore({ look: { type: 'select', default: 'mono', options: { mono: 'Mono', serif: 'Serif', none: 'None' } } })
+    const overrides = new ScriptOverrides()
+    const families: string[] = []
+    const ctx = {
+      filterId: 'test',
+      assets: { get: (ref: string) => fonts[ref], has: (ref: string) => ref in fonts },
+      params: store,
+      bindings: { data: { resolve: () => undefined }, params: bindingParams(store), overrides: overrides.forLayer(0) },
+      maxFaces: 1,
+      warn: () => {},
+    } as unknown as LayerContext
+    const layer = createTextLayer({ type: 'text', text: 'Hi', anchor: 'screen', font: { param: 'look', map: { mono: 'builtin:font/mono', serif: 'serif' } } }, ctx, {
+      surface: () => {
+        // The family of the CSS font each glyph run is filled with.
+        const s = fakeSurface()
+        let family = ''
+        const font = Object.getOwnPropertyDescriptor(s.ctx, 'font')!
+        Object.defineProperty(s.ctx, 'font', {
+          get: font.get,
+          set: (f: string) => {
+            family = /"([^"]+)"/.exec(f)?.[1] ?? ''
+            font.set!.call(s.ctx, f)
+          },
+        })
+        const fill = s.ctx.fillText
+        s.ctx.fillText = (t, x, y) => {
+          families.push(family)
+          fill(t, x, y)
+        }
+        return s
+      },
+    })
+    const faces = createFaceFrame(1)
+    const anchors: AnchorProvider = { face: () => false, screen: (out) => void out.makeScale(20, 20, 20).setPosition(0, 0, -10), id: () => 0 }
+    const frame = () => layer.update({ time: 0, now: 0, dt: 16, faces, anchors, width: 640, height: 480, mirrored: false } as FrameContext)
+    frame()
+    expect(families).toEqual(['Mono'])
+    frame()
+    expect(families).toEqual(['Mono']) // no redraw while nothing changes
+    store.set('look', 'serif')
+    store.beginFrame(16)
+    frame()
+    expect(families).toEqual(['Mono', 'Serif'])
+    store.set('look', 'none') // no map entry: the default font
+    store.beginFrame(32)
+    frame()
+    expect(families).toEqual(['Mono', 'Serif', 'Default'])
+    const prop = overrides.property(0, 'font')!
+    expect(prop.problem('serif')).toBeUndefined()
+    expect(prop.problem('builtin:font/mono')).toBe('no asset named "builtin:font/mono" is declared in "assets" as a font')
+    prop.set(undefined, 'serif')
+    frame()
+    expect(families).toEqual(['Mono', 'Serif', 'Default', 'Serif'])
+    prop.set(undefined, null)
+    frame()
+    expect(families).toEqual(['Mono', 'Serif', 'Default', 'Serif', 'Default'])
+    layer.dispose()
+  })
+})
+
+describe('TextRaster.setFont', () => {
+  it('draws with the new face from the next update, and only redraws for a different one', () => {
+    const surface = fakeSurface()
+    const raster = new TextRaster(STYLE, () => surface)
+    raster.update('Hi', '#fff', Infinity)
+    expect(raster.font).toContain('"Test"')
+    raster.setFont({ family: 'Test', weight: '700', style: 'normal' })
+    expect(raster.update('Hi', '#fff', Infinity)).toBe(false)
+    raster.setFont({ family: 'Other', weight: '400', style: 'normal' })
+    expect(raster.font).toBe('normal 400 96px "Other", sans-serif')
+    expect(raster.update('Hi', '#fff', Infinity)).toBe(true)
+    expect(raster.draws).toBe(2)
   })
 })

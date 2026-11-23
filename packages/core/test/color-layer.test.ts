@@ -4,7 +4,7 @@ import { createRegistry } from '@ouaf/spec'
 import { DataUtils, PerspectiveCamera } from 'three'
 import { describe, expect, it } from 'vitest'
 import { CORE_LOADERS, memorySource, type AssetLoader, type LoaderKind } from '../src/engine/assets.ts'
-import { AssetError } from '../src/engine/errors.ts'
+import { AssetError, type InvalidParamError } from '../src/engine/errors.ts'
 import { loadFilter, type FilterLoadEnv } from '../src/engine/filter.ts'
 import type { FrameContext, PassLayer } from '../src/engine/layer-type.ts'
 import { FaceBindingData } from '../src/bindings/index.ts'
@@ -337,6 +337,74 @@ describe('color layer', () => {
     const filter = await loadFilter(1, source, undefined, env())
     const lut = filter.assets.get<{ scale: { x: number; z: number }; offset: { x: number; z: number } }>('assets/g.cube')
     expect([lut.scale.x, lut.offset.x, lut.scale.z, lut.offset.z]).toEqual([0.5, 0.25, 0.5, -0])
+    filter.dispose()
+  })
+
+  /** The LUT texture and strength the layer's shader draws with (what `render` hands to `drawFullscreen`). */
+  const drawn = (layer: PassLayer) => {
+    let material: { uniforms: Record<string, { value: unknown }> } | undefined
+    layer.render({ renderer: {} as never, input: {} as never, output: null, drawFullscreen: (m) => void (material = m as never) })
+    return { texture: material!.uniforms.uLut?.value, mix: material!.uniforms.uLutMix?.value }
+  }
+
+  it('lut follows a select param among the filter\'s LUTs; no LUT without a map entry (#140)', async () => {
+    const source = memorySource({
+      manifest: {
+        ...base,
+        params: { look: { type: 'select', default: 'off', options: { off: 'Off', noir: 'Noir', own: 'Own' } } },
+        assets: { grade: 'assets/grade.cube' },
+        layers: [{ type: 'color', lut: { param: 'look', map: { noir: 'builtin:lut/noir', own: 'grade' } } }],
+      },
+      files: { 'assets/grade.cube': identityCube(3) },
+    })
+    const filter = await loadFilter(1, source, undefined, env())
+    const layer = filter.layers[0]!.instance as PassLayer
+    layer.update(frame(0))
+    expect(layer.active).toBe(false) // no LUT, nothing else: neutral
+    filter.params.set('look', 'noir')
+    filter.params.beginFrame(16)
+    layer.update(frame(0))
+    expect(layer.active).toBe(true)
+    expect(drawn(layer)).toEqual({ texture: filter.assets.get<{ texture: unknown }>('builtin:lut/noir').texture, mix: 1 })
+    filter.params.set('look', 'own')
+    filter.params.beginFrame(32)
+    layer.update(frame(0))
+    expect(drawn(layer).texture).toBe(filter.assets.get<{ texture: unknown }>('grade').texture)
+    filter.dispose()
+  })
+
+  it('lut shows the host\'s .cube file; a file that is not a valid LUT is refused, the previous one kept (#140)', async () => {
+    const errors: Error[] = []
+    const manifest = {
+      ...base,
+      params: { look: { type: 'asset', accept: ['text/x-cube'], optional: true } },
+      layers: [{ type: 'color', lut: { param: 'look' } }],
+    }
+    // A `.cube` file has no registered media type: a file picker gives it none, its content decides.
+    const filter = await loadFilter(1, memorySource({ manifest }), { look: new File([identityCube(2)], 'mine.cube') }, env({ error: (e) => void errors.push(e) }))
+    const layer = filter.layers[0]!.instance as PassLayer
+    layer.update(frame(0))
+    expect(layer.active).toBe(true)
+    const first = drawn(layer).texture
+    expect(first).toBe((filter.hostAssets!.get('look') as { texture: unknown }).texture)
+
+    filter.params.set('look', new File(['LUT_3D_SIZE 2\n0 0 x\n'], 'broken.cube'))
+    filter.params.beginFrame(16)
+    await filter.params.assetsSettled()
+    filter.params.set('look', new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], 'photo.cube'))
+    filter.params.beginFrame(32)
+    await filter.params.assetsSettled()
+    filter.params.beginFrame(48)
+    layer.update(frame(0))
+    expect(errors.map((e) => [e.name, (e as InvalidParamError).reason, e.message])).toEqual([
+      ['InvalidParamError', 'content', 'Filter "grade": Invalid value for parameter "look": LUT "look" (broken.cube) is not a valid .cube file: line 2: A data row expects 3 numbers, got "0 0 x".'],
+      ['InvalidParamError', 'content', 'Filter "grade": Invalid value for parameter "look": "photo.cube": its content is a PNG image, not a .cube LUT this parameter accepts (text/x-cube).'],
+    ])
+    expect(drawn(layer).texture).toBe(first)
+    filter.params.set('look', null)
+    filter.params.beginFrame(64)
+    layer.update(frame(0))
+    expect(layer.active).toBe(false)
     filter.dispose()
   })
 })

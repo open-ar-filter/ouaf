@@ -338,7 +338,12 @@ export class ScriptHost {
         if (op === 'set') {
           if (value === null) prop.set(face, null)
           else if (prop.typeOf(value) === undefined) this.#warnOnce(`type:${layer}:${name}`, `.set(): ${JSON.stringify(value)} is not a valid "${name}" of ${this.#layerName(layer)} (${prop.types.join(' or ')}).`)
-          else prop.set(face, copy(value as OverrideValue))
+          else {
+            // Content properties (`src`, `font`, `lut`, `animation`) take the name of an asset (or animation) they show.
+            const problem = prop.problem(value)
+            if (problem) this.#warnOnce(`value:${layer}:${name}:${String(value)}`, `.set({ ${name}: ${JSON.stringify(value)} }) on ${this.#layerName(layer)}: ${problem}; ignored.`)
+            else prop.set(face, copy(value as OverrideValue))
+          }
           continue
         }
         this.#animate(layer, name, face, value, c[4])

@@ -85,6 +85,29 @@ describe('script host', () => {
     expect(s.warnings.join('\n')).toMatch(/only numbers, colors and vectors can be animated/)
   })
 
+  it('sets content properties to the names they accept, ignores others with a warning, and restores them with null (#140)', async () => {
+    const s = hostSetup(`export default {
+      on: { 'message:go'(f, { data }) { f.layer('label').set({ src: data }) } },
+      setup(f) { f.layer('label').set({ src: 'nope' }); f.layer('label').animate({ src: 'hat' }, { duration: 10 }) },
+    }`)
+    const src = s.overrides.forLayer(0).content!('src', (name) => (name === 'hat' ? undefined : `no asset named "${name}"`))
+    await s.host.start({}, 0)
+    await idle(s.host)
+    s.host.beginFrame()
+    expect(s.warnings).toEqual([
+      'Filter "test": .set({ src: "nope" }) on layer "label": no asset named "nope"; ignored.',
+      'Filter "test": .animate() on "src" of layer "label": only numbers, colors and vectors can be animated.',
+    ])
+    expect(src.get(0)).toBeUndefined()
+    for (const value of ['hat', null]) {
+      s.host.queue({ name: 'message:go', payload: { data: value } })
+      s.host.endFrame(0, s.source)
+      await idle(s.host)
+      s.host.beginFrame()
+      expect(src.get(0)).toBe(value ?? undefined)
+    }
+  })
+
   it('stops a script that does not answer within 1 s; the layers keep their values', async () => {
     let fire: (() => void) | undefined
     const s = hostSetup(`export default { setup(f) { f.layer('label').set({ opacity: 0.5 }) } }`, {

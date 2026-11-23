@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Type } from 'typebox'
-import { closest, createRegistry, extendRegistry, formatIssues, validateManifest, type Issue } from '../src/index.ts'
+import { closest, createRegistry, extendRegistry, formatIssues, hostFileProblem, validateManifest, type Issue } from '../src/index.ts'
 
 const base = {
   ouaf: '1',
@@ -459,5 +459,133 @@ describe('script API and shaders (spec §11, §12, #66)', () => {
     const r = validateManifest({ ...base, requires: {}, params, layers: [shader({ uniforms })] })
     expect(codes(r.errors)).toEqual(['param-type-mismatch@/layers/0/uniforms/s/param'])
     expect(r.errors[0]!.hint).toBe('Parameter types accepted here: "number", "boolean", "vec2", "vec3", "color".')
+  })
+})
+
+describe('content properties bound to params (spec §8, §9, #140)', () => {
+  const svg = (fill: string) => ({ svg: `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'><rect width='1' height='1' fill='${fill}'/></svg>` })
+  const sticker = (src: unknown) => ({ type: 'sticker', src, anchor: 'screen' })
+  const manifest = (extra: Record<string, unknown>) => ({ ...base, requires: {}, ...extra })
+
+  it('accepts a host file for src, font and lut, and a select or string param with map among the filter\'s assets', () => {
+    const r = validateManifest(manifest({
+      params: {
+        logo: { type: 'asset', accept: ['image/png', 'image/svg+xml'], maxSize: 500000, optional: true },
+        hat: { type: 'asset', accept: ['model/gltf-binary'] },
+        typeface: { type: 'asset', accept: ['font/woff2', 'font/ttf'], optional: true },
+        look: { type: 'asset', accept: ['text/x-cube'], optional: true },
+        style: { type: 'select', default: 'gold', options: { gold: 'Gold', flowers: 'Flowers' } },
+        word: { type: 'string', default: 'a' },
+      },
+      assets: { gold: svg('#fc0'), flowers: { emoji: '🌸' }, walk: { src: 'assets/walk.png', frames: { cols: 2, rows: 1, fps: 4 } }, hatA: 'assets/a.glb', mono: 'assets/mono.woff2' },
+      layers: [
+        sticker({ param: 'logo' }),
+        sticker({ param: 'style', map: { gold: 'gold', flowers: 'flowers' } }),
+        sticker({ param: 'word', map: { a: 'walk', b: 'assets/b.png' } }),
+        { type: 'model', src: { param: 'hat' }, anchor: 'screen' },
+        { type: 'model', src: { param: 'word', map: { a: 'hatA' } }, anchor: 'screen' },
+        { type: 'text', text: 'x', anchor: 'screen', font: { param: 'typeface' } },
+        { type: 'text', text: 'x', anchor: 'screen', font: { param: 'style', map: { gold: 'mono', flowers: 'builtin:font/serif' } } },
+        { type: 'color', lut: { param: 'look' } },
+        { type: 'color', lut: { param: 'style', map: { gold: 'builtin:lut/warm', flowers: 'builtin:lut/cool' } } },
+      ],
+    }))
+    expect(codes(r.errors)).toEqual([])
+    expect(codes(r.warnings)).toEqual([])
+  })
+
+  it('needs an asset, select or string param, map for a select or string, and no map for an asset', () => {
+    const r = validateManifest(manifest({
+      params: {
+        size: { type: 'number', default: 1 },
+        style: { type: 'select', default: 'a', options: { a: 'A' } },
+        logo: { type: 'asset', accept: ['image/png'] },
+      },
+      assets: { a: svg('#f00') },
+      layers: [
+        sticker({ param: 'size' }),
+        sticker({ param: 'style' }),
+        sticker({ param: 'logo', map: { a: 'a' } }),
+        sticker({ param: 'nope' }),
+      ],
+    }))
+    expect(codes(r.errors)).toEqual([
+      'param-type-mismatch@/layers/0/src/param',
+      'binding-map-required@/layers/1/src',
+      'binding-map-unexpected@/layers/2/src/map',
+      'unknown-param@/layers/3/src/param',
+    ])
+  })
+
+  it('checks accept against what the property shows', () => {
+    const r = validateManifest(manifest({
+      params: {
+        logo: { type: 'asset', accept: ['image/png', 'video/mp4', 'model/gltf-binary'] },
+        face: { type: 'asset', accept: ['image/png'] },
+      },
+      layers: [sticker({ param: 'logo' }), { type: 'text', text: 'x', anchor: 'screen', font: { param: 'face' } }],
+    }))
+    expect(codes(r.errors)).toEqual(['asset-accept@/params/logo/accept/1', 'asset-accept@/params/logo/accept/2', 'asset-accept@/params/face/accept/0'])
+    expect(r.errors[2]!.message).toBe('Parameter "face" accepts "image/png", but it is bound to /layers/1/font, which shows a font.')
+    expect(r.errors[2]!.hint).toBe('Media types accepted for a font: "font/woff2", "font/woff", "font/ttf", "font/otf".')
+  })
+
+  it('checks every map value: an asset reference, declared, of a kind the property shows', () => {
+    const params = { style: { type: 'select', default: 'a', options: { a: 'A', b: 'B', c: 'C', d: 'D' } } }
+    const assets = { a: svg('#f00'), hat: 'assets/hat.glb', grade: 'assets/grade.cube' }
+    const remote = validateManifest(manifest({ params, assets, layers: [sticker({ param: 'style', map: { a: 'a', d: 'https://example.com/x.png' } })] }))
+    expect(codes(remote.errors)).toEqual(['type@/layers/0/src'])
+    const r = validateManifest(manifest({
+      params,
+      assets,
+      layers: [
+        sticker({ param: 'style', map: { a: 'a', b: 'hat', c: 'missing', d: 'assets/d.png' } }),
+        { type: 'color', lut: { param: 'style', map: { a: 'grade', b: 'builtin:lut/noir', c: 'builtin:font/mono', d: 'builtin:lut/nope' } } },
+      ],
+    }))
+    expect(codes(r.errors)).toEqual([
+      'asset-kind@/layers/0/src/map/b',
+      'unknown-asset@/layers/0/src/map/c',
+      'asset-kind@/layers/1/lut/map/c',
+      'unknown-builtin@/layers/1/lut/map/d',
+    ])
+    expect(r.errors[0]!.message).toBe('"hat" is a model asset: this property shows an image, spritesheet or video asset.')
+    // Assets used only in a map are used.
+    expect(codes(r.warnings)).toEqual([])
+  })
+
+  it('warns about select options without a map entry and map keys that are not options', () => {
+    const r = validateManifest(manifest({
+      params: { style: { type: 'select', default: 'gold', options: { gold: 'Gold', flowers: 'Flowers' } }, team: { type: 'select', default: '', options: { from: 'host' } } },
+      assets: { gold: svg('#fc0'), silver: svg('#ccc') },
+      layers: [
+        sticker({ param: 'style', map: { gold: 'gold', silvr: 'silver' } }),
+        sticker({ param: 'team', map: { any: 'gold' } }),
+        { type: 'text', text: 'x', anchor: 'screen', font: { param: 'style', map: { gold: 'builtin:font/mono' } } },
+      ],
+    }))
+    expect(codes(r.errors)).toEqual([])
+    expect(codes(r.warnings)).toEqual(['binding-map-missing@/layers/0/src/map', 'binding-map-key@/layers/0/src/map/silvr', 'binding-map-missing@/layers/2/font/map'])
+    expect(r.warnings[0]!.message).toBe('Option "flowers" of "style" has no entry in "map": when it is chosen, the layer is hidden.')
+    expect(r.warnings[1]!.hint).toBe('Options: "gold", "flowers".')
+    expect(r.warnings[2]!.message).toBe('Option "flowers" of "style" has no entry in "map": when it is chosen, the text uses the default font.')
+  })
+
+  it('does not report as unused the assets a script may set on a content property (spec §12.4)', () => {
+    const assets = { other: 'assets/other.glb', mono: 'assets/mono.woff2', grade: 'assets/grade.cube', fx: 'assets/fx.frag' }
+    const layers = [{ type: 'model', src: { shape: 'box' }, anchor: 'screen' }, { type: 'text', text: 'x', anchor: 'screen' }, { type: 'color', saturation: 0.1 }]
+    const scripted = validateManifest(manifest({ assets, layers, script: { entry: 'script.js' } }))
+    expect(codes(scripted.warnings)).toEqual(['unused-asset@/assets/fx'])
+    const plain = validateManifest(manifest({ assets, layers }))
+    expect(codes(plain.warnings)).toEqual(['unused-asset@/assets/other', 'unused-asset@/assets/mono', 'unused-asset@/assets/grade', 'unused-asset@/assets/fx'])
+  })
+
+  it('hostFileProblem: the sniffed content must be one of the accepted types the property shows', () => {
+    expect(hostFileProblem('image', ['image/png', 'image/svg+xml'], { format: 'png', width: 1, height: 1 })).toBeUndefined()
+    expect(hostFileProblem('image', ['image/png'], { format: 'svg' })).toBe('its content is an SVG image, not an image this parameter accepts (image/png).')
+    expect(hostFileProblem('image', ['image/png'], undefined)).toBe('its content is not an image this parameter accepts (image/png).')
+    expect(hostFileProblem('lut', ['text/x-cube'], { format: 'text' })).toBeUndefined()
+    expect(hostFileProblem('font', ['font/ttf'], { format: 'sfnt' })).toBeUndefined()
+    expect(hostFileProblem('model', ['model/gltf-binary'], { format: 'json' })).toBe('its content is JSON, not a glTF model this parameter accepts (model/gltf-binary).')
   })
 })

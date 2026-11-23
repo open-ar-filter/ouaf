@@ -138,6 +138,17 @@ are registered per kind by the plugin that owns the format (images and videos: s
 fonts: text). The core loads `data` (JSON) and `shader` (text). Built-in resources (`builtin:lut/noir`) are fetched
 from `<assetsBaseUrl>builtins/`, where the host serves the `assets/` folder of `@ouaf/builtins` (`resolveBuiltin`).
 
+**Content properties** (spec §8.1: `sticker.src`, `model.src`, `text.font`, `color.lut`, marked `x-content` in their
+schema) may be bound to a param. The engine preloads their `map` values and, in a filter with a script, every
+declared asset of a kind they show (a script may set any of them; `contentRefs`). A layer compiles each with
+`compileContent` and evaluates it per face: the script's asset, the param's (a `map` value, or the host's file from
+`ctx.hostAssets`), or `undefined` for its own fixed asset or pick. Host files of `asset` params go through
+`HostAssets`: the declared type and size are checked by `setParam`; the content (`sniff` against `accept` and the
+property's kind, `hostFileProblem`) and the loader's checks run when the file is loaded, in the background
+(`ParamStore` asset hooks); the file is swapped in at the start of a frame once ready, and the one it replaces is
+released after that frame. A refused file emits an `InvalidParamError` (reason `content`) on `engine.on('error')`
+and changes nothing; an initial file (`addFilter(src, { params })`) that fails rejects `addFilter`.
+
 `ctx` (`LayerContext`) gives the WebGL renderer, the objects camera, the preloaded assets, the params (read-only:
 resolve a parameter once with `ctx.params.indexOf`, read its animated value each frame with `numberAt`) and `maxFaces`. `frame` (`FrameContext`, valid during the call only) gives `time`, `now`, `dt`, the latest `faces`
 (`FaceFrame`), `anchors`, the render size and `mirrored`. `update` and `render` must not allocate in the steady state.
@@ -248,7 +259,7 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 |---|---|---|
 | Params `apply: "reload"` | applied at the next frame like `live` | engine `ReloadHooks`: preload a new filter instance, swap it in |
 | Face tracker | MediaPipe tasks-vision, main thread | LiteRT.js pipeline in a worker (face-runtime.md, tracking-worker.md) |
-| Script content properties (`src`, `font`, `lut`, `animation`), `.invalidate()`, `f.asset()` | warning, ignored | #26 follow-up, #25 (canvas) |
+| Host files for a video or spritesheet sticker, or a shader texture | images only; `textures` take assets only | a later version (spec §8.1) |
 | Scripts waiting for the answer with file sources (spec §12.1) | never waits | #32 (offline sources) |
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
 | Head occluder (`model.occlusion: "head"`) | an ellipsoid of an average head on the `head` anchor | a head mesh fitted to the landmarks |

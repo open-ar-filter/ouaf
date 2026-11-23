@@ -1,7 +1,7 @@
 /**
  * Parameter values: strict validation of host-set values and their numeric form (spec section 9).
  */
-import { Color, type TParamDef } from '@ouaf/spec'
+import { Color, PACKAGE_MAX_BYTES, type TParamDef } from '@ouaf/spec'
 import { ParamError } from './errors.ts'
 
 /**
@@ -231,13 +231,17 @@ export function checkParamValue(
       if (!isAssetFile(value)) fail('type', `expected a file (Blob) or null, got ${describe(value)}.`)
       const file = value as AssetFile
       const mime = mimeEssence(file.type)
-      if (!def.accept.includes(mime)) {
-        fail('mime', `type "${file.type || '(none)'}" is not accepted (${def.accept.join(', ')}).`)
+      // A file without a declared type (an unknown extension, e.g. `.cube`) is judged on its content only, when it
+      // is loaded (spec §15); a declared type must be accepted.
+      if (mime !== '' && !def.accept.includes(mime)) {
+        fail('mime', `type "${file.type}" is not accepted (${def.accept.join(', ')}).`)
       }
       if (!Number.isFinite(file.size) || file.size < 0) fail('type', `invalid file size ${file.size}.`)
       if (def.maxSize !== undefined && file.size > def.maxSize) {
         fail('too-large', `${file.size} bytes, at most ${def.maxSize} allowed.`)
       }
+      // No asset of a package can be larger (spec §3), whatever `maxSize` says.
+      if (file.size > PACKAGE_MAX_BYTES) fail('too-large', `${file.size} bytes, at most ${PACKAGE_MAX_BYTES} allowed for any asset.`)
       return file
     }
   }

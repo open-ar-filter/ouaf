@@ -200,11 +200,11 @@ where they are when the layer is shown again. When they start is given by each t
 
 | Type | Role | Main properties |
 |---|---|---|
-| `text` | Text (emoji included) | `text`*, `size`, `font`, `color`, `outline`, `shadow`, `align`, `maxWidth`, `lineHeight` |
-| `sticker` | Image, spritesheet or video | `src` (asset or `{ pick }`), `size`, `blend`, `loop`, `autoplay`, `rate` |
-| `model` | 3D object | `src` (glTF, `{ pick }` or `{ shape }`), `scale`, `fit`, `animation`, `loop`, `occlusion` |
+| `text` | Text (emoji included) | `text`*, `size`, `font` (asset or `{ param }`), `color`, `outline`, `shadow`, `align`, `maxWidth`, `lineHeight` |
+| `sticker` | Image, spritesheet or video | `src` (asset, `{ pick }` or `{ param }`), `size`, `blend`, `loop`, `autoplay`, `rate` |
+| `model` | 3D object | `src` (glTF, `{ pick }`, `{ shape }` or `{ param }`), `scale`, `fit`, `animation`, `loop`, `occlusion` |
 | `warp` | Deformation | `kind` (`bulge`, `pinch`, `swirl`, `stretch`), `anchor` (one or more), `radius`, `strength`, `direction`, `faces` |
-| `color` | Color grading | `lut`, `intensity`, `brightness`, `contrast`, `saturation`, `temperature`, `tint`, `vignette`, `grain`, `region` |
+| `color` | Color grading | `lut` (asset or `{ param }`), `intensity`, `brightness`, `contrast`, `saturation`, `temperature`, `tint`, `vignette`, `grain`, `region` |
 | `shader` | GLSL effect | `src`, `stage` (`background`, `face`, `post`), `uniforms`, `textures` |
 | `canvas` | Canvas 2D drawing by the script | `width`, `height`, `size`, `fps`; `id` required |
 
@@ -339,6 +339,46 @@ take their `default` value, as when no face is visible.
 Bindings are evaluated by the engine, **outside the sandbox**: they cost neither latency nor data transfer.
 The language is deliberately limited to these forms; any richer logic belongs in the script.
 
+### 8.1 Content properties
+
+`sticker.src`, `model.src`, `text.font` and `color.lut` hold an asset (10.1). They are not *bindable* (an asset is
+not tracking data: no `{ bind }`), but each takes, instead of an asset, a parameter binding of its own:
+
+| Form | Shows |
+|---|---|
+| `{ "param": "logo" }` | The file the host gives the `asset` parameter `logo` (9), once it has passed the checks of section 15. |
+| `{ "param": "style", "map": { "gold": "crown-gold", "flowers": "crown-flowers" } }` | The asset `map` gives for the value of the `select` or `string` parameter `style`. |
+
+- **Parameter types**: `asset`, without `map`; `select` or `string`, with `map` (required). Any other type is an error.
+- **`map` values** are asset references (10.1) of a kind the property shows: an image, spritesheet or video for
+  `sticker.src`, a model for `model.src`, a font for `text.font`, a LUT for `color.lut`. A validator reports any other
+  value as an error, and warns about an option of a `select` that has no entry in `map` and about a key that is not
+  an option (it never matches).
+- **`accept`** of an `asset` parameter bound to a content property lists only media types that property can show;
+  a validator reports any other:
+
+  | Property | Media types |
+  |---|---|
+  | `sticker.src` | `image/png`, `image/jpeg`, `image/webp`, `image/avif`, `image/svg+xml`, `image/ktx2` |
+  | `model.src` | `model/gltf-binary`, `model/gltf+json` |
+  | `text.font` | `font/woff2`, `font/woff`, `font/ttf`, `font/otf` |
+  | `color.lut` | `text/x-cube` (`.cube` has no registered media type) |
+
+  A host file is an image, never a spritesheet or a video (it has no `frames` or `alpha`). An `asset` parameter bound
+  to several content properties must fit all of them.
+- **No asset** (an `asset` parameter without a file, a value `map` does not list): a `sticker` or `model` layer is not
+  drawn, a `text` uses the default font (`builtin:font/sans-bold`), a `color` layer applies no LUT (its other
+  adjustments still apply).
+- **When it applies**: at the start of a frame, like any parameter change (9). The `map` values are assets of the
+  filter, preloaded with it (10.4): the next frame shows the new one. A host file is loaded and checked first, as with
+  `apply: "reload"`: the layer keeps showing its previous asset meanwhile, switches at the start of a frame (never
+  an empty frame), and the previous file is then released. The parameter's value (`f.params`, `paramChange`) changes
+  at that frame. A file that fails the checks is refused (9) and changes nothing.
+- **`{ pick }`** and a parameter binding are alternatives of `src`: a pick list holds assets only, and a `map` value is
+  one asset.
+- `shader.textures` are not content properties in v1 (a later version MAY add them).
+- A script MAY replace a content property's value with the name of a declared asset (12.4).
+
 ## 9. Parameters and presets
 
 ```json
@@ -359,6 +399,12 @@ The language is deliberately limited to these forms; any richer logic belongs in
   without an empty frame. Numbers, colors and vectors MAY be animated (`transition`).
 - `options: { "from": "host" }`: the list is supplied at runtime by the host.
 - An `asset` parameter is a file supplied at runtime; it goes through the same checks as an untrusted asset (section 15).
+  A layer shows it through a content property (8.1). When it is set, its declared media type, if it has one, MUST be
+  in `accept`, and its size at most `maxSize` and the package limit (50 MB, section 3); its content is checked when it
+  is loaded, and a file refused then is reported asynchronously, with the same kind of error (reference engine: an
+  `InvalidParamError` with the reason `content` on `engine.on('error')`); the parameter keeps its previous file.
+  `optional: true` lets the host remove the file (`null`). A parameter without a file, optional or not, shows no asset
+  (8.1) until the host gives one; an engine SHOULD warn about a non-optional one at load.
 - Preset values MUST be valid for their parameter.
 
 ## 10. Assets
@@ -386,6 +432,8 @@ An asset reference (`src`, `font`, `lut`, `textures`…) is one of:
 - a **built-in resource** `builtin:…`.
 
 **Remote URLs are forbidden** (`http:`, `https:`, `data:`…): a remote asset would be a way to leak data.
+
+A content property (`src`, `font`, `lut`) may take a parameter binding instead of a reference (8.1).
 
 **Picking.** A `src` of `{ "pick": [...], "by": "face" | "random" }` (`sticker`, `model`) gives each selected face
 one asset of the list, kept while the face keeps its stable id (5.4); a face that leaves and comes back gets a new
@@ -549,9 +597,13 @@ read a `data` asset (10.2).
 **Layer handles.**
 
 - `.set(props)`: sets properties. Settable: every *bindable* property, plus the content properties `text`, `color`,
-  `font`, `src` (a declared asset), `lut`, `animation`, `size` and `scale`. Structural properties (`type`, `id`,
-  `anchor`, `faces`, `stage`, `kind`, `width`, `height`) cannot be set. A set value **replaces** the property's
-  binding, if any, until the script sets the property to `null`, which restores the manifest value (fixed or bound).
+  `font`, `src`, `lut`, `animation`, `size` and `scale`. `src` (`sticker`, `model`), `font` and `lut` take the name
+  of an asset declared in `assets` that the property can show (8.1), not a path or `builtin:`; an engine preloads
+  every such asset of a filter with a script (10.4), so the change shows at the next frame. `animation` takes the
+  name of a clip of the model, started from its beginning. Another value is ignored with a warning. Structural
+  properties (`type`, `id`, `anchor`, `faces`, `stage`, `kind`, `width`, `height`) cannot be set. A set value
+  **replaces** the property's binding, if any, or its `{ pick }`, until the script sets the property to `null`,
+  which restores the manifest value (fixed, picked or bound).
 - A shader layer's `uniforms` are set **one by one**: `.set({ uniforms: { amount: 2 } })` only changes `amount`,
   and `{ uniforms: { amount: null } }` only restores `amount`'s manifest value (fixed or bound). A value has the
   uniform's type, given by its manifest value: a number (`float`), a boolean (`bool`), `[x, y]` or `[x, y, z]`
@@ -694,6 +746,10 @@ The sandbox runs the script off the rendering thread: a slow script makes its ow
    to untrusted code.
 3. **No identification.** An engine MUST NOT recognize or re-identify a person. Face ids are ephemeral.
 4. **Untrusted assets.** Size and dimensions are checked before decoding; SVGs are rendered as images; no remote resources.
+   The files a host gives `asset` parameters (9) are untrusted too: their format is identified from their content,
+   not from their declared type or name, and MUST be one of the accepted media types (8.1); then they pass the checks
+   of a package asset of their kind (size, dimensions before decoding, SVG rendered as an image, a glTF without
+   external files).
    A package is untrusted input too (3): links, special entries, unsafe paths and duplicate entries are refused, and
    decompression is bounded by the declared sizes and the size limit, so an archive cannot write outside the package
    or inflate without bound (zip bomb).

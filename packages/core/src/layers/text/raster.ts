@@ -77,7 +77,7 @@ export function splitAlpha(color: string): { rgb: string; alpha: number } {
 
 export class TextRaster {
   readonly surface: TextSurface
-  readonly #style: TextStyle
+  #style: TextStyle
   readonly #basePx: number
   readonly #maxSize: number
   #ascent = 0.8
@@ -103,6 +103,20 @@ export class TextRaster {
     this.#basePx = options.basePx ?? 96
     this.#maxSize = options.maxSize ?? 2048
     this.surface = createSurface()
+    this.#measure()
+  }
+
+  /** Draws with another font face from now on (a `font` bound to a parameter or set by a script): redrawn next update. */
+  setFont(font: Pick<TextStyle, 'family' | 'weight' | 'style'>): void {
+    const s = this.#style
+    if (s.family === font.family && s.weight === font.weight && s.style === font.style) return
+    this.#style = { ...s, family: font.family, weight: font.weight, style: font.style }
+    this.#measure()
+    this.#text = undefined
+  }
+
+  /** Ascent and descent of the font, in em. */
+  #measure(): void {
     const ctx = this.surface.ctx
     ctx.font = this.font
     const m = ctx.measureText('Hg')

@@ -8,6 +8,7 @@ export type ParamErrorCode =
   | 'too-long' // string or text longer than maxLength
   | 'mime' // asset whose MIME type is not in accept
   | 'too-large' // asset larger than maxSize
+  | 'content' // asset whose content fails the untrusted-asset checks when it is loaded (format, dimensions, decoding)
   | 'required' // null for an asset parameter that is not optional
   | 'not-host-options' // setOptions on a parameter that is not a select with options { from: "host" }
   | 'invalid-options' // options supplied by the host that are malformed

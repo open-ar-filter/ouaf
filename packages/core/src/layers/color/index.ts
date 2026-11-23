@@ -2,7 +2,8 @@
  * The `color` layer (spec §6.3, #23): color grading in the `color` stage, chained in stack then layer order (spec §7).
  * A built-in plugin: it registers the layer type and the loader of `.cube` LUTs (spec §10.2), which belong to it.
  *
- * - `lut`: a `.cube` file (asset name, `assets/…` path or `builtin:lut/…`), as a 3D texture with trilinear filtering.
+ * - `lut`: a `.cube` file (asset name, `assets/…` path or `builtin:lut/…`), as a 3D texture with trilinear filtering;
+ *   or chosen by a param, or set by the script (spec §8.1, `compileContent`): none applies no LUT.
  * - `brightness`, `contrast`, `saturation`, `temperature`, `tint`, `vignette`, `grain`: see `grade.ts` for the math,
  *   done on the sRGB-encoded values of the image buffers.
  * - `intensity`: strength of the LUT only; `opacity`: mix of the graded image with the layer's input.
@@ -35,6 +36,7 @@ import {
 import { compileBinding, compileNumberBinding, NO_FACE, type NumberBinding } from '../../bindings/index.ts'
 import type { AssetLoader } from '../../engine/assets.ts'
 import { FULLSCREEN_VERTEX } from '../../engine/compositor.ts'
+import { compileContent } from '../../engine/content.ts'
 import { AssetError } from '../../engine/errors.ts'
 import type { LayerContext, LayerDecl, LayerTypeImpl, PassLayer } from '../../engine/layer-type.ts'
 import type { OuafPlugin } from '../../engine/plugin.ts'
@@ -56,39 +58,53 @@ export interface LoadedLut {
   readonly offset: Vector3
 }
 
+/** The loaded value of a `lut` asset (`lutLoader`). */
+export function isLoadedLut(value: unknown): value is LoadedLut {
+  const l = value as Partial<LoadedLut> | null
+  return typeof l === 'object' && l !== null && (l.texture as { isData3DTexture?: boolean } | undefined)?.isData3DTexture === true &&
+    typeof l.size === 'number'
+}
+
 /** Loader of `lut` assets (`.cube`): parses the file and builds an RGBA16F 3D texture. */
 export const lutLoader: AssetLoader<LoadedLut> = {
   kinds: ['lut'],
   async load(r) {
     const text = await (await r.read()).text()
-    let lut
     try {
-      lut = parseCube(text)
+      return lutFromCube(text)
     } catch (cause) {
       if (cause instanceof CubeError) {
         throw new AssetError(r.ref, `LUT "${r.ref}" (${r.path}) is not a valid .cube file: ${cause.message}`, { cause })
       }
       throw cause
     }
-    const { size, data } = lutTextureData(lut)
-    const texture = new Data3DTexture(data, size, size, size)
-    texture.format = RGBAFormat
-    texture.type = HalfFloatType
-    texture.minFilter = LinearFilter
-    texture.magFilter = LinearFilter
-    texture.wrapS = texture.wrapT = texture.wrapR = ClampToEdgeWrapping
-    texture.generateMipmaps = false
-    texture.unpackAlignment = 1
-    texture.colorSpace = NoColorSpace // values used as written: sRGB-encoded in, sRGB-encoded out
-    texture.needsUpdate = true
-    const [x0, y0, z0] = lut.domainMin
-    const [x1, y1, z1] = lut.domainMax
-    const scale = new Vector3(1 / (x1 - x0), 1 / (y1 - y0), 1 / (z1 - z0))
-    return { texture, size, scale, offset: new Vector3(-x0 * scale.x, -y0 * scale.y, -z0 * scale.z) }
   },
   dispose(value) {
     value.texture.dispose()
   },
+}
+
+/** The identity, 2³: what a layer whose LUT can change binds while it has none (its strength is then 0). */
+const IDENTITY_CUBE = 'LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n'
+
+/** Parses a `.cube` file into a LUT texture. Throws `CubeError`. */
+function lutFromCube(text: string): LoadedLut {
+  const lut = parseCube(text)
+  const { size, data } = lutTextureData(lut)
+  const texture = new Data3DTexture(data, size, size, size)
+  texture.format = RGBAFormat
+  texture.type = HalfFloatType
+  texture.minFilter = LinearFilter
+  texture.magFilter = LinearFilter
+  texture.wrapS = texture.wrapT = texture.wrapR = ClampToEdgeWrapping
+  texture.generateMipmaps = false
+  texture.unpackAlignment = 1
+  texture.colorSpace = NoColorSpace // values used as written: sRGB-encoded in, sRGB-encoded out
+  texture.needsUpdate = true
+  const [x0, y0, z0] = lut.domainMin
+  const [x1, y1, z1] = lut.domainMax
+  const scale = new Vector3(1 / (x1 - x0), 1 / (y1 - y0), 1 / (z1 - z0))
+  return { texture, size, scale, offset: new Vector3(-x0 * scale.x, -y0 * scale.y, -z0 * scale.z) }
 }
 
 const AMOUNT_NAMES = Object.keys(AMOUNT) as AmountName[]
@@ -98,7 +114,13 @@ function material(vertexShader: string, fragmentShader: string, uniforms: Record
 }
 
 function createColorLayer(decl: LayerDecl, ctx: LayerContext): PassLayer {
-  const lut = typeof decl.lut === 'string' ? ctx.assets.get<LoadedLut>(decl.lut) : undefined
+  const fixedLut = typeof decl.lut === 'string' ? ctx.assets.get<LoadedLut>(decl.lut) : undefined
+  // `lut` bound to a parameter, or set by the script (spec §8, §12.4): the shader then always has a LUT input, the
+  // identity at strength 0 while there is no LUT.
+  const lutContent = compileContent(decl.lut, { name: 'lut', path: 'lut', accepts: isLoadedLut, what: 'a .cube LUT' }, ctx)
+  const variable = lutContent.bound || ctx.bindings.overrides !== undefined
+  const identity = variable && !fixedLut ? lutFromCube(IDENTITY_CUBE) : undefined
+  let lut = fixedLut
   const faceRegion = decl.region === 'face'
 
   const visible = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: 'visible', name: 'visible' }, ctx.bindings)
@@ -120,9 +142,23 @@ function createColorLayer(decl: LayerDecl, ctx: LayerContext): PassLayer {
   const uLutMix = { value: 1 }
   const uniforms: Record<string, { value: unknown }> = { uInput, uGrade, uGrade2, uTint, uSeed }
   const defines: Record<string, string> = {}
-  if (lut) {
-    Object.assign(uniforms, { uLut: { value: lut.texture }, uLutScale: { value: lut.scale }, uLutOffset: { value: lut.offset }, uLutSize: { value: lut.size }, uLutMix })
+  const bound = lut ?? identity
+  const uLut = { value: bound?.texture }
+  const uLutScale = { value: bound?.scale }
+  const uLutOffset = { value: bound?.offset }
+  const uLutSize = { value: bound?.size ?? 2 }
+  if (bound) {
+    Object.assign(uniforms, { uLut, uLutScale, uLutOffset, uLutSize, uLutMix })
     defines.HAS_LUT = ''
+  }
+  /** Points the shader at `next` (`undefined`: the identity, unused at strength 0). */
+  const useLut = (next: LoadedLut | undefined) => {
+    lut = next
+    const l = next ?? identity!
+    uLut.value = l.texture
+    uLutScale.value = l.scale
+    uLutOffset.value = l.offset
+    uLutSize.value = l.size
   }
 
   let full: RawShaderMaterial | undefined
@@ -161,6 +197,12 @@ function createColorLayer(decl: LayerDecl, ctx: LayerContext): PassLayer {
         writeColor(t, tintRgba, 0)
         lastTint = t
       }
+      if (variable) {
+        // `null`: an asset parameter without a file, or a value `map` does not list: no LUT.
+        const chosen = lutContent.evaluate(slot)
+        const next = chosen === undefined ? fixedLut : (chosen ?? undefined)
+        if (next !== lut) useLut(next)
+      }
       writeGradeUniforms(values, tintRgba, frame.time, u)
       active = visible.evaluate(slot) && !isNeutral(u, !!lut) && (!face || count > 0)
       if (!active) return
@@ -168,7 +210,7 @@ function createColorLayer(decl: LayerDecl, ctx: LayerContext): PassLayer {
       uGrade2.value.set(u[U.redGain]!, u[U.blueGain]!, u[U.vignette]!, u[U.grain]!)
       uTint.value.set(u[U.tintR]!, u[U.tintG]!, u[U.tintB]!, u[U.tintA]!)
       uSeed.value = u[U.seed]!
-      uLutMix.value = u[U.lut]!
+      uLutMix.value = lut ? u[U.lut]! : 0
       if (face) {
         const projection = ctx.view.camera.projectionMatrix.elements
         const out = face.positions.array as Float32Array
@@ -190,6 +232,7 @@ function createColorLayer(decl: LayerDecl, ctx: LayerContext): PassLayer {
     },
     dispose() {
       full?.dispose()
+      identity?.texture.dispose()
       if (face) {
         face.copy.dispose()
         face.mesh.material.dispose()
