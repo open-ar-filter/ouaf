@@ -28,7 +28,7 @@ import { assertReadable, describeImage, isCanvas, isFrameImage, isSecurityError,
 import { checkSeed, deriveSeed, FILE_SOURCE_SEED, randomSeed, SeededRandom } from '../random.ts'
 import type { FitMode } from '../viewport.ts'
 import { FaceIdentityTracker, FaceSmoother } from '../anchoring/index.ts'
-import { blendshapeSignals, createSignals, geometrySignals, readExpressionSignals } from '../expressions/index.ts'
+import { GeometrySignals, blendshapeSignals, createSignals, readExpressionSignals } from '../expressions/index.ts'
 import { DeviceGovernor, type Capability, type GovernorTuning, type PerformanceState } from './governor.ts'
 import { BACKEND_STORE_PREFIX, localBackendStore } from './backend-choice.ts'
 import { FaceAnchors } from './anchor-provider.ts'
@@ -281,6 +281,8 @@ export class Engine {
   #seenResults = 0
   /** Expression signals of the latest result, shared by every filter's detector (spec §13). */
   #signals: Float32Array
+  /** Expression signals from the landmark geometry while blendshapes are dropped (spec §13, §16.2). */
+  #geometry: GeometrySignals
   #bindingData = new FaceBindingData(createFaceFrame(1))
   #tracking: TrackingHub
   #fetch: typeof fetch
@@ -353,6 +355,7 @@ export class Engine {
     this.#smoothed = createFaceFrame(maxFaces)
     this.#drawn = createFaceFrame(maxFaces)
     this.#signals = createSignals(maxFaces)
+    this.#geometry = new GeometrySignals(maxFaces)
     for (const loader of CORE_LOADERS) for (const kind of loader.kinds) this.#loaders.set(kind, loader)
 
     for (const plugin of options.builtins === false ? [] : builtinPlugins()) this.use(plugin)
@@ -753,6 +756,7 @@ export class Engine {
   #resetFaces(): void {
     this.#tracking.clear()
     this.#identity.reset()
+    this.#geometry.reset()
   }
 
   /** Seed of a filter activation (spec §12.5). */
@@ -1069,7 +1073,7 @@ export class Engine {
       // scripts get none, and expression events come from the landmark geometry (§13).
       // A tracker may keep computing them while they are dropped (MediaPipe: no gain, see builtin.ts).
       if (raw.count > 0) this.#bindingData.blendshapes = tracking.config.blendshapes && hasBlendshapes(raw)
-      this.#detectExpressions(raw.mediaTime * 1000)
+      this.#detectExpressions(raw, raw.mediaTime * 1000)
     }
     this.#smoother.predict(this.#smoothed, time, this.#drawn)
     return this.#drawn
@@ -1079,10 +1083,16 @@ export class Engine {
    * Runs every enabled face filter's expression detectors on the new result and delivers the events (spec §13).
    * `faceEnter` / `faceLeave` come from face identity, which applies the grace delay (spec §5.4).
    */
-  #detectExpressions(timeMs: number): void {
+  #detectExpressions(raw: Readonly<FaceFrame>, timeMs: number): void {
     const faces = this.#smoothed
     const identity = this.#identity
-    readExpressionSignals(faces, this.#signals, this.#bindingData.blendshapes ? blendshapeSignals : geometrySignals)
+    if (this.#bindingData.blendshapes) readExpressionSignals(faces, this.#signals, blendshapeSignals)
+    else {
+      // From the raw result, in the same slots as the smoothed one: smoothing would blunt a blink that lasts one or two
+      // results (and the mapping was calibrated on raw landmarks).
+      this.#geometry.begin(identity.ids, timeMs)
+      readExpressionSignals(raw, this.#signals, this.#geometry.source)
+    }
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
       const detector = filter.expressions

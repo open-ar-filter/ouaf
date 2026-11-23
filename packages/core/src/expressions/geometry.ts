@@ -15,10 +15,10 @@ import { SIGNAL, writeHeadPose, type ExpressionSignalSource } from './signals.ts
 
 /** Landmarks the geometric source reads (for fixtures and tests). */
 export const GEOMETRY_LANDMARKS = {
-  /** Person's left eye: outer and inner corners, then three upper / lower lid pairs. */
-  leftEye: { outer: 263, inner: 362, upper: [386, 385, 387], lower: [374, 380, 373] },
+  /** Person's left eye: outer and inner corners, then five upper / lower lid pairs across the eye. */
+  leftEye: { outer: 263, inner: 362, upper: [386, 385, 387, 384, 388], lower: [374, 380, 373, 381, 390] },
   /** Person's right eye. */
-  rightEye: { outer: 33, inner: 133, upper: [159, 158, 160], lower: [145, 153, 144] },
+  rightEye: { outer: 33, inner: 133, upper: [159, 158, 160, 157, 161], lower: [145, 153, 144, 154, 163] },
   /** Inner lips (upper, lower) and mouth corners (person's right, left). */
   lips: { upper: 13, lower: 14, right: 61, left: 291 },
   /** Face "up" axis: from below the nose to between the eyes (rigid points). */
@@ -36,7 +36,7 @@ export const GEOMETRY_LANDMARK_INDICES: readonly number[] = [
  * Measure → signal mappings: the measure value that maps to 0 and the one that maps to 1 (linear in between,
  * clamped). Measures (`GeometryMeasures`), all divided by a rigid length so they do not depend on the face's size:
  *
- * - `eyeClosed`: eyelid opening (mean of three lid distances) / eye width. Open ≈ 0.25–0.35, closed ≈ 0.
+ * - `eyeClosed`: eyelid opening (mean of five lid distances) / eye width. Open ≈ 0.25–0.35, closed ≈ 0.
  * - `jawOpen`: inner lip gap / distance between the outer eye corners.
  * - `smile`: height of the mouth corners above the inner lip centre, along the face's up axis / outer eye corners.
  * - `browRaise`: height of the inner eyebrow ends above the inner eye corners, up axis / outer eye corners.
@@ -137,16 +137,15 @@ function rise(a: number, b: number, c: number, d: number): void {
 
 /** Eyelid opening / eye width into `measures[slot]`. */
 function eyeOpening(eye: typeof LE | typeof RE, slot: number): void {
-  // The sum stays in the scratch array: a local double kept across these calls was boxed.
-  dist(eye.upper[0], eye.lower[0])
-  s[ACC] = s[R]!
-  dist(eye.upper[1], eye.lower[1])
-  s[ACC] += s[R]!
-  dist(eye.upper[2], eye.lower[2])
-  s[ACC] += s[R]!
+  // The sum stays in the scratch array (see above).
+  s[ACC] = 0
+  for (let i = 0; i < eye.upper.length; i++) {
+    dist(eye.upper[i]!, eye.lower[i]!)
+    s[ACC] += s[R]!
+  }
   dist(eye.outer, eye.inner)
   // A zero-width eye (degenerate face, caught by `measure`) gives NaN or Infinity: clamped like any value.
-  measures[slot] = s[ACC]! / (3 * s[R]!)
+  measures[slot] = s[ACC]! / (eye.upper.length * s[R]!)
 }
 
 /** Computes `measures` for face `face`; false for a degenerate face (all points at one place). */
@@ -208,5 +207,78 @@ export function geometryMeasures(faces: Readonly<FaceFrame>, face: number): Geom
     cornerRise: m(M_CORNER_RISE),
     browRise: m(M_BROW_RISE),
     mouthWidth: m(M_MOUTH_WIDTH),
+  }
+}
+
+/**
+ * Eyes closed, relative to each person's open eyes (#90): the eyelid opening varies a lot between people, head poses
+ * (looking down lowers the lids) and expressions (a smile narrows the eyes), while a blink is a fast drop from
+ * whatever the opening was. Each eye keeps an open-eye baseline per face: it follows the opening up quickly
+ * (`riseTauMs`) and down slowly (`fallTauMs`), a slow running upper envelope, restarted when the face is new or was
+ * not seen for `resetGapMs`. The closure `1 − opening / baseline` is mapped linearly from `zero` to `one`, less
+ * `smile` × the smile signal (a smile narrows the eyes without closing them).
+ */
+export const EYE_BASELINE = { riseTauMs: 300, fallTauMs: 15000, resetGapMs: 1000, zero: 0.2, one: 0.7, smile: 0.2 } as const
+
+/** Per-face state: face id, open-eye baselines (left, right), time of the last update (ms). */
+const EYE_STATE = 4
+
+/**
+ * Stateful geometric source (what the engine uses): `geometrySignals`, with the eyes judged against each face's
+ * adaptive open-eye baseline (`EYE_BASELINE`). Call `begin` with the face ids of the frame (slot → stable id) and its
+ * time before reading the signals with `source`. Allocation-free.
+ */
+export class GeometrySignals {
+  readonly maxFaces: number
+  readonly #state: Float64Array
+  /** Time of the frame being read (ms). */
+  readonly #time = new Float64Array(1)
+  #ids: ArrayLike<number> = []
+
+  constructor(maxFaces: number) {
+    this.maxFaces = maxFaces
+    this.#state = new Float64Array(maxFaces * EYE_STATE).fill(Number.NaN)
+  }
+
+  /** The frame about to be read: `ids[slot]` is the stable id of the face in `slot`, `timeMs` its time. */
+  begin(ids: ArrayLike<number>, timeMs: number): void {
+    this.#ids = ids
+    this.#time[0] = timeMs
+  }
+
+  /** Forgets every baseline (new source). */
+  reset(): void {
+    this.#state.fill(Number.NaN)
+  }
+
+  readonly source: ExpressionSignalSource = (faces, face, out, offset) => {
+    geometrySignals(faces, face, out, offset)
+    if (face >= this.maxFaces || Number.isNaN(out[offset + SIGNAL.jawOpen]!)) return
+    const st = this.#state
+    const o = face * EYE_STATE
+    const id = this.#ids[face] ?? -1
+    const t = this.#time[0]!
+    const dt = t - st[o + 3]!
+    // A new face, or one not seen for a while: start from its current opening.
+    if (st[o] !== id || !(dt >= 0 && dt <= EYE_BASELINE.resetGapMs)) {
+      st[o] = id
+      st[o + 1] = measures[M_EYE_LEFT]!
+      st[o + 2] = measures[M_EYE_RIGHT]!
+    } else {
+      const rise = 1 - Math.exp(-dt / EYE_BASELINE.riseTauMs)
+      const fall = 1 - Math.exp(-dt / EYE_BASELINE.fallTauMs)
+      for (let e = 0; e < 2; e++) {
+        const m = measures[M_EYE_LEFT + e]!
+        const b = st[o + 1 + e]!
+        if (m > b) st[o + 1 + e] = b + (m - b) * rise
+        else if (m < b) st[o + 1 + e] = b + (m - b) * fall
+        else if (Number.isNaN(b)) st[o + 1 + e] = m
+      }
+    }
+    st[o + 3] = t
+    const smile = out[offset + SIGNAL.smile]! * EYE_BASELINE.smile
+    const span = EYE_BASELINE.one - EYE_BASELINE.zero
+    out[offset + SIGNAL.eyeClosedLeft] = Math.min(1, Math.max(0, (1 - measures[M_EYE_LEFT]! / st[o + 1]! - EYE_BASELINE.zero) / span - smile))
+    out[offset + SIGNAL.eyeClosedRight] = Math.min(1, Math.max(0, (1 - measures[M_EYE_RIGHT]! / st[o + 2]! - EYE_BASELINE.zero) / span - smile))
   }
 }

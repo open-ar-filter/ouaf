@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { blendshapeIndex, createFaceFrame, type FaceFrame } from '../src/face.ts'
 import { ExpressionEventDetector, type ExpressionEventDetectorOptions } from '../src/expressions/detector.ts'
 import { blendshapeSignals, createSignals, type ExpressionSignalSource } from '../src/expressions/signals.ts'
+import { GeometrySignals } from '../src/expressions/geometry.ts'
 import { EXPRESSION_FIXTURE_BLENDSHAPES, type RecordedEvent } from './expression-fixture.ts'
 
 /**
@@ -45,12 +46,13 @@ export function loadFrame(fixture: GeometryFixture, f: readonly number[], faces:
 const GRACE_MS = 500
 
 /**
- * Replays a fixture through a detector with the given signal source (blendshapes or geometry); returns the events.
+ * Replays a fixture through a detector with the given signal source (blendshapes, stateless geometry, or a
+ * `GeometrySignals`, given the face ids and times); returns the events.
  * `stepMs`: keep one frame every `stepMs` (e.g. 66 for a 15 Hz tracking rate).
  */
 export function replayGeometryFixture(
   fixture: GeometryFixture,
-  source: ExpressionSignalSource = blendshapeSignals,
+  source: ExpressionSignalSource | GeometrySignals = blendshapeSignals,
   options: Omit<ExpressionEventDetectorOptions, 'maxFaces'> & { stepMs?: number } = {},
 ): RecordedEvent[] {
   const faces = createFaceFrame(1)
@@ -69,7 +71,10 @@ export function replayGeometryFixture(
       if (t - lastSeen > GRACE_MS) ids[0] = (ids[0] ?? 0) + 1
       lastSeen = t
       loadFrame(fixture, f, faces)
-      source(faces, 0, signals, 0)
+      if (source instanceof GeometrySignals) {
+        source.begin(ids, t)
+        source.source(faces, 0, signals, 0)
+      } else source(faces, 0, signals, 0)
     } else if (t - lastSeen <= GRACE_MS) {
       continue
     }

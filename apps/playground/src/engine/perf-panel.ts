@@ -9,7 +9,7 @@ import {
   SIGNAL,
   blendshapeSignals,
   createSignals,
-  geometrySignals,
+  GeometrySignals,
   type Engine,
   type EngineStats,
   type ObjectLayer,
@@ -119,6 +119,10 @@ export function createPerfPanel(throttle: TrackingThrottle, options: { signals: 
 
   const bs = createSignals(1)
   const geo = createSignals(1)
+  // The engine's own source (adaptive open-eye baseline), fed every frame; on the displayed faces (smoothed), where
+  // the engine reads the raw result: blinks look a little weaker here.
+  const geometry = new GeometrySignals(1)
+  const ids = new Int32Array(1)
   let shownAt = -Infinity
   const signalsPlugin: OuafPlugin = {
     name: 'playground-signals',
@@ -131,13 +135,16 @@ export function createPerfPanel(throttle: TrackingThrottle, options: { signals: 
           stage: 'objects',
           object: new Group(),
           update(frame) {
-            if (!options.signals || frame.now - shownAt < 250) return
-            shownAt = frame.now
+            if (!options.signals) return
             const has = frame.faces.count > 0
             if (has) {
-              blendshapeSignals(frame.faces, 0, bs, 0)
-              geometrySignals(frame.faces, 0, geo, 0)
+              ids[0] = frame.anchors.id(0)
+              geometry.begin(ids, frame.now)
+              geometry.source(frame.faces, 0, geo, 0)
             }
+            if (frame.now - shownAt < 250) return
+            shownAt = frame.now
+            if (has) blendshapeSignals(frame.faces, 0, bs, 0)
             for (const [name, [a, b]] of signalRows) {
               const k = SIGNAL[name as keyof typeof SIGNAL]
               a.textContent = has ? fmt(bs[k]!, 2) : '—'
