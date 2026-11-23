@@ -6,10 +6,11 @@ import type { TSchema } from 'typebox'
 import { Value } from 'typebox/value'
 import { ManifestEnvelope, type TManifest } from './manifest.ts'
 import { ParamTypes, type ParamTypeName } from './params.ts'
-import { createRegistry, findEvent, type SpecRegistry } from './registry.ts'
+import { createRegistry, findEvent, type DataPathDef, type SpecRegistry } from './registry.ts'
 import { assetKind, type TAssetEntry } from './assets.ts'
 import type { TShaderLayer } from './layers.ts'
-import { shaderNameProblem } from './shader.ts'
+import { shaderNameProblem, shaderUses } from './shader.ts'
+import { mapKeyValue } from './bindings.ts'
 
 export type Severity = 'error' | 'warning'
 
@@ -27,6 +28,15 @@ export interface ValidationResult {
   ok: boolean
   errors: Issue[]
   warnings: Issue[]
+}
+
+/** What the validator can read besides the manifest (a package validator has the files; the engine does not). */
+export interface ManifestFiles {
+  /**
+   * Source of the shader file at `path` (`assets/….frag`), or `undefined` when it cannot be read. With it, a shader
+   * that uses a face-tracking input (`ouaf_faceMask`, `ouaf_faceCount`, `ouaf_faceSize`) uses the face (spec §11.1).
+   */
+  shaderSource?(path: string): string | undefined
 }
 
 type Json = Record<string, unknown>
@@ -252,6 +262,9 @@ interface Ctx {
   warnings: Issue[]
   usedAssets: Set<string>
   usesFace: boolean
+  /** The face-tracking inputs read by shader sources, for the `requires-face` message: "ouaf_faceMask in layer "x"". */
+  shaderFaceUses: string[]
+  files: ManifestFiles
   /** Blendshapes are read by a binding or by the script (whose default data includes them). */
   usesBlendshapes: boolean
 }
@@ -326,12 +339,47 @@ function checkBinding(ctx: Ctx, b: { param?: string; bind?: string }, valueSchem
     if (b.bind.startsWith('face.')) ctx.usesFace = true
     if (b.bind.startsWith('face.blendshapes.')) ctx.usesBlendshapes = true
     const m = b as { map?: unknown; range?: unknown; to?: unknown }
-    if (d.type === 'string' && m.map === undefined && !expected.includes('String')) {
-      err(ctx, 'binding-map-required', path, `"${b.bind}" is a string: add "map" to convert it.`)
+    if (m.map === undefined && m.range === undefined && m.to === undefined && !plainBindFits(d.type, expected)) {
+      const wants = [...new Set(expected.map((k) => KIND_NAME[k] ?? k.toLowerCase()))].join(' or ')
+      err(ctx, 'binding-map-required', path, `"${b.bind}" is a ${d.type}, this property expects ${wants}: add "map" to convert it.`,
+        d.type === 'number'
+          ? `E.g. { "bind": "${b.bind}", "map": { "0": …, "1": … }, "default": … }, with values of the property's type.`
+          : `E.g. { "bind": "${b.bind}", "map": { ${d.type === 'boolean' ? '"true": …, "false": …' : '"happy": …'} }, "default": … }.`)
     }
     if ((m.range === undefined) !== (m.to === undefined)) {
       err(ctx, 'binding-range', path, '"range" and "to" go together.', 'E.g. { "bind": "face.blendshapes.jawOpen", "range": [0, 1], "to": [0.1, 0.6] }.')
     }
+    if (m.map && typeof m.map === 'object' && !Array.isArray(m.map)) checkMapKeys(ctx, b.bind, d.type, m.map as Json, `${path}/map`)
+  }
+}
+
+/** Names of the property kinds (`valueKinds`) in messages. */
+const KIND_NAME: Record<string, string> = { Number: 'a number', Integer: 'a number', String: 'a text', Boolean: 'a boolean', Color: 'a color', Vec2: 'a [x, y] vector', Vec3: 'an [x, y, z] vector' }
+
+/**
+ * Whether data of `type` feeds a property of kinds `expected` without `map` (spec §8, as the engine compiles it):
+ * numbers into a number or a text, strings into a text, booleans into a boolean.
+ */
+function plainBindFits(type: DataPathDef['type'], expected: string[]): boolean {
+  if (type === 'number') return expected.some((k) => k === 'Number' || k === 'Integer' || k === 'String')
+  return expected.includes(type === 'string' ? 'String' : 'Boolean')
+}
+
+/** `map` keys that can never match data of `type` (spec §8): the entry is dead, the binding gives its `default`. */
+function checkMapKeys(ctx: Ctx, bind: string, type: DataPathDef['type'], map: Json, path: string) {
+  if (type === 'string') return
+  for (const key of Object.keys(map)) {
+    if (mapKeyValue(key, type) !== undefined) continue
+    const at = `${path}/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`
+    if (type === 'boolean') {
+      warn(ctx, 'binding-map-key', at, `"map" key "${key}" never matches: "${bind}" is a boolean, only "true" and "false" match.`,
+        'Use the keys "true" and "false".')
+      continue
+    }
+    const n = Number(key)
+    const canonical = key.trim() !== '' && Number.isFinite(n) ? String(n) : undefined
+    warn(ctx, 'binding-map-key', at, `"map" key "${key}" never matches: "${bind}" is a number, and keys match a number only when written as JSON writes it.`,
+      canonical !== undefined ? `Write the key "${canonical}".` : 'Use number keys such as "0", "1" or "0.5", or "range"/"to" for a continuous value.')
   }
 }
 
@@ -487,6 +535,13 @@ function checkLayers(ctx: Ctx) {
  */
 function checkShader(ctx: Ctx, layer: TShaderLayer, path: string) {
   if (layer.stage === 'face' || layer.anchors?.length) ctx.usesFace = true
+  const file = shaderPath(ctx, layer.src)
+  const source = file === undefined ? undefined : ctx.files.shaderSource?.(file)
+  const inputs = source === undefined ? [] : shaderUses(source).faceInputs
+  if (inputs.length > 0) {
+    ctx.usesFace = true
+    ctx.shaderFaceUses.push(`${inputs.join(', ')} in the shader of ${layer.id ? `layer "${layer.id}"` : path}`)
+  }
   const names = new Set<string>()
   for (const [what, table] of [['uniforms', layer.uniforms], ['textures', layer.textures]] as const) {
     for (const name of Object.keys(table ?? {})) {
@@ -509,13 +564,25 @@ function checkShader(ctx: Ctx, layer: TShaderLayer, path: string) {
   })
 }
 
+/** Package path of a shader reference: an `assets/…` path, or the `src` of a declared asset; none for `builtin:`. */
+function shaderPath(ctx: Ctx, ref: string): string | undefined {
+  if (ref.startsWith('assets/')) return ref
+  const entry = ((ctx.manifest.assets ?? {}) as Record<string, TAssetEntry | undefined>)[ref]
+  const src = typeof entry === 'string' ? entry : entry && 'src' in entry ? entry.src : undefined
+  return typeof src === 'string' && src.startsWith('assets/') ? src : undefined
+}
+
+/** Asset kinds a script can use without a layer referencing them (`f.asset`, `f.sound`, spec §12.4); unknown too. */
+const SCRIPT_READABLE_KINDS = new Set<string | undefined>(['image', 'spritesheet', 'video', 'audio', undefined])
+
 function checkRequiresAndAssets(ctx: Ctx) {
   const req = ctx.manifest.requires
   for (const k of ['hands', 'segmentation', 'pose', 'audio'] as const) {
     if (req[k]) warn(ctx, 'reserved', `/requires/${k}`, `"${k}" is reserved: this engine version does not provide it yet.`)
   }
   if (ctx.usesFace && !req.face) {
-    err(ctx, 'requires-face', '/requires', 'The filter uses the face (anchors, data or events) without declaring it.', 'Add "requires": { "face": true }.')
+    const shaders = ctx.shaderFaceUses.map((u) => `; ${u}`).join('')
+    err(ctx, 'requires-face', '/requires', `The filter uses the face (anchors, data, events or shader inputs${shaders}) without declaring it.`, 'Add "requires": { "face": true }.')
   }
   if (!ctx.usesFace && req.face) {
     warn(ctx, 'unused-requirement', '/requires/face', '"face" is required but nothing uses it: face tracking costs performance.')
@@ -533,9 +600,11 @@ function checkRequiresAndAssets(ctx: Ctx) {
   const assets = (ctx.manifest.assets ?? {}) as Record<string, TAssetEntry>
   for (const [name, entry] of Object.entries(assets)) {
     const kind = assetKind(entry)
-    // Assets used only by the script (sounds, canvas images) cannot be detected here.
-    if (!ctx.usedAssets.has(name) && (!ctx.manifest.script || kind === 'model' || kind === 'lut' || kind === 'shader' || kind === 'font')) {
-      warn(ctx, 'unused-asset', `/assets/${name}`, `Asset "${name}" is not referenced by any layer: it makes the package heavier.`)
+    // Assets used only by the script (sounds, canvas images) cannot be detected here. The other kinds cannot be read
+    // by a script: `data` and `lottie` are reserved for later versions (spec §10.2), used only by plugin layers.
+    if (!ctx.usedAssets.has(name) && (!ctx.manifest.script || !SCRIPT_READABLE_KINDS.has(kind))) {
+      warn(ctx, 'unused-asset', `/assets/${name}`, `Asset "${name}" is not referenced by any layer: it makes the package heavier.`,
+        kind === 'data' ? 'A script does not read data assets: import the JSON in filter.js, ouaf pack bundles it into script.js (spec §10.2).' : undefined)
     }
     if (kind === undefined) {
       warn(ctx, 'unknown-kind', `/assets/${name}`, `Could not infer the kind of asset "${name}" from its extension.`, 'Set "kind", e.g. { "src": "…", "kind": "lottie" }.')
@@ -545,13 +614,16 @@ function checkRequiresAndAssets(ctx: Ctx) {
 
 // ---------------------------------------------------------------------------------------------
 
-/** Validates an Ouaf v1 manifest. `reg` lets you include the vocabulary of loaded plugins. */
-export function validateManifest(input: unknown, reg: SpecRegistry = createRegistry()): ValidationResult {
+/**
+ * Validates an Ouaf v1 manifest. `reg` lets you include the vocabulary of loaded plugins; `files` the package files
+ * the manifest refers to, for the checks that need them (`ouaf validate` passes them).
+ */
+export function validateManifest(input: unknown, reg: SpecRegistry = createRegistry(), files: ManifestFiles = {}): ValidationResult {
   const errors: Issue[] = []
   const warnings: Issue[] = []
   structural(ManifestEnvelope, input, '', errors)
   if (errors.length === 0) {
-    const ctx: Ctx = { reg, manifest: input as TManifest, errors, warnings, usedAssets: new Set(), usesFace: false, usesBlendshapes: false }
+    const ctx: Ctx = { reg, manifest: input as TManifest, errors, warnings, usedAssets: new Set(), usesFace: false, shaderFaceUses: [], files, usesBlendshapes: false }
     checkParams(ctx)
     checkLayers(ctx)
     checkEvents(ctx)

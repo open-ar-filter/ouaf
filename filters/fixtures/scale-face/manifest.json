@@ -1,0 +1,29 @@
+{
+  "ouaf": "1",
+  "id": "scale-face",
+  "name": "Layer scale on a face (playground fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Layer scale (spec §6.2) on a face: a label that grows with the mouth opening (a bound scale), a badge stretched per axis. Synthetic assets.",
+  "requires": { "face": true },
+  "assets": {
+    "badge": {
+      "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><circle cx='5' cy='5' r='4.5' fill='#ffcc00' stroke='#000000' stroke-width='0.6'/></svg>"
+    }
+  },
+  "layers": [
+    {
+      "id": "label",
+      "type": "text",
+      "text": "OUAF!",
+      "anchor": "forehead",
+      "offset": [0, 0.9, 0],
+      "orient": "screen",
+      "size": 0.5,
+      "color": "#ffffff",
+      "outline": { "width": 0.08, "color": "#000000" },
+      "scale": { "bind": "face.blendshapes.jawOpen", "range": [0, 0.4], "to": [1, 2] }
+    },
+    { "id": "badge", "type": "sticker", "src": "badge", "anchor": "forehead", "offset": [1.6, 0.4, 0], "orient": "screen", "size": 0.5, "scale": [1.8, 0.8, 1] }
+  ]
+}

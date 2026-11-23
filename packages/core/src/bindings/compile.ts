@@ -21,7 +21,7 @@
  * evaluating any number of bindings through shared call sites never makes V8 box a number: numeric bindings do not
  * allocate per frame.
  */
-import type { ParamTypeName } from '@ouaf/spec'
+import { mapKeyValue, type ParamTypeName } from '@ouaf/spec'
 import type {
   BindableProperty,
   BindingEnv,
@@ -183,7 +183,8 @@ function compileValue(value: unknown, property: BindableProperty<ValueType>, env
     const table = new Map<unknown, unknown>()
     for (const [key, v] of Object.entries(b.map as Record<string, unknown>)) {
       if (!fits(v)) throw new BindingError(`"map" value for "${key}" must be a ${expected}, got ${describe(v)}.`, path)
-      const k = mapKey(key, reader.type)
+      // Numbers: keys written as JSON numbers ("0", "1", "0.5") match by value, without converting the data.
+      const k = mapKeyValue(key, reader.type)
       if (k !== undefined) table.set(k, v)
     }
     return reader.type === 'number' ? new NumberMapBinding(reader, table, missing) : new MapBinding(reader, table, missing)
@@ -200,15 +201,6 @@ function compileValue(value: unknown, property: BindableProperty<ValueType>, env
     `"${b.bind}" is a ${reader.type}, this property expects a ${expected}: add "map" to convert it.`,
     path,
   )
-}
-
-/** Key of a `map` entry for data of `type`, or `undefined` when the key can never match such data. */
-function mapKey(key: string, type: DataReader['type']): unknown {
-  if (type === 'string') return key
-  if (type === 'boolean') return key === 'true' ? true : key === 'false' ? false : undefined
-  // Numbers: keys written as JSON numbers ("0", "1", "-2", "0.5") match by value, without converting the data.
-  const n = Number(key)
-  return key.trim() !== '' && Number.isFinite(n) && String(n) === key ? n : undefined
 }
 
 // ---------------------------------------------------------------------------------------------------------------

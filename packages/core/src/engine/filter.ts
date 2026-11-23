@@ -302,6 +302,7 @@ export async function loadFilter(
     params,
     bindings: script ? { data: env.bindingData, params: reader, overrides: script.overrides.forLayer(i) } : { data: env.bindingData, params: reader },
     maxFaces: env.maxFaces,
+    requiresFace: !!manifest.requires.face,
     warn: (message) => env.warn(`Filter "${manifest.id}": ${message}`),
   })
   const layers: LoadedLayer[] = []

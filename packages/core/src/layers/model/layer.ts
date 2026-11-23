@@ -44,6 +44,7 @@ import type { AnchorFollow } from '../../anchors.ts'
 import { NO_FACE, compileBinding, compileNumberBinding, type CompiledBinding, type NumberBinding } from '../../bindings/index.ts'
 import { OuafError } from '../../engine/errors.ts'
 import type { FrameContext, LayerContext, LayerDecl, LayerTypeImpl, ObjectLayer } from '../../engine/layer-type.ts'
+import { compileScale } from '../scale.ts'
 import { apparentSize } from '../sticker/layer.ts'
 import { clockStep } from '../sticker/playback.ts'
 import { instanceCount, pickIndex, selectFaces, type FacesSelector, type PickMode } from '../sticker/select.ts'
@@ -386,48 +387,6 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
     },
   }
   return layer
-}
-
-/** `scale`: a number or `[x, y, z]`, bindable (spec §6.2); `write` gives the three factors, false when one is ≤ 0. */
-interface ScaleBinding {
-  write(face: number, out: Float64Array, index: number): boolean
-}
-
-function compileScale(value: unknown, path: string, ctx: LayerContext): ScaleBinding {
-  const env = ctx.bindings
-  // Number bindings (`{ bind }` without `map`, number params) go through `write`, which never allocates.
-  const isNumber =
-    typeof value === 'number' ||
-    (typeof value === 'object' && value !== null && !Array.isArray(value) &&
-      (('bind' in value && !('map' in value)) || ('param' in value && env.params.type(String((value as { param: unknown }).param)) === 'number')))
-  if (isNumber) {
-    const n = compileNumberBinding(value, { fallback: 1, path, name: 'scale' }, env)
-    return {
-      write(face, out, index) {
-        n.write(face, out, index)
-        const s = out[index]!
-        out[index + 1] = s
-        out[index + 2] = s
-        return s > 0
-      },
-    }
-  }
-  const b = compileBinding(value, { type: ['number', 'vec3'], fallback: 1, path, name: 'scale' }, env)
-  return {
-    write(face, out, index) {
-      const v = b.evaluate(face)
-      if (typeof v === 'number') {
-        out[index] = v
-        out[index + 1] = v
-        out[index + 2] = v
-      } else {
-        out[index] = v[0]
-        out[index + 1] = v[1]
-        out[index + 2] = v[2]
-      }
-      return out[index]! > 0 && out[index + 1]! > 0 && out[index + 2]! > 0
-    },
-  }
 }
 
 export const modelLayerType: LayerTypeImpl = {

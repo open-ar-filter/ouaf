@@ -3,6 +3,7 @@
  * The core registers the built-in vocabulary; plugins add theirs through the same mechanism.
  * The validator, the published JSON Schema and the AI-facing docs are generated from this registry.
  */
+import type { DataValueType } from './bindings.ts'
 import { BUILTIN_LAYERS, type LayerTypeDef } from './layers.ts'
 
 export type Status = 'stable' | 'reserved'
@@ -31,7 +32,7 @@ export interface EventDef {
 
 export interface DataPathDef {
   path: string
-  type: 'number' | 'string' | 'boolean'
+  type: DataValueType
   description: string
   plugin: string
 }

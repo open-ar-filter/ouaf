@@ -227,6 +227,79 @@ describe('actionable errors', () => {
     expect(codes(r.warnings)).toContain('reserved@/script/on/0')
   })
 
+  it('warns about map keys that can never match the data (spec §8)', () => {
+    const text = (bind: string, map: Record<string, unknown>) =>
+      ({ ...base, layers: [{ type: 'text', id: 't', text: { bind, map, default: '?' } }] })
+    const r = validateManifest(text('face.index', { '0': 'A', '1': 'B', '1.0': 'C', '01': 'D', x: 'E', '0.5': 'F', '-1': 'G' }))
+    expect(r.errors).toEqual([])
+    expect(codes(r.warnings)).toEqual(['binding-map-key@/layers/0/text/map/1.0', 'binding-map-key@/layers/0/text/map/01', 'binding-map-key@/layers/0/text/map/x'])
+    expect(r.warnings[0]!.message).toContain('"face.index" is a number')
+    expect(r.warnings[0]!.hint).toBe('Write the key "1".')
+    expect(r.warnings[2]!.hint).toContain('"range"/"to"')
+    // Boolean and string data of plugins: only "true" / "false" match a boolean; any key matches a string.
+    const reg = createRegistry()
+    extendRegistry(reg, {
+      plugin: 'mood',
+      version: '1.0.0',
+      data: [
+        { path: 'ext.mood.happy', type: 'boolean', description: '' },
+        { path: 'ext.mood.name', type: 'string', description: '' },
+      ],
+    })
+    const plugin = { requires: { face: true, plugins: ['mood@^1'] } }
+    const bool = validateManifest({ ...text('ext.mood.happy', { true: 'yes', false: 'no', 1: 'one', TRUE: 'YES' }), ...plugin }, reg)
+    expect(codes(bool.warnings)).toEqual(['binding-map-key@/layers/0/text/map/1', 'binding-map-key@/layers/0/text/map/TRUE'])
+    expect(bool.warnings[0]!.hint).toBe('Use the keys "true" and "false".')
+    const str = validateManifest({ ...text('ext.mood.name', { '1.0': 'a', '': 'b', 'a/b': 'c' }), ...plugin }, reg)
+    expect(str.warnings).toEqual([])
+  })
+
+  it('needs map when the data does not have the property\'s type, as the engine (spec §8)', () => {
+    const reg = createRegistry()
+    extendRegistry(reg, {
+      plugin: 'mood',
+      version: '1.0.0',
+      data: [
+        { path: 'ext.mood.name', type: 'string', description: '' },
+        { path: 'ext.mood.happy', type: 'boolean', description: '' },
+      ],
+    })
+    const check = (prop: string, bind: string, extra: Record<string, unknown> = {}) =>
+      validateManifest({ ...base, requires: { face: true, plugins: ['mood@^1'] }, layers: [{ type: 'text', text: 'x', [prop]: { bind, ...extra } }] }, reg)
+    // Fits as it is: numbers into a number or a text, strings into a text, booleans into a boolean.
+    for (const [prop, bind] of [['size', 'face.index'], ['text', 'faces.count'], ['text', 'ext.mood.name'], ['visible', 'ext.mood.happy']] as const) {
+      expect(check(prop, bind).errors, `${prop} ← ${bind}`).toEqual([])
+    }
+    const cases = [
+      ['color', 'ext.mood.name', 'a color'],
+      ['color', 'face.index', 'a color'],
+      ['offset', 'face.index', 'an [x, y, z] vector'],
+      ['visible', 'face.index', 'a boolean'],
+      ['text', 'ext.mood.happy', 'a text'],
+      ['size', 'ext.mood.happy', 'a number'],
+    ] as const
+    for (const [prop, bind, wants] of cases) {
+      const r = check(prop, bind)
+      expect(codes(r.errors), `${prop} ← ${bind}`).toEqual([`binding-map-required@/layers/0/${prop}`])
+      expect(r.errors[0]!.message).toContain(`this property expects ${wants}: add "map"`)
+    }
+    expect(check('visible', 'face.index').errors[0]!.hint).toContain('"map": { "0": …, "1": … }')
+    expect(check('visible', 'face.index', { map: { '0': true }, default: false }).errors).toEqual([])
+    expect(check('color', 'ext.mood.name', { map: { happy: '#ffcc00' } }).errors).toEqual([])
+  })
+
+  it('reports data and lottie assets that no layer uses, even with a script (spec §10.2: reserved kinds)', () => {
+    const r = validateManifest({
+      ...base,
+      requires: {},
+      assets: { levels: 'assets/levels.json', anim: 'assets/anim.lottie', star: { emoji: '⭐' }, beep: 'assets/beep.ogg' },
+      layers: [],
+      script: { entry: 'script.js', setup: true },
+    })
+    expect(codes(r.warnings)).toEqual(['unused-asset@/assets/levels', 'unused-asset@/assets/anim'])
+    expect(r.warnings[0]!.hint).toContain('import the JSON in filter.js')
+  })
+
   it('formatIssues produces readable text', () => {
     const r = validateManifest({ ...base, assets: { star: { emoji: '⭐' } }, layers: [{ type: 'sticker', src: 'star', anchor: 'nose' }] })
     const text = formatIssues(r, 'filters/test')
@@ -299,6 +372,27 @@ describe('script API and shaders (spec §11, §12, #66)', () => {
     ]) {
       expect(codes(validateManifest(m).errors)).toContain('requires-face@/requires')
     }
+  })
+
+  it('counts the face inputs of a readable shader source as a use of the face (spec §11.1)', () => {
+    const sources: Record<string, string> = {
+      'assets/fx.frag': 'vec4 effect(vec2 uv) { return ouaf_sample(uv) * ouaf_faceMask(uv); }',
+      'assets/count.frag': 'vec4 effect(vec2 uv) { return vec4(float(ouaf_faceCount), ouaf_faceSize[0], 0.0, 1.0); }',
+      'assets/plain.frag': '// ouaf_faceMask(uv)\nvec4 effect(vec2 uv) { return ouaf_sample(uv); }',
+    }
+    const files = { shaderSource: (path: string) => sources[path] }
+    const masked = { ...base, assets: { fx: 'assets/fx.frag' }, layers: [{ type: 'shader', id: 'mask', src: 'fx' }] }
+    // Without the files, nothing to go on: requires.face looks unused.
+    expect(codes(validateManifest(masked).warnings)).toEqual(['unused-requirement@/requires/face'])
+    expect(validateManifest(masked, undefined, files)).toMatchObject({ errors: [], warnings: [] })
+    const missing = validateManifest({ ...masked, requires: {} }, undefined, files)
+    expect(codes(missing.errors)).toEqual(['requires-face@/requires'])
+    expect(missing.errors[0]!.message).toContain('ouaf_faceMask in the shader of layer "mask"')
+    const count = validateManifest({ ...base, requires: {}, layers: [shader({ src: 'assets/count.frag' })] }, undefined, files)
+    expect(count.errors[0]!.message).toContain('ouaf_faceCount, ouaf_faceSize in the shader of /layers/0')
+    // A commented-out call is not a use; a built-in shader has no file to read.
+    expect(codes(validateManifest({ ...base, layers: [shader({ src: 'assets/plain.frag' })] }, undefined, files).warnings))
+      .toEqual(['unused-requirement@/requires/face'])
   })
 
   it('needs GLSL names for uniforms and textures (#24)', () => {

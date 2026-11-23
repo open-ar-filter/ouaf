@@ -639,14 +639,23 @@ export async function validatePackage(source: PackageSource, options: ValidateOp
   const parsed = parseJson(ctx, src, 'manifest.json')
   if (!parsed) return report()
   ctx.locate = jsonLocator(src)
-  const result = validateManifest(parsed.value, reg)
-  for (const i of [...result.errors, ...result.warnings]) add(ctx, i.severity, i.code, at(ctx, i.path), i.message, i.hint)
   const manifest = parsed.value
-  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return report()
-  const m = manifest as Record<string, unknown>
+  const m = manifest && typeof manifest === 'object' && !Array.isArray(manifest) ? (manifest as Record<string, unknown>) : undefined
+  const refs = m ? collectRefs(m, reg) : new Map<string, FileRef>()
+  // The manifest checks that read files: shader sources (their face inputs need requires.face, spec §11.1). Unreadable
+  // files are reported by the file checks below.
+  const shaders = new Map<string, string>()
+  for (const [path, ref] of refs) {
+    if (ref.kind !== 'shader' || !ctx.files.has(path)) continue
+    const code = text(await ctx.source.read(path).catch(() => new Uint8Array()))
+    if (code !== undefined) shaders.set(path, code)
+  }
+  const result = validateManifest(manifest, reg, { shaderSource: (path) => shaders.get(path) })
+  for (const i of [...result.errors, ...result.warnings]) add(ctx, i.severity, i.code, at(ctx, i.path), i.message, i.hint)
+  if (!m) return report()
 
   // Referenced files (spec §10).
-  for (const [path, ref] of collectRefs(m, reg)) {
+  for (const [path, ref] of refs) {
     if (!ctx.files.has(path)) {
       if (!source.entries.some((e) => e.path === path)) missingFile(ctx, path, at(ctx, ref.pointer))
       continue // present but rejected by the layout checks

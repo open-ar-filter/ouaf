@@ -1,0 +1,24 @@
+{
+  "ouaf": "1",
+  "id": "scale",
+  "name": "Layer scale (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Layer scale (spec §6.2) on text, sticker and canvas layers laid out on the screen for pixel checks, set and animated by host messages through the script. Synthetic assets.",
+  "requires": {},
+  "assets": {
+    "magenta": {
+      "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10' fill='#ff00ff'/></svg>"
+    }
+  },
+  "layers": [
+    { "id": "text", "type": "text", "text": "OUAF", "anchor": "screen", "offset": [0, 0.3, 0], "size": 0.05, "color": "#00ff00", "scale": 2 },
+    { "id": "sticker", "type": "sticker", "src": "magenta", "anchor": "screen", "offset": [0, 0, 0], "size": 0.06, "scale": 2 },
+    { "id": "canvas", "type": "canvas", "width": 32, "height": 32, "fps": 0, "anchor": "screen", "offset": [0, -0.3, 0], "size": 0.06, "scale": 2 }
+  ],
+  "script": {
+    "entry": "script.js",
+    "on": ["message:set", "message:animate"],
+    "draw": ["canvas"]
+  }
+}

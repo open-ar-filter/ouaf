@@ -198,7 +198,7 @@
     },
     "AssetKind": {
       "enum": ["image", "spritesheet", "video", "model", "audio", "lut", "shader", "font", "lottie", "data"],
-      "description": "Kind of asset (inferred from the file extension when omitted)."
+      "description": "Kind of asset (inferred from the file extension when omitted). \"lottie\" and \"data\" are reserved: no v1 layer or script API reads them, only plugin layers."
     },
     "AssetParam": {
       "type": "object",

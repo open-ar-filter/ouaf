@@ -30,6 +30,8 @@ export const SCRIPT_LIMITS = {
   watchdogMs: 1000,
   /** Maximum size of the data of one `f.emit()` message, in bytes. */
   emitMaxBytes: 64 * 1024,
+  /** Maximum size of the data of one host message (`engine.send`, `handle.send`), in bytes. */
+  sendMaxBytes: 64 * 1024,
   /** An engine MAY drop `f.emit()` messages beyond this rate. */
   emitMaxPerSecond: 60,
 } as const

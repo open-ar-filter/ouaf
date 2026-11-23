@@ -50,7 +50,10 @@ A failed `addFilter`/`setFilters` leaves the stack unchanged. Compatibility (spe
   are rendered, over a window that restarts with each source.
 - **Messages** (spec §12.4, §13): `send(name, data)` checks the name (a letter, then letters, digits, `_`, `-`) and
   copies `data` at the call (`structuredClone`), so data that cannot reach the sandbox throws
-  `OuafError('invalid-message')` at the caller and later changes to `data` change nothing. Messages are delivered with
+  `OuafError('invalid-message')` at the caller and later changes to `data` change nothing. Data over 64 KB throws the
+  same error, the limit of `f.emit` in the other direction, measured the same way (`script/size.ts`: a walk of the
+  copy, strings at 2 bytes a character, typed arrays at their byte length; it stops at the limit, so it costs little
+  even for large data, and needs no serialization). Messages are delivered with
   the next frame sent to each script that lists `message:<name>` in `script.on`; a disabled filter keeps them until it
   is re-enabled; a removed filter ignores them.
 - **Ownership**: a source the host passes stays the host's: the engine never stops it, not even in `dispose()` (stop a
@@ -221,7 +224,7 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 |---|---|---|
 | Params `apply: "reload"` | applied at the next frame like `live` | engine `ReloadHooks`: preload a new filter instance, swap it in |
 | Face tracker | MediaPipe tasks-vision, main thread | LiteRT.js pipeline in a worker (face-runtime.md, tracking-worker.md) |
-| Script content properties (`src`, `font`, `lut`, `animation`; `scale` outside models), `.invalidate()`, `f.asset()` | warning, ignored | #26 follow-up, #25 (canvas) |
+| Script content properties (`src`, `font`, `lut`, `animation`), `.invalidate()`, `f.asset()` | warning, ignored | #26 follow-up, #25 (canvas) |
 | Scripts waiting for the answer with file sources (spec §12.1) | never waits | #32 (offline sources) |
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
 | Head occluder (`model.occlusion: "head"`) | an ellipsoid of an average head on the `head` anchor | a head mesh fitted to the landmarks |

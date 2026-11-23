@@ -7,7 +7,8 @@
  * - One plane per selected face (`faces`). When neither `text` nor `color` (nor `size`, with `maxWidth`) reads face
  *   data, every face shares one texture; otherwise each face slot has its own.
  * - `size` is the font size (em) in anchor units; the anchor point is on the alignment edge of the text block
- *   (left edge for `align: "left"`, centre, right edge), at its vertical middle.
+ *   (left edge for `align: "left"`, centre, right edge), at its vertical middle. `scale` multiplies the drawn block
+ *   (per axis with `[x, y, z]`) around that point, after layout: it changes neither the wrapping nor the texture.
  * - `orient: "screen"`: the plane stays parallel to the screen, upright, at the anchor's position and scale.
  */
 import { NO_FACE, compileBinding, compileNumberBinding, type CompiledBinding, type NumberBinding } from '../../bindings/index.ts'
@@ -26,6 +27,7 @@ import {
   SRGBColorSpace,
   Vector3,
 } from 'three'
+import { compileScale } from '../scale.ts'
 import { selectFaces, type FacesSelector } from './faces.ts'
 import type { LoadedFont } from './font-loader.ts'
 import type { TextAlign } from './layout.ts'
@@ -86,6 +88,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
   const text: CompiledBinding<string> = compileBinding(decl.text, { type: 'string', fallback: '', path: at('text'), name: 'text' }, env)
   const color: CompiledBinding<string> = compileBinding(decl.color ?? '#ffffff', { type: 'color', fallback: '#ffffff', path: at('color'), name: 'color' }, env)
   const size: NumberBinding = compileNumberBinding(decl.size ?? 0.3, { fallback: 0.3, path: at('size'), name: 'size' }, env)
+  const scale = compileScale(decl.scale ?? 1, at('scale'), ctx)
   const opacity: NumberBinding = compileNumberBinding(decl.opacity ?? 1, { fallback: 1, path: at('opacity'), name: 'opacity' }, env)
   const visible: CompiledBinding<boolean> = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: at('visible'), name: 'visible' }, env)
   const zero = [0, 0, 0] as const
@@ -139,7 +142,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
   const ok = new Uint8Array(maxFaces)
   const apparent = new Float64Array(maxFaces)
   const selected = new Int32Array(instances)
-  const num = new Float64Array(2)
+  const num = new Float64Array(5) // opacity, size, scale x, y, z
   const euler = new Euler()
   const quat = new Quaternion()
   const pos = new Vector3()
@@ -164,7 +167,9 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
     return content !== ''
   }
 
-  const place = (mesh: Mesh, face: number, anchorMatrix: Matrix4, raster: TextRaster, sizeValue: number) => {
+  /** Places `mesh`; the size and scale factors are in `num[1..4]`. */
+  const place = (mesh: Mesh, face: number, anchorMatrix: Matrix4, raster: TextRaster) => {
+    const sizeValue = num[1]!
     const off = offset.evaluate(face)
     const rot = rotation.evaluate(face)
     euler.set(MathUtils.degToRad(rot[0]), MathUtils.degToRad(rot[1]), MathUtils.degToRad(rot[2]))
@@ -176,12 +181,12 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
     if (orientScreen && !onScreen) {
       // Position and scale of the anchor (offset in the anchor frame), axes of the screen.
       pos.set(off[0], off[1], off[2]).applyMatrix4(anchorMatrix)
-      const unit = scl.setFromMatrixColumn(anchorMatrix, 0).length()
-      scl.setScalar(unit * sizeValue)
+      const unit = scl.setFromMatrixColumn(anchorMatrix, 0).length() * sizeValue
+      scl.set(unit * num[2]!, unit * num[3]!, unit * num[4]!)
       mesh.matrix.compose(pos, quat, scl).multiply(plane)
     } else {
       pos.set(off[0], off[1], off[2])
-      scl.setScalar(sizeValue)
+      scl.set(sizeValue * num[2]!, sizeValue * num[3]!, sizeValue * num[4]!)
       local.compose(pos, quat, scl)
       mesh.matrix.multiplyMatrices(anchorMatrix, local).multiply(plane)
     }
@@ -221,7 +226,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
         size.write(face, num, 1)
         const alpha = num[0]!
         const sizeValue = num[1]!
-        if (!visible.evaluate(face) || !(alpha > 0) || !(sizeValue > 0)) {
+        if (!visible.evaluate(face) || !(alpha > 0) || !(sizeValue > 0) || !scale.write(face, num, 2)) {
           mesh.visible = false
           continue
         }
@@ -231,7 +236,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
           continue
         }
         mesh.material.opacity = Math.min(1, alpha)
-        place(mesh, face, onScreen ? screenMatrix : anchorMatrices[face]!, slot.raster, sizeValue)
+        place(mesh, face, onScreen ? screenMatrix : anchorMatrices[face]!, slot.raster)
         mesh.visible = true
       }
       frameRef = undefined

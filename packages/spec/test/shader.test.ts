@@ -88,7 +88,15 @@ describe('wrapShader', () => {
     expect(w).toMatchObject({ prevFrame: true, faceMask: true })
     expect(w.fragment).toContain('vec4 ouaf_prevFrame(vec2 uv)')
     expect(w.fragment).toContain('float ouaf_faceMask(vec2 uv)')
-    expect(shaderUses('// ouaf_prevFrame(uv)\n' + EFFECT)).toEqual({ prevFrame: false, faceMask: false })
+    expect(shaderUses('// ouaf_prevFrame(uv)\n' + EFFECT)).toEqual({ prevFrame: false, faceMask: false, faceSize: false, faceInputs: [] })
+  })
+
+  it('lists the face-tracking inputs a source uses, comments ignored', () => {
+    const src = '/* ouaf_faceMask */ vec4 effect(vec2 uv) { return vec4(ouaf_faceSize[0] * float(ouaf_faceCount)); }'
+    expect(shaderUses(src)).toEqual({ prevFrame: false, faceMask: false, faceSize: true, faceInputs: ['ouaf_faceCount', 'ouaf_faceSize'] })
+    expect(shaderUses('vec4 effect(vec2 uv) { return ouaf_sample(uv) * ouaf_faceMask(uv); }').faceInputs).toEqual(['ouaf_faceMask'])
+    // Whole identifiers only.
+    expect(shaderUses('float my_ouaf_faceCount2 = 1.0;\n' + EFFECT).faceInputs).toEqual([])
   })
 
   it('limits the face stage to the mesh mask', () => {
