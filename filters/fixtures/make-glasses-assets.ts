@@ -83,7 +83,8 @@ function superellipse(c: V3, a: number, b: number, n: number, count: number): V3
 }
 
 // The demo's glasses: rims around the eyes (x = ±0.52), a bridge, temples from the outer edge of each rim back along
-// -z (x from 0.92 out to 1.04), bending down behind the ears.
+// -z (x from 0.92 out to 1.2 at 0.75 behind the front, the width of the tracked heads near the ear), bending down
+// behind the ears.
 const front = merge(
   ...[-1, 1].map((side) => tube(superellipse([0.52 * side, 0, 0], 0.4, 0.29, 3.5, 64), 0.045, 10, true)),
   tube(Array.from({ length: 13 }, (_, i) => {
@@ -96,7 +97,7 @@ const temple = (side: number) =>
     const u = i / 23
     const z = -0.05 - 1.75 * u
     const y = 0.1 - (u > 0.75 ? 0.6 * ((u - 0.75) / 0.25) ** 2 : 0)
-    return [side * (0.92 + 0.12 * Math.sin(Math.min(1, u * 3) * (Math.PI / 2))), y, z] as V3
+    return [side * (0.92 + 0.28 * Math.sin(Math.min(1, u * 2.5) * (Math.PI / 2))), y, z] as V3
   }), 0.035, 8)
 
 const parts: Array<[string, Geometry, V3]> = [

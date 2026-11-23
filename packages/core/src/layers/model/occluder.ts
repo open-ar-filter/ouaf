@@ -30,15 +30,16 @@ export const HEAD_CENTER: readonly [number, number, number] = [0, 0.1, -0.1]
 /** Semi-axes of the head ellipsoid (face units): half width, half height, half depth. */
 export const HEAD_RADII: readonly [number, number, number] = [1.15, 1.75, 1.4]
 /**
- * How far the face mesh is moved back along the camera rays (face units, ≈ 2.2 cm). It covers the error of the
+ * How far the face mesh is moved back along the camera rays (face units, ≈ 1.3 cm). It covers the error of the
  * tracked depth (MediaPipe's relative z) and the content that touches the face. Measured with the temples of the
- * `glasses` demo (x = ±0.92–1.04 face units) on the turned faces of the test clips, whose tracked temples are wider
- * (≈ ±1.25): the near temple runs 1 to 2.5 cm (along the camera ray) inside the tracked surface before the ear. With
- * 0.35 it stays visible down to ≈ 0.2 face units in front of the `head` origin, where the ear starts (median; 0.35
- * with 0.3, 0.5 with the ellipsoid alone), no point of the far temple shows over the inner 90 % of the face oval, and
- * the inside of the head stays hidden. Larger values start to show the far temple at the edge of the face.
+ * `glasses` demo, which open from x = ±0.92 at the hinges to ±1.2 face units near the ear (the tracked heads of the
+ * test clips are ≈ ±1.25 there), on the turned head of `pesquet-turn` (`e2e/occlusion.spec.ts`): the straight part
+ * of the near temple keeps 0.8 to 1 of the length it has without occlusion (0.91 to 1 with 0.35, 0.69 to 1 with
+ * 0.15, 0.6 to 1 with 0), and on most frames it reaches the ear whole; below 0.2 its end near the ear is cut first,
+ * then breaks up. No pixel of the far temple shows over the face oval at any of these values. Narrower temples (the
+ * demo's were ±1.04 before #150) run up to 2.5 cm inside the tracked head before the ear and need ≈ 0.35.
  */
-export const DEPTH_TOLERANCE = 0.35
+export const DEPTH_TOLERANCE = 0.2
 /** Rings of the skirt between the contour of the face and the back pole of the ellipsoid. */
 export const SKIRT_RINGS = 5
 /** Vertices of a head occluder: the face mesh, the skirt rings, the back pole. */
