@@ -11,7 +11,7 @@
  */
 import { LANDMARKS_STRIDE, MATRIX_STRIDE, type FaceFrame } from '../face.ts'
 import { CANONICAL_FACE, PROCRUSTES_BASIS } from './canonical-face.ts'
-import { FACE_CAMERA_FOV_Y_DEG, videoToCamera } from './face-pose.ts'
+import { FACE_CAMERA_FOV_Y_DEG, videoToCameraInPlace } from './face-pose.ts'
 
 /** Vertices of the face mesh: the face landmarks without the irises. */
 export const FACE_MESH_VERTICES = 468
@@ -183,8 +183,11 @@ export function writeFaceMesh(faces: Readonly<FaceFrame>, face: number, out: Flo
   depth /= BASIS_TOTAL
   if (!(depth < 0)) return false
   // MediaPipe's unprojection: distance = (1 + s·(z − mean)) / S, with s the scale of z on the near plane of the face
-  // camera (`estimateFacePose`) and S the face scale; S is set from the basis depth.
-  const s = zScale(faces)
+  // camera (`estimateFacePose`'s `xScale` with a near plane at 1) and S the face scale; S is set from the basis depth.
+  // Computed here rather than returned by a helper: V8 boxes a fractional number returned from a call it does not
+  // inline.
+  const aspect = faces.width > 0 && faces.height > 0 ? faces.width / faces.height : 1
+  const s = 2 * TAN_HALF_FOV * aspect
   const ref = 1 + s * (rel - mean)
   if (!(ref > 0)) return false
   const k = depth / ref
@@ -193,7 +196,10 @@ export function writeFaceMesh(faces: Readonly<FaceFrame>, face: number, out: Flo
     const l = base + i * 3
     const z = k * (1 + s * (L[l + 2]! - mean))
     if (!(z < 0)) return false
-    videoToCamera(faces, L[l]!, L[l + 1]!, z, ray)
+    ray.x = L[l]!
+    ray.y = L[l + 1]!
+    ray.z = z
+    videoToCameraInPlace(faces, ray)
     const o = offset + i * 3
     out[o] = ray.x
     out[o + 1] = ray.y
@@ -204,9 +210,3 @@ export function writeFaceMesh(faces: Readonly<FaceFrame>, face: number, out: Flo
 }
 
 const TAN_HALF_FOV = Math.tan((FACE_CAMERA_FOV_Y_DEG * Math.PI) / 360)
-
-/** Scale of MediaPipe's z on the near plane of the face camera: `estimateFacePose`'s `xScale` with a near plane at 1. */
-function zScale(faces: Readonly<Pick<FaceFrame, 'width' | 'height'>>): number {
-  const aspect = faces.width > 0 && faces.height > 0 ? faces.width / faces.height : 1
-  return 2 * TAN_HALF_FOV * aspect
-}

@@ -414,6 +414,12 @@ export function bindingParams(store: ParamStore): ParamsReader {
       if (i < 0) return undefined
       return store.defAt(i).type === 'number' ? store.numberAt(i) : store.valueAt(i)
     },
+    writeNumber(name, out, index) {
+      const i = store.indexOf(name)
+      if (i < 0 || store.defAt(i).type !== 'number' || store.sizeOf(i) === 0) return false
+      out[index] = store.numbers[store.offsetOf(i)]!
+      return true
+    },
   }
 }
 

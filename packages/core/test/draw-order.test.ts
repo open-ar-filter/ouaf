@@ -214,4 +214,26 @@ describe('draw order of transparent objects (spec §7)', () => {
     }
     expect(bytesPerCall(frame, { warmup: 20_000 })).toBeLessThan(1)
   })
+
+  it('returns whole numbers, which Array.prototype.sort receives without boxing', () => {
+    // sort is a builtin: it never inlines the comparator, so a fractional result (a depth difference) was boxed on
+    // every comparison of three's transparent sort (#159).
+    const layers = Array.from({ length: 6 }, (_, i) => layer([{ at: [i * 0.37, 0, -50.3 - i * 1.21], z: (i % 3) * 0.13, face: 1 }]))
+    const order = new DrawOrder()
+    order.setLayers(layers)
+    order.update(camera)
+    const items = layers.map((l) => item(l.placements[0]!.object))
+    items[4] = { ...items[4]!, object: new Mesh() } // not one of the layers': three's depth
+    items[5] = { ...items[5]!, object: new Mesh(), z: items[5]!.z + 0.001 }
+    for (const a of items) for (const b of items) expect(Number.isInteger(order.compare(a, b))).toBe(true)
+    // Sorting: V8's sort allocates its work array, the same with any comparator; boxing would add 16 bytes per
+    // comparison.
+    const subtract = (a: DrawItem, b: DrawItem) => b.z - a.z
+    const sorted = items.slice()
+    const sortWith = (compare: (a: DrawItem, b: DrawItem) => number) => () => {
+      for (let i = 0; i < items.length; i++) sorted[i] = items[(i * 5) % items.length]!
+      sorted.sort(compare)
+    }
+    expect(bytesPerCall(sortWith(order.compare))).toBeLessThan(bytesPerCall(sortWith(subtract)) - 3 * 16)
+  })
 })

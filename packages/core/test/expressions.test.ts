@@ -16,7 +16,7 @@ import {
   type EventTuning,
   type ExpressionEventDetectorOptions,
 } from '../src/index.ts'
-import { BOXED_NUMBER, bytesPerCall } from './allocation.ts'
+import { bytesPerCall } from './allocation.ts'
 import { loadExpressionFixture, replayFixture, type RecordedEvent } from './expression-fixture.ts'
 
 const DEG = Math.PI / 180
@@ -470,9 +470,9 @@ describe('expression events: allocation', () => {
       readExpressionSignals(faces, signals)
       state[1]! += d.update(state[0]!, maxFaces, ids, signals).count
     }
-    // The detector allocates about 5 bytes per frame on average in steady state (less than a boxed number per frame);
-    // an allocation per face and per frame would be 4 × 16 bytes or more.
-    expect(bytesPerCall(frame, { warmup: 20_000 })).toBeLessThan(BOXED_NUMBER)
+    // The wink channel once merged the closed eye's value with `NaN`, which boxed it on every winking frame: 0.3 boxed
+    // numbers (16 bytes each) per frame here, 4.84 bytes (#159).
+    expect(bytesPerCall(frame, { warmup: 20_000 })).toBeLessThan(1)
     expect(state[1]).toBeGreaterThan(1000)
   })
 })

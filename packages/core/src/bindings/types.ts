@@ -92,6 +92,12 @@ export interface ParamsReader {
    * runtime. `undefined` when it has no value (e.g. an optional asset): the property then takes its fallback.
    */
   get(name: string): unknown
+  /**
+   * Optional: writes the current value of `number` parameter `name` into `out[index]` and returns true; false when it
+   * has none (the binding then uses `get`). For the per-frame path: a fractional number returned through `get` is
+   * boxed, i.e. allocated, on every call.
+   */
+  writeNumber?(name: string, out: NumberArray, index: number): boolean
 }
 
 /** Inputs shared by every binding of a filter. */

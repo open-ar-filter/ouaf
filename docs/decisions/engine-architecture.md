@@ -153,6 +153,14 @@ and changes nothing; an initial file (`addFilter(src, { params })`) that fails r
 resolve a parameter once with `ctx.params.indexOf`, read its animated value each frame with `numberAt`) and `maxFaces`. `frame` (`FrameContext`, valid during the call only) gives `time`, `now`, `dt`, the latest `faces`
 (`FaceFrame`), `anchors`, the render size and `mirrored`. `update` and `render` must not allocate in the steady state.
 
+Fractional numbers are the usual trap (#149, #159): V8 boxes one (a 16-byte heap number) when it passes it to, or
+returns it from, a call it does not inline, which depends on the caller's size and on compilation order; when a
+builtin such as `Array.prototype.sort` calls the function; and when a conditional merges it with the global `NaN` or
+`Infinity` (`ok ? x : NaN`). Per-frame helpers therefore take arrays and offsets and write their results into arrays
+(`projectToUv`, `WarpPacker`, `videoToCameraInPlace`), and merge with `NaN` through two stores. The unit tests measure
+the per-frame paths with V8's default inlining (`bytesPerCall`, in each component's tests) and with only small
+functions inlined (`allocation-inlining.test.ts`), which catches a boxing call whatever V8 decides to inline.
+
 ## Stages and compositing (spec §7)
 
 `Compositor` (`compositor.ts`): `background → video → face → warp → objects → color → overlay`. Pass stages ping-pong

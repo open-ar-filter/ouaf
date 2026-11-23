@@ -244,6 +244,7 @@ class ParamValueBinding implements Evaluator {
   }
 
   write(_face: number, out: NumberArray, index: number): void {
+    if (this.#params.writeNumber?.(this.#name, out, index)) return
     out[index] = this.evaluate() as number
   }
 }

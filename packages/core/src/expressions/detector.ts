@@ -445,8 +445,15 @@ export class ExpressionEventDetector {
     const frontal = Math.abs(signals[o + SIGNAL.yaw]!) <= WINK_MAX_YAW
     const gap = this.#winkGap[0]!
     input[BLINK] = Math.min(eyeL, eyeR)
-    input[WINK_LEFT] = eyeL !== eyeL || eyeR !== eyeR ? NaN : frontal && eyeL - eyeR >= gap ? eyeL : 0
-    input[WINK_RIGHT] = eyeL !== eyeL || eyeR !== eyeR ? NaN : frontal && eyeR - eyeL >= gap ? eyeR : 0
+    if (eyeL !== eyeL || eyeR !== eyeR) {
+      input[WINK_LEFT] = NaN
+      input[WINK_RIGHT] = NaN
+    } else {
+      input[WINK_LEFT] = 0
+      input[WINK_RIGHT] = 0
+      if (frontal && eyeL - eyeR >= gap) input[WINK_LEFT] = eyeL
+      if (frontal && eyeR - eyeL >= gap) input[WINK_RIGHT] = eyeR
+    }
     input[MOUTH] = v[SIGNAL.jawOpen]!
     input[SMILE] = v[SIGNAL.smile]!
     input[BROW] = v[SIGNAL.browRaise]!

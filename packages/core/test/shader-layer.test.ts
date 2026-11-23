@@ -105,14 +105,16 @@ describe('shader face inputs (spec §11.1)', () => {
     const camera = objectsCamera(1280, 720, 1280, 720)
     const p = camera.projectionMatrix.elements
     const out = new Float32Array(2)
-    expect(projectToUv(p, 0, 0, -60, out, 0)).toBe(true)
+    expect(projectToUv(p, [0, 0, -60], 0, out, 0)).toBe(true)
     expect([...out]).toEqual([0.5, 0.5])
-    projectToUv(p, 10, 5, -60, out, 0)
+    projectToUv(p, [10, 5, -60], 0, out, 0)
     expect(out[0]).toBeGreaterThan(0.5)
     expect(out[1]).toBeGreaterThan(0.5)
-    expect(projectToUv(p, 0, 0, 60, out, 0)).toBe(false)
+    expect(projectToUv(p, [0, 0, 60], 0, out, 0)).toBe(false)
     const m = new Matrix4().makeScale(6.3, 6.3, 6.3).setPosition(0, 0, -60).elements
-    expect(projectedUnit(p, m)).toBeCloseTo((6.3 * p[5]!) / (2 * 60), 6)
+    const size = new Float32Array(1)
+    projectedUnit(p, m, size, 0)
+    expect(size[0]).toBeCloseTo((6.3 * p[5]!) / (2 * 60), 6)
   })
 
   it('places the anchors where the video shows them, mirrored or not, and sizes the faces', () => {
