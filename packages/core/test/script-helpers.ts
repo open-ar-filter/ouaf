@@ -3,7 +3,7 @@
  * with `new Function`), and the bindings environment.
  */
 import type { BindingEnv } from '../src/bindings/index.ts'
-import { scriptRuntime, type RuntimeScope, type WireDone } from '../src/script/runtime.ts'
+import { scriptRuntime, type RuntimeOptions, type RuntimeScope, type WireDone } from '../src/script/runtime.ts'
 
 export const env = (overrides?: BindingEnv['overrides']): BindingEnv => ({
   data: { resolve: () => undefined },
@@ -66,9 +66,9 @@ export class FakeCanvas {
 export const fakeImage = (image: unknown) => [...new Uint16Array(image as ArrayBuffer)]
 
 /** Starts the runtime in-process; returns the engine's end of the channel (script.js comes with `init`). */
-export function runtime(): TestConnection {
+export function runtime(options: Partial<RuntimeOptions> = {}): TestConnection {
   const scope = fakeScope()
-  scriptRuntime(scope, { harden: false, load: (c) => load(c) as Promise<{ default?: unknown }>, canvas: (w, h) => new FakeCanvas(w, h) })
+  scriptRuntime(scope, { harden: false, load: (c) => load(c) as Promise<{ default?: unknown }>, canvas: (w, h) => new FakeCanvas(w, h), ...options })
   const channel = new MessageChannel()
   scope.send({ t: 'port' }, [channel.port2])
   const conn = {
@@ -94,4 +94,4 @@ export async function ask(conn: Pick<TestConnection, 'port'>, message: unknown):
 }
 
 export const init = (code: string, extra: Record<string, unknown> = {}) => ({ t: 'init', code, layers: ['label', '', 'dot'], params: { size: 1 }, seed: 42, clock: 0, time: 0, assets: {}, canvases: [], ...extra })
-export const frame = (seq: number, extra: Record<string, unknown> = {}) => ({ t: 'frame', seq, time: seq / 30, dt: 1 / 30, clock: seq / 30, faces: [], events: [], ...extra })
+export const frame = (seq: number, extra: Record<string, unknown> = {}) => ({ t: 'frame', seq, time: seq / 30, dt: 1 / 30, aspect: 0.5625, clock: seq / 30, faces: [], events: [], ...extra })

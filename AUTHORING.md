@@ -126,8 +126,10 @@ engine. "Left/right" in anchor names are the person's side (their left eye is on
 
 Layers are drawn in fixed stages, whatever their order in the list (§7):
 `background → video → face → warp → objects → color → overlay`. Within a stage, list order applies; objects (`text`,
-`sticker`, `model`, `canvas`) are depth-sorted. Warps deform everything drawn before them; color layers and post
-shaders are chained.
+`sticker`, `model`, `canvas`) are depth-sorted, except objects of the same face on the same anchor: those are drawn
+by their `offset` z (higher in front, whatever the head's rotation), then list order. A text over a bubble on the
+same anchor only needs a small z gap (`[0.2, 1, 0.01]` over `[0, 1, 0]`). Warps deform everything drawn before
+them; color layers and post shaders are chained.
 
 **Every layer**: `type` (required), `id` (unique; needed to drive it from a script), `visible` (bindable),
 `opacity` 0–1 (bindable). Hiding a layer does not pause its animations (§6.1).
@@ -219,7 +221,8 @@ boolean, `[x, y]`, `[x, y, z]` or color; each bindable; 32 max), `textures` (nam
 A Canvas 2D image drawn by the script's `draw.<id>` function (section 10): `id` (required), `width`, `height`
 (pixels, 16–2048, required), `size` (displayed height in anchor units, default 1, bindable), `fps` (maximum redraws
 per second of media time, default 30; `0`: only the first time and after `invalidate()`). Keep it small and `fps`
-low: each redraw is uploaded to the GPU. Example in section 15.
+low: each redraw is uploaded to the GPU. Text uses the fonts declared in `assets` by their name (section 10).
+Example in section 15.
 
 ## 6. Assets
 
@@ -254,14 +257,16 @@ directly (§10.1). **Remote URLs (`http:`, `https:`, `data:`…) are forbidden.*
 | model | glTF 2.0 / GLB | Draco and meshopt compression supported; external files must stay under `assets/` (prefer GLB). |
 | lut | `.cube` | 1D or 3D. |
 | shader | `.frag`, `.glsl` | Section 11. |
-| font | WOFF2, WOFF, TTF, OTF | For `text.font`. |
+| font | WOFF2, WOFF, TTF, OTF | For `text.font`, and by asset name in canvases (`ctx.font`, section 10). |
 
 Data a script needs (word lists, levels, tables) is not an asset: import the JSON in `filter.ts`
 (`import levels from './levels.json'`, the file next to `filter.ts`, not in `assets/`) and `ouaf pack` bundles it
 into `script.js`. The `data` (`.json`) and `lottie` kinds are reserved: nothing reads them yet, and `ouaf validate`
 reports such assets as unused.
 
-The kind comes from the extension; set `kind` to override it. Built-in resources (§10.3), always available:
+The kind comes from the extension; set `kind` to override it. An entry can also be a built-in resource under a name
+of your own, e.g. `"title": "builtin:font/rounded-bold"` for the text of a canvas. Built-in resources (§10.3), always
+available:
 fonts `builtin:font/sans`, `builtin:font/sans-bold` (default), `builtin:font/rounded-bold`, `builtin:font/serif`,
 `builtin:font/mono`, `builtin:font/handwritten`; LUTs `builtin:lut/vintage`, `builtin:lut/noir`, `builtin:lut/warm`,
 `builtin:lut/cool`, `builtin:lut/vivid`. Credit third-party assets in `credits`, with a license that allows
@@ -372,7 +377,7 @@ be plain JSON (no `Date`, `Map`, getters, `undefined` in lists). The top level o
 | `setup(f)` | once, when the filter is activated |
 | `update(f, frame)` | every frame the script receives; avoid it when a binding is enough |
 | `on.<event>(f, payload)` | for each event of section 9; face events get `{ face }` (`wink` also `side`), `paramChange` `{ name, value, previous }`, `message:<name>` `{ data }` |
-| `draw.<id>(ctx, f, frame)` | canvas layers: first frame, then up to `fps` times per second, and after `.invalidate()`; `ctx` is an `OffscreenCanvasRenderingContext2D` of `width × height` px, cleared before each call |
+| `draw.<id>(ctx, f, frame)` | canvas layers: first frame, then up to `fps` times per second, and after `.invalidate()`; `ctx` is an `OffscreenCanvasRenderingContext2D` of `width × height` px, cleared before each call; the `font` assets are its fonts by asset name (`ctx.font = '24px title'`) |
 
 **The `f` API** (§12.4):
 
@@ -393,8 +398,9 @@ be plain JSON (no `Date`, `Map`, getters, `undefined` in lists). The top level o
 Easings: `linear`, and `in`, `out`, `inOut` × `Quad`, `Cubic`, `Back`, `Elastic`, `Bounce` (e.g. `outBack`);
 default `inOutQuad`.
 
-**`frame`**: `time` (s), `dt` (s since the previous call), `faces` (each with `id`, stable while tracked, `index`,
-`state`) and, depending on `script: { uses: [...] }` (data minimization, §12.4, §15.2):
+**`frame`**: `time` (s), `dt` (s since the previous call), `aspect` (displayed width / height), `faces` (each with
+`id`, stable while tracked, `index`, `state`) and, depending on `script: { uses: [...] }` (data minimization, §12.4,
+§15.2):
 
 | `uses` | Per face |
 |---|---|
@@ -404,7 +410,13 @@ default `inOutQuad`.
 | `face.landmarks` | `landmarks`: `Float32Array` of 478 × (x, y, z), same space |
 
 Declare only what the script reads: `script: { uses: [] }` when it reads nothing but ids; `face.*` uses need
-`requires.face`. Without `uses`, the script gets pose and blendshapes.
+`requires.face`. Without `uses`, the script gets pose and blendshapes. Positions are normalized over the width and
+the height: multiply x differences by `frame.aspect` to measure on-screen distances or keep circles round.
+
+**Canvas fonts**: a `draw` function sees only the platform's fonts, which differ between devices, plus the `font`
+assets of the manifest under their asset name: declare `"assets": { "title": "builtin:font/rounded-bold" }` (or a
+font file) and write `ctx.font = 'bold 24px title'`. Quote a name that is a CSS keyword (`'24px "serif"'`). Where a
+browser cannot load fonts in the script's Worker, the platform font is used and the engine warns.
 
 **Sandbox and timing** (§12.1, §12.7, §15):
 
