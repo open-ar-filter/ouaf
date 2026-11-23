@@ -30,10 +30,34 @@ export function renderParams(container: HTMLElement, filters: readonly FilterHan
     const inputs = new Map<string, HTMLElement>()
     for (const [name, def] of Object.entries(defs)) {
       const row = el('label')
-      const output = el('span', String(filter.params[name]))
+      const output = el('span', show(filter.params[name]))
       outputs.set(name, output)
       let input: HTMLElement
-      if (def.type === 'number') {
+      if (def.type === 'asset') {
+        // A file read locally, checked by the engine (spec §15); a refused one is reported as an `error`.
+        const i = el('input') as HTMLInputElement
+        i.type = 'file'
+        i.accept = [...def.accept, ...def.accept.flatMap((t) => EXTENSIONS[t] ?? [])].join(',')
+        i.addEventListener('change', () => {
+          const file = i.files?.[0]
+          if (file) set(name, file)
+        })
+        const box = el('span')
+        box.className = 'file'
+        box.append(i)
+        if (def.optional) {
+          const clear = el('button', '×') as HTMLButtonElement
+          clear.type = 'button'
+          clear.title = 'Remove the file'
+          clear.addEventListener('click', (e) => {
+            e.preventDefault()
+            i.value = ''
+            set(name, null)
+          })
+          box.append(clear)
+        }
+        input = box
+      } else if (def.type === 'number') {
         const i = el('input') as HTMLInputElement
         i.type = 'range'
         i.min = String(def.min ?? 0)
@@ -78,7 +102,7 @@ export function renderParams(container: HTMLElement, filters: readonly FilterHan
     }
     filter.on('paramChange', (c) => {
       const output = outputs.get(c.name)
-      if (output) output.textContent = JSON.stringify(c.value)
+      if (output) output.textContent = show(c.value)
       // Follow changes made elsewhere (presets, the console).
       const input = inputs.get(c.name)
       if (input instanceof HTMLInputElement && input.type === 'checkbox') input.checked = c.value === true
@@ -107,6 +131,25 @@ export function renderParams(container: HTMLElement, filters: readonly FilterHan
     }
     container.append(box)
   }
+}
+
+/** File extensions for the file picker, for media types systems do not know (`.cube`). */
+const EXTENSIONS: Readonly<Record<string, readonly string[]>> = {
+  'text/x-cube': ['.cube'],
+  'model/gltf-binary': ['.glb'],
+  'model/gltf+json': ['.gltf'],
+  'font/woff2': ['.woff2'],
+  'font/woff': ['.woff'],
+  'font/ttf': ['.ttf'],
+  'font/otf': ['.otf'],
+}
+
+/** A parameter value as shown next to its control: a file by its name. */
+function show(value: unknown): string {
+  if (typeof File !== 'undefined' && value instanceof File) return value.name
+  if (typeof Blob !== 'undefined' && value instanceof Blob) return `file (${value.size} B)`
+  if (value === null) return 'none'
+  return typeof value === 'string' ? value : JSON.stringify(value)
 }
 
 function el(tag: string, text?: string): HTMLElement {

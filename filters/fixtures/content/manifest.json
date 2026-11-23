@@ -1,0 +1,39 @@
+{
+  "ouaf": "1",
+  "id": "content",
+  "name": "Content params (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Content properties (#140): sticker, model, font and LUT chosen by select params, the host's file in a sticker (asset param), a src set by the script. Synthetic assets.",
+  "requires": {},
+  "params": {
+    "style": { "type": "select", "default": "red", "options": { "red": "Red", "green": "Green", "blue": "Blue" }, "label": "Sticker" },
+    "logo": { "type": "asset", "accept": ["image/png", "image/jpeg", "image/webp", "image/svg+xml"], "maxSize": 500000, "optional": true, "label": "Logo" },
+    "shape": { "type": "select", "default": "red", "options": { "red": "Red cube", "gray": "Gray cube" }, "label": "Model" },
+    "font": { "type": "select", "default": "sans", "options": { "sans": "Sans", "mono": "Mono", "handwritten": "Handwritten" }, "label": "Font" },
+    "grade": { "type": "select", "default": "vintage", "options": { "vintage": "Vintage", "noir": "Noir", "invert": "Invert" }, "label": "LUT" }
+  },
+  "assets": {
+    "red": { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10' fill='#ff0000'/></svg>" },
+    "green": { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10' fill='#00ff00'/></svg>" },
+    "blue": { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10' fill='#0000ff'/></svg>" },
+    "red-cube": "assets/red.glb",
+    "gray-cube": "assets/gray.glb",
+    "invert": "assets/invert.cube"
+  },
+  "layers": [
+    { "id": "styled", "type": "sticker", "src": { "param": "style", "map": { "red": "red", "green": "green", "blue": "blue" } },
+      "anchor": "screen", "offset": [-0.2, 0.3, 0], "size": 0.1, "overlay": true },
+    { "id": "logo", "type": "sticker", "src": { "param": "logo" }, "anchor": "screen", "offset": [0, 0.3, 0], "size": 0.1, "overlay": true },
+    { "id": "scripted", "type": "sticker", "src": "blue", "anchor": "screen", "offset": [0.2, 0.3, 0], "size": 0.1, "overlay": true },
+    { "id": "shape", "type": "model", "src": { "param": "shape", "map": { "red": "red-cube", "gray": "gray-cube" } },
+      "anchor": "screen", "offset": [-0.15, 0.05, 0], "scale": 0.08, "overlay": true },
+    { "id": "label", "type": "text", "text": "Ouaf", "font": { "param": "font", "map": { "sans": "builtin:font/sans-bold", "mono": "builtin:font/mono", "handwritten": "builtin:font/handwritten" } },
+      "anchor": "screen", "offset": [0.15, 0.05, 0], "size": 0.08, "color": "#ffff00", "overlay": true },
+    { "id": "grade", "type": "color", "lut": { "param": "grade", "map": { "vintage": "builtin:lut/vintage", "noir": "builtin:lut/noir", "invert": "invert" } } }
+  ],
+  "script": {
+    "entry": "script.js",
+    "on": ["message:src", "message:lut"]
+  }
+}
