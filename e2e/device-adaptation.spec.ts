@@ -114,6 +114,26 @@ test('with blendshapes dropped, expression events come from the landmark geometr
   expect(await page.evaluate(() => window.ouaf!.engine.performance.dropped[0])).toBe('blendshapes')
 })
 
+test('?signals: peaks of the last 1.5 s, and blink counts that match the events the engine fired', async ({ page }) => {
+  await open(page, 'signals&filter=/filters/fixtures/dot-tint/')
+  // pesquet-talk has blinks at about 1.9, 3.0 and 6.9 s (looping).
+  await expect.poll(() => page.evaluate(() => window.ouaf!.events.filter((e) => e.name === 'blink').length), POLL).toBeGreaterThan(0)
+  await page.waitForTimeout(500) // the table is refreshed 4 times a second
+  const panel = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.ouaf-perf table tr')].map((tr) => [...tr.children].map((c) => c.textContent ?? ''))
+    return { rows, blinks: window.ouaf!.events.filter((e) => e.name === 'blink').length }
+  })
+  const row = (name: string) => panel.rows.find((r) => r[0] === name)!
+  // Signal rows: now and peak for each source, as numbers; a peak is at least the value now.
+  for (const cell of row('eyeClosedLeft').slice(1)) expect(Number(cell)).not.toBeNaN()
+  expect(Number(row('eyeClosedLeft')[2])).toBeGreaterThanOrEqual(Number(row('eyeClosedLeft')[1]) - 1e-9)
+  // Blendshapes available (no throttle): the engine's blinks are counted under "engine (bs+geo)".
+  const blink = row('blink')
+  expect(Number(blink[1])).toBeGreaterThan(0)
+  expect(Number(blink[1])).toBeLessThanOrEqual(panel.blinks)
+  expect(Number(blink[2])).toBe(0)
+})
+
 test('adaptation can be turned off', async ({ page }) => {
   await open(page, 'filter=/filters/fixtures/dot-tint/&adapt=0&throttle=200')
   await page.waitForTimeout(8000)

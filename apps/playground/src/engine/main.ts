@@ -136,6 +136,7 @@ async function addFilter(src: string | File, label: string): Promise<void> {
   // Expression events delivered to the filter (spec §13): counts and the last one.
   const counts = new Map<string, number>()
   handle.on('expression', (e) => {
+    perf.expression(e)
     counts.set(e.name, (counts.get(e.name) ?? 0) + 1)
     hook.events.push(e)
     const last = `${e.name}${e.side ? ` (${e.side})` : ''}, face ${e.faceId}`
