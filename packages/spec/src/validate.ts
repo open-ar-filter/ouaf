@@ -339,14 +339,30 @@ function checkBinding(ctx: Ctx, b: { param?: string; bind?: string }, valueSchem
     if (b.bind.startsWith('face.')) ctx.usesFace = true
     if (b.bind.startsWith('face.blendshapes.')) ctx.usesBlendshapes = true
     const m = b as { map?: unknown; range?: unknown; to?: unknown }
-    if (d.type === 'string' && m.map === undefined && !expected.includes('String')) {
-      err(ctx, 'binding-map-required', path, `"${b.bind}" is a string: add "map" to convert it.`)
+    if (m.map === undefined && m.range === undefined && m.to === undefined && !plainBindFits(d.type, expected)) {
+      const wants = [...new Set(expected.map((k) => KIND_NAME[k] ?? k.toLowerCase()))].join(' or ')
+      err(ctx, 'binding-map-required', path, `"${b.bind}" is a ${d.type}, this property expects ${wants}: add "map" to convert it.`,
+        d.type === 'number'
+          ? `E.g. { "bind": "${b.bind}", "map": { "0": …, "1": … }, "default": … }, with values of the property's type.`
+          : `E.g. { "bind": "${b.bind}", "map": { ${d.type === 'boolean' ? '"true": …, "false": …' : '"happy": …'} }, "default": … }.`)
     }
     if ((m.range === undefined) !== (m.to === undefined)) {
       err(ctx, 'binding-range', path, '"range" and "to" go together.', 'E.g. { "bind": "face.blendshapes.jawOpen", "range": [0, 1], "to": [0.1, 0.6] }.')
     }
     if (m.map && typeof m.map === 'object' && !Array.isArray(m.map)) checkMapKeys(ctx, b.bind, d.type, m.map as Json, `${path}/map`)
   }
+}
+
+/** Names of the property kinds (`valueKinds`) in messages. */
+const KIND_NAME: Record<string, string> = { Number: 'a number', Integer: 'a number', String: 'a text', Boolean: 'a boolean', Color: 'a color', Vec2: 'a [x, y] vector', Vec3: 'an [x, y, z] vector' }
+
+/**
+ * Whether data of `type` feeds a property of kinds `expected` without `map` (spec §8, as the engine compiles it):
+ * numbers into a number or a text, strings into a text, booleans into a boolean.
+ */
+function plainBindFits(type: DataPathDef['type'], expected: string[]): boolean {
+  if (type === 'number') return expected.some((k) => k === 'Number' || k === 'Integer' || k === 'String')
+  return expected.includes(type === 'string' ? 'String' : 'Boolean')
 }
 
 /** `map` keys that can never match data of `type` (spec §8): the entry is dead, the binding gives its `default`. */

@@ -254,6 +254,40 @@ describe('actionable errors', () => {
     expect(str.warnings).toEqual([])
   })
 
+  it('needs map when the data does not have the property\'s type, as the engine (spec §8)', () => {
+    const reg = createRegistry()
+    extendRegistry(reg, {
+      plugin: 'mood',
+      version: '1.0.0',
+      data: [
+        { path: 'ext.mood.name', type: 'string', description: '' },
+        { path: 'ext.mood.happy', type: 'boolean', description: '' },
+      ],
+    })
+    const check = (prop: string, bind: string, extra: Record<string, unknown> = {}) =>
+      validateManifest({ ...base, requires: { face: true, plugins: ['mood@^1'] }, layers: [{ type: 'text', text: 'x', [prop]: { bind, ...extra } }] }, reg)
+    // Fits as it is: numbers into a number or a text, strings into a text, booleans into a boolean.
+    for (const [prop, bind] of [['size', 'face.index'], ['text', 'faces.count'], ['text', 'ext.mood.name'], ['visible', 'ext.mood.happy']] as const) {
+      expect(check(prop, bind).errors, `${prop} ← ${bind}`).toEqual([])
+    }
+    const cases = [
+      ['color', 'ext.mood.name', 'a color'],
+      ['color', 'face.index', 'a color'],
+      ['offset', 'face.index', 'an [x, y, z] vector'],
+      ['visible', 'face.index', 'a boolean'],
+      ['text', 'ext.mood.happy', 'a text'],
+      ['size', 'ext.mood.happy', 'a number'],
+    ] as const
+    for (const [prop, bind, wants] of cases) {
+      const r = check(prop, bind)
+      expect(codes(r.errors), `${prop} ← ${bind}`).toEqual([`binding-map-required@/layers/0/${prop}`])
+      expect(r.errors[0]!.message).toContain(`this property expects ${wants}: add "map"`)
+    }
+    expect(check('visible', 'face.index').errors[0]!.hint).toContain('"map": { "0": …, "1": … }')
+    expect(check('visible', 'face.index', { map: { '0': true }, default: false }).errors).toEqual([])
+    expect(check('color', 'ext.mood.name', { map: { happy: '#ffcc00' } }).errors).toEqual([])
+  })
+
   it('reports data and lottie assets that no layer uses, even with a script (spec §10.2: reserved kinds)', () => {
     const r = validateManifest({
       ...base,

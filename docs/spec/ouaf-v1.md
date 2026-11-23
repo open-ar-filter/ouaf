@@ -298,7 +298,8 @@ each path's type). What a `{ "bind" }` can feed:
 - Any other conversion needs `map`: a color, a vector (`offset`, `rotation`) or a boolean (`visible`) from numeric
   data, a color or a number from string data, e.g. `{ "bind": "face.index", "map": { "0": "#ff0000",
   "1": "#0000ff" } }`. `map` values MUST have the property's type; `map` and `range` cannot be combined.
-- A `map` key that can never match its data (above) is dead: a validator SHOULD warn about it.
+- A plain `{ "bind" }` whose data does not fit the property (above) is an error, reported by a validator and, at
+  load, by an engine. A `map` key that can never match its data is dead: a validator SHOULD warn about it.
 - **Missing data** (no face at that slot, blendshapes dropped, a value with no `map` entry) gives the binding's
   `default`, used as it is: it is not passed through `map` or `range`/`to`, so it MUST have the property's type.
   Without `default`, the property takes its default value (section 6).
