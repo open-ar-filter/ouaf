@@ -147,8 +147,8 @@ for (const mirror of [false, true]) {
     // The ellipsoid that came before (#21) showed 11 to 17 pixels of the far temple over the face on 3 of these frames.
     expect(samples.map((s) => s.farOverFace), details).toEqual(samples.map(() => 0))
     // The straight part of the near temple, compared with the same temple drawn without occlusion: 0.67 to 0.91 of
-    // it, 0.84 on average (its end runs up to 2 cm inside the tracked head, see `DEPTH_TOLERANCE`); with the
-    // ellipsoid, 0.51 to 0.65, 0.6 on average.
+    // it, 0.82 to 0.84 on average (its end runs up to 2 cm inside the tracked head, see `DEPTH_TOLERANCE`); with the
+    // ellipsoid, 0.51 to 0.65, 0.58 to 0.6 on average.
     const ratios = samples.map((s) => s.nearReach / s.nearReachPlain)
     expect(Math.min(...ratios), details).toBeGreaterThan(0.6)
     expect(ratios.reduce((a, b) => a + b, 0) / ratios.length, details).toBeGreaterThan(0.75)
