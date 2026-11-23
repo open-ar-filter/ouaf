@@ -12,7 +12,8 @@ import {
   mirrorMatrix,
   type FaceAnchor,
 } from '../src/index.ts'
-import { heapGrowth, posePoint, poseRotation, writeSyntheticFace, type SyntheticPose } from './synthetic-face.ts'
+import { bytesPerCall } from './allocation.ts'
+import { posePoint, poseRotation, writeSyntheticFace, type SyntheticPose } from './synthetic-face.ts'
 
 function face(pose: SyntheticPose) {
   const f = createFaceFrame(2)
@@ -181,6 +182,6 @@ describe('computeAnchorMatrix', () => {
     const f = face(pose)
     const m = new Float32Array(16)
     expect(f.landmarks.length).toBe(2 * LANDMARKS_STRIDE)
-    expect(heapGrowth(() => computeAnchorMatrix(f, 0, 'mouth', 'expression', true, m))).toBeLessThan(32 * 1024)
+    expect(bytesPerCall(() => computeAnchorMatrix(f, 0, 'mouth', 'expression', true, m))).toBeLessThan(1)
   })
 })

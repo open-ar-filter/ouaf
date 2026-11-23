@@ -87,24 +87,3 @@ export function noise(seed: number): () => number {
     return (s / 2 ** 32) * 2 - 1
   }
 }
-
-/**
- * Steady-state heap growth (bytes) over `iterations` calls of `fn`. Unoptimized code boxes numbers on the heap,
- * so the measure is taken over several rounds and the best one kept (an allocating `fn` allocates in all of them);
- * within a round, the median of several windows, since a garbage collection inside a window makes it shrink.
- * One small object per call shows as ≥ 100 KB.
- */
-export function heapGrowth(fn: () => void, iterations = 5000): number {
-  let best = Infinity
-  for (let round = 0; round < 3; round++) {
-    for (let i = 0; i < 5000; i++) fn()
-    const growth: number[] = []
-    for (let w = 0; w < 5; w++) {
-      const before = process.memoryUsage().heapUsed
-      for (let i = 0; i < iterations; i++) fn()
-      growth.push(process.memoryUsage().heapUsed - before)
-    }
-    best = Math.min(best, growth.sort((a, b) => a - b)[2]!)
-  }
-  return best
-}

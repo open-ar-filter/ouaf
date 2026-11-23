@@ -1,5 +1,3 @@
-import { setFlagsFromString } from 'node:v8'
-import { runInNewContext } from 'node:vm'
 import { createRegistry } from '@ouaf/spec'
 import { describe, expect, it } from 'vitest'
 import {
@@ -18,6 +16,7 @@ import {
   type EventTuning,
   type ExpressionEventDetectorOptions,
 } from '../src/index.ts'
+import { BOXED_NUMBER, bytesPerCall } from './allocation.ts'
 import { loadExpressionFixture, replayFixture, type RecordedEvent } from './expression-fixture.ts'
 
 const DEG = Math.PI / 180
@@ -438,10 +437,7 @@ describe('expression events: recorded sequences', () => {
 })
 
 describe('expression events: allocation', () => {
-  // 230,000 frames with forced GC: about 2 s on a fast machine, more than Vitest's default 5 s on a CI runner.
-  it('allocates nothing per frame', { timeout: 30_000 }, () => {
-    setFlagsFromString('--expose-gc')
-    const gc = runInNewContext('gc') as () => void
+  it('allocates nothing per frame', () => {
     const maxFaces = 4
     const d = new ExpressionEventDetector({ maxFaces, calibrate: true })
     const faces = createFaceFrame(maxFaces)
@@ -461,35 +457,22 @@ describe('expression events: allocation', () => {
       const a = Math.sin(i / 3) * 0.4
       forward.set([Math.sin(a), 0.1 * rnd(), Math.cos(a)], i * 3)
     }
-    const state = new Float64Array(2) // time, events
-    const run = (frames: number) => {
-      for (let i = 0; i < frames; i++) {
-        state[0]! += 33
-        const k = i % PERIOD
-        for (let f = 0; f < maxFaces; f++) {
-          const o = f * BLENDSHAPES_STRIDE
-          for (let b = 0; b < BLENDSHAPES_STRIDE; b++) faces.blendshapes[o + b] = blendshapes[k * BLENDSHAPES_STRIDE + b]!
-          for (let c = 0; c < 3; c++) faces.matrices[f * 16 + 8 + c] = forward[k * 3 + c]!
-        }
-        if (k === 0) ids[0]! += 10
-        readExpressionSignals(faces, signals)
-        state[1]! += d.update(state[0]!, maxFaces, ids, signals).count
+    const state = new Float64Array(3) // time, events, frame
+    const frame = () => {
+      state[0]! += 33
+      const k = state[2]!++ % PERIOD
+      for (let f = 0; f < maxFaces; f++) {
+        const o = f * BLENDSHAPES_STRIDE
+        for (let b = 0; b < BLENDSHAPES_STRIDE; b++) faces.blendshapes[o + b] = blendshapes[k * BLENDSHAPES_STRIDE + b]!
+        for (let c = 0; c < 3; c++) faces.matrices[f * 16 + 8 + c] = forward[k * 3 + c]!
       }
+      if (k === 0) ids[0]! += 10
+      readExpressionSignals(faces, signals)
+      state[1]! += d.update(state[0]!, maxFaces, ids, signals).count
     }
-    const measure = (frames: number) => {
-      gc()
-      const before = process.memoryUsage().heapUsed
-      run(frames)
-      return process.memoryUsage().heapUsed - before
-    }
-    measure(20_000) // warm up (JIT)
-    // The test runner and the JIT allocate a little meanwhile: compare two lengths so that their constant share
-    // cancels out, and keep the best of three runs.
-    let perFrame = Infinity
-    for (let r = 0; r < 3; r++) perFrame = Math.min(perFrame, (measure(60_000) - measure(10_000)) / 50_000)
+    // The detector allocates about 5 bytes per frame on average in steady state (less than a boxed number per frame);
+    // an allocation per face and per frame would be 4 × 16 bytes or more.
+    expect(bytesPerCall(frame, { warmup: 20_000 })).toBeLessThan(BOXED_NUMBER)
     expect(state[1]).toBeGreaterThan(1000)
-    // Any allocation per face and per frame (≥ 16 bytes each, 4 faces) would be ≥ 64 bytes per frame; the noise
-    // measured is 0–10 bytes.
-    expect(perFrame).toBeLessThan(16)
   })
 })

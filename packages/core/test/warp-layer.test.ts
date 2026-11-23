@@ -20,7 +20,8 @@ import {
   type LayerDecl,
   type PassLayer,
 } from '../src/index.ts'
-import { heapGrowth, writeSyntheticFace } from './synthetic-face.ts'
+import { bytesPerCall } from './allocation.ts'
+import { writeSyntheticFace } from './synthetic-face.ts'
 
 /** The objects camera exactly as the compositor sets it up (tracker perspective, cover crop, never mirrored). */
 function objectsCamera(vw: number, vh: number, tw: number, th: number): PerspectiveCamera {
@@ -359,7 +360,7 @@ describe('warp layer', () => {
     placed[1] = [10, 0, -50]
     layer.update(frame)
     expect(countOf(layer)).toBe(2) // the largest face (the closer one), two anchors
-    expect(heapGrowth(() => layer.update(frame))).toBeLessThan(32 * 1024)
+    expect(bytesPerCall(() => layer.update(frame))).toBeLessThan(1)
   })
 })
 

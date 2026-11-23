@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { OneEuroBank } from '../src/index.ts'
-import { heapGrowth, noise } from './synthetic-face.ts'
+import { bytesPerCall } from './allocation.ts'
+import { noise } from './synthetic-face.ts'
 
 const PARAMS = { minCutoff: 1, beta: 0.5, dCutoff: 1 }
 const ONE = [1]
@@ -89,13 +90,16 @@ describe('OneEuroBank', () => {
     const src = new Float32Array(1434 * 2).fill(0.5)
     const dst = new Float32Array(1434 * 2)
     const scale = new Float64Array([1, 2, 1])
-    let t = 0
+    const t = new Float64Array(1) // not a captured variable: Node 24 boxes a fractional number stored there
     expect(
-      heapGrowth(() => {
-        t += 1 / 15
-        bank.filter(src, 1434, dst, 1434, t, scale)
-      }, 1000),
-    ).toBeLessThan(32 * 1024)
+      bytesPerCall(
+        () => {
+          t[0]! += 1 / 15
+          bank.filter(src, 1434, dst, 1434, t[0]!, scale)
+        },
+        { calls: 1000 },
+      ),
+    ).toBeLessThan(1)
     expect(dst[1434]).toBeCloseTo(0.5)
     expect(dst[0]).toBe(0)
   })

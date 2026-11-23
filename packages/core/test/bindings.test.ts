@@ -1,4 +1,3 @@
-import v8 from 'node:v8'
 import type { ParamTypeName } from '@ouaf/spec'
 import { describe, expect, it } from 'vitest'
 import {
@@ -21,6 +20,7 @@ import {
   type NumberBinding,
   type ParamsReader,
 } from '../src/index.ts'
+import { bytesPerCall } from './allocation.ts'
 
 const JAW = blendshapeIndex('jawOpen')
 
@@ -367,9 +367,7 @@ describe('FaceBindingData', () => {
   })
 })
 
-// `total_allocated_bytes` counts every byte the V8 heap has allocated (Node ≥ 25); skipped where it is missing.
-const allocated = () => (v8.getHeapStatistics() as { total_allocated_bytes?: number }).total_allocated_bytes
-describe.skipIf(allocated() === undefined)('allocation', () => {
+describe('allocation', () => {
   it('evaluates numeric bindings without allocating', () => {
     const { env, faces, data } = setup(2)
     faces.count = 2
@@ -393,7 +391,9 @@ describe.skipIf(allocated() === undefined)('allocation', () => {
       compileNumberBinding({ bind: 'time', range: [0, 10], to: [0, 1] }, num, env),
     ]
     const out = new Float32Array(bindings.length * 3)
-    const frame = (i: number) => {
+    const state = new Float64Array(1) // frame
+    const frame = () => {
+      const i = state[0]!++
       data.time = i / 30
       data.blendshapes = (i & 64) === 0
       setJaw(faces, 0, (i % 100) / 100)
@@ -403,14 +403,8 @@ describe.skipIf(allocated() === undefined)('allocation', () => {
         for (let f = 0; f < 3; f++) bindings[b]!.write(f, out, b * 3 + f)
       }
     }
-    for (let i = 0; i < 200000; i++) frame(i) // warm-up: let the JIT optimize the evaluators
-    const frames = 100000
-    const before = allocated()!
-    for (let i = 0; i < frames; i++) frame(i)
-    const perEvaluation = (allocated()! - before) / (frames * bindings.length * 3)
-    // A boxed number is at least 12 bytes. The test runner's worker allocates a few bytes per frame by itself
-    // (measured with no binding at all), hence a bound per evaluation rather than exactly 0.
-    expect(perEvaluation).toBeLessThan(1)
+    // A boxed number is 16 bytes, in each of the 3 evaluations per frame of a binding that boxes.
+    expect(bytesPerCall(frame, { warmup: 20_000 })).toBeLessThan(1)
     expect(out.every((v) => Number.isFinite(v))).toBe(true)
   })
 })
