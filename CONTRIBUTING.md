@@ -35,9 +35,10 @@ Without `npm run fetch-models` the playground still runs, but face tracking is u
 | `npm run test:browser` | Browser tests on the test clips (Playwright, Chromium; needs `fetch-models`) |
 | `npx ouaf validate <folder\|file.ouaf>` | Checks a filter (manifest, files, formats, limits); `--json` for tools |
 | `npx ouaf pack <folder> [-o out.ouaf]` | Builds a `.ouaf` package from `filter.ts` / `filter.js` and `assets/` (bundled with Rolldown, validated before it is written) |
+| `npx ouaf preview <filter>... [--json]` | Renders filters (stacked) on reference frames of the test clips in headless Chromium: one screenshot per reference in `ouaf-preview/`, perf stats; needs the face model and Playwright's Chromium |
 | `npx ouaf pack-alpha <input> -o out.mp4` | Converts a video with transparency (WebM, ProRes 4444, PNG frames) into a packed-alpha MP4; needs [ffmpeg](https://ffmpeg.org) |
 
-The first time you run the browser tests, install Chromium: `npx playwright install chromium` (add `--with-deps` on
+The first time you run the browser tests or `ouaf preview`, install Chromium: `npx playwright install chromium` (add `--with-deps` on
 Linux if system libraries are missing).
 
 `npm test` needs no ffmpeg: the `pack-alpha` tests that run the real ffmpeg (`packages/cli/test/pack-alpha.ffmpeg.test.ts`)

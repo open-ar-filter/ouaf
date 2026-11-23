@@ -20,8 +20,8 @@ types (spec §6.3).
 | [`big-eyes`](big-eyes/) | `warp` (`bulge` on two anchors, `pinch`), strength bound to `jawOpen` with `range` / `to`, radius bound to a parameter | `two-faces-stacked` |
 | [`vintage`](vintage/) | `color` (built-in LUT, grain, vignette) then a custom post `shader` (uniforms bound to parameters, integer hashing so every GPU draws the same); no face tracking | `pesquet-walk` |
 | [`smile-counter`](smile-counter/) | script sandbox: `smile` events, per-face and global state, `.set()`, `.animate()` keyframes, `f.emit()`; a sticker whose opacity follows the smile | `pesquet-talk` |
-| [`canvas-bubble`](canvas-bubble/) | `canvas` drawn by the script: `fps`, `frame.time`, `face.pose`, `f.asset()`, `invalidate()` on `blink` | `pesquet-talk` |
-| [`duo`](duo/) | two faces: `{ pick }` by face, per-face handles, distance between faces computed in the script from `face.anchors` and `face.size` | `two-faces-stacked` |
+| [`canvas-bubble`](canvas-bubble/) | `canvas` drawn by the script: `fps`, `frame.time`, `face.pose`, `f.asset()`, a built-in font declared as an asset in `ctx.font`, `invalidate()` on `blink` | `pesquet-talk` |
+| [`duo`](duo/) | two faces: `{ pick }` by face; distance between faces computed in the script from `face.anchors`, `face.size` and `frame.aspect`; a screen sticker placed by the script midway between the faces | `two-faces-stacked` |
 | [`stress`](stress/) | internal benchmark: every layer type at once on four faces, a feedback shader, canvases fed with every landmark; each group has a switch (parameters, presets) | `four-faces-grid` |
 
 Try them on `/engine.html` (the "Demo filters" list: each one on its clip, or on the camera). `duo`, `big-eyes` and

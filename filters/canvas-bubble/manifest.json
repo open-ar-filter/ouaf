@@ -11,7 +11,7 @@
   "license": "CC0-1.0",
   "tags": ["demo", "canvas", "script"],
   "requires": { "face": true },
-  "assets": { "heart": "assets/heart.svg" },
+  "assets": { "heart": "assets/heart.svg", "rounded": "builtin:font/rounded-bold" },
   "layers": [
     { "id": "bubble", "type": "canvas", "width": 256, "height": 160, "fps": 4, "anchor": "forehead", "offset": [1.9, 0.9, 0], "size": 2, "orient": "screen" }
   ],

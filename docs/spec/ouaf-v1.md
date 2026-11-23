@@ -231,7 +231,7 @@ Normative behavior:
 - `model.occlusion: "head"`: the part of the object hidden by the head is not drawn (hat, glasses temples).
   *Informative*: the reference implementation hides it with an invisible surface per face that only writes depth,
   drawn before the objects: the face landmark mesh (forehead, eyes, cheeks, temples, jaw, as tracked, expressions
-  included), moved back by 0.35 face units (≈ 2 cm) along the camera rays, and closed behind by the back of an
+  included), moved back by 0.2 face units (≈ 1.3 cm) along the camera rays, and closed behind by the back of an
   average adult head on the `head` anchor. So the face's outline in the image is exact, while what lies on the face or
   just under its surface stays drawn: stickers, the front of glasses, temples that touch the side of the head. Ears,
   hair and the neck are not part of it. A face without usable landmarks gets an ellipsoid of an average head on the

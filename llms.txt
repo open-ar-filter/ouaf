@@ -3,7 +3,8 @@
 > Ouaf (Open Universal AR Filter) is an open-source engine for real-time AR filters on the web (face filters first)
 > and an open filter format. A filter is a folder with a `manifest.json` (declarative layers: text, sticker, model,
 > warp, color, shader, canvas) and optionally a sandboxed script written as `filter.ts`; `ouaf validate` and
-> `ouaf pack` check it and report each problem with a JSON pointer and a fix.
+> `ouaf pack` check it and report each problem with a JSON pointer and a fix, and `ouaf preview` renders it on
+> reference faces into screenshots.
 
 To write a filter, read the authoring guide first: it is self-contained and lists what works today. Its section 17
 gives the create → validate → preview loop for agents. The format is a draft (1.0.0-draft.1); the tools run from a

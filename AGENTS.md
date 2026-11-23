@@ -14,7 +14,7 @@ npm workspaces monorepo, TypeScript only, Node >= 24.
 |---|---|
 | `packages/spec` | `@ouaf/spec`: TypeBox schemas and validator of the Ouaf v1 manifest; `scripts/build-schema.ts` |
 | `packages/core` | `@ouaf/core`: the engine (camera, scheduler, face tracking, anchors, renderer, perf stats) |
-| `packages/cli` | `@ouaf/cli`: the `ouaf` command (`validate`, `pack`, `pack-alpha`; one file per command in `src/commands/`) |
+| `packages/cli` | `@ouaf/cli`: the `ouaf` command (`validate`, `pack`, `preview`, `pack-alpha`; one file per command in `src/commands/`) |
 | `packages/builtins` | `@ouaf/builtins`: built-in fonts and LUTs (`assets/`, credits in `assets/CREDITS.md`) and the `builtin:` resolver; `scripts/make.sh` rebuilds the fonts |
 | `apps/playground` | Vite dev app; `spikes/*.html` are extra pages for phase 0 spikes; `scripts/fetch-models.ts` |
 | `e2e/` | Playwright browser tests, driving the playground on the test clips |
@@ -38,6 +38,7 @@ npm run test:browser   # Playwright (starts `npm run dev` itself); first run: np
 npm run dev            # playground on https://localhost:5173 (self-signed); /?source=<clip> plays a test clip
 npx ouaf validate <folder|file.ouaf> [--json]   # check a filter; exit 0 valid, 1 invalid, 2 usage error
 npx ouaf pack <folder> [-o out.ouaf]   # filter.ts/filter.js + assets/ → .ouaf (spec §3.1); same exit codes
+npx ouaf preview <filter>... [--json]  # render on reference faces in headless Chromium → ouaf-preview/<ref>.png
 npx ouaf pack-alpha <video|png-folder> -o out.mp4   # packed-alpha H.264 MP4 (spec §10.2); needs ffmpeg
 ```
 

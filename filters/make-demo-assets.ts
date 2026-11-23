@@ -302,13 +302,14 @@ function glasses(): Gltf {
       const x = -0.14 + (0.28 * i) / 12
       return [x, 0.1 + 0.05 * Math.cos((Math.PI * x) / 0.28), 0.01] as V3
     }), 0.035, 10),
-    // Temples: from the outer edge of each rim, back along -z to behind the ears, bending down at the end.
+    // Temples: from the outer edge of each rim (x = ±0.92), back along -z to behind the ears, opening to ±1.2 (about the
+    // width of a head near the ear, so that they rest on it) and bending down at the end.
     ...[-1, 1].map((side) =>
       tube(Array.from({ length: 24 }, (_, i) => {
         const u = i / 23
         const z = -0.05 - 1.75 * u
         const y = 0.1 - (u > 0.75 ? 0.6 * ((u - 0.75) / 0.25) ** 2 : 0)
-        return [side * (0.92 + 0.12 * Math.sin(Math.min(1, u * 3) * (Math.PI / 2))), y, z] as V3
+        return [side * (0.92 + 0.28 * Math.sin(Math.min(1, u * 2.5) * (Math.PI / 2))), y, z] as V3
       }), 0.035, 8),
     ),
   )
