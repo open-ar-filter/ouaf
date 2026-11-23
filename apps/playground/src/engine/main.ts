@@ -13,6 +13,7 @@ import {
   type Engine,
   type EngineStats,
   type LiteRtTrackerOptions,
+  type OuafPlugin,
   type PerformanceEvent,
   type TrackingThrottle,
   type VideoSource,
@@ -39,6 +40,11 @@ declare global {
       performance: PerformanceEvent[]
       /** Simulated tracking time (`?throttle=<ms>`); set `ms` to change it live. */
       throttle: TrackingThrottle
+      /**
+       * Raw tracking results so far, and the media time of the frame the last one describes (live sources: the clock
+       * time of its frame callback, s): a test can wait for results of a frame it presented.
+       */
+      results: { count: number; time: number }
     }
   }
 }
@@ -75,15 +81,15 @@ const BACKEND = params.get('backend') ?? undefined
 /**
  * LiteRT.js tracker options, to test its fallbacks: `?crop=canvas` (2D-canvas crops), `?transfer=bitmap` (`ImageBitmap`),
  * `?queue=0` (one frame at a time: no frame queued in the worker while it runs), `?frames=element` (camera frames
- * captured from the `<video>`, not read from the track in the worker), `?readback=async` (WebGL2 crops read back while
- * the landmark model runs on the previous frame: results one frame late).
+ * captured from the `<video>`, not read from the track in the worker), `?readback=sync` (each WebGL2 crop read back
+ * before its landmark model runs; default: while the model runs on the previous frame, results one frame late).
  */
 const LITERT: LiteRtTrackerOptions = {
   ...(params.get('crop') === 'canvas' ? { crop: 'canvas' } : {}),
   ...(params.get('transfer') === 'bitmap' ? { transfer: 'bitmap' } : {}),
   ...(params.get('queue') === '0' ? { queue: false } : {}),
   ...(params.get('frames') === 'element' ? { frames: 'element' } : {}),
-  ...(params.get('readback') === 'async' ? { readback: 'async' } : {}),
+  ...(params.get('readback') === 'sync' ? { readback: 'sync' } : {}),
 }
 if (BACKEND === 'measure') {
   try {
@@ -95,11 +101,27 @@ if (BACKEND === 'measure') {
 const perf = createPerfPanel(throttle, { signals: SIGNALS })
 log.after(perf.element)
 
+/** Counts the tracking results (`window.ouaf.results`), from a landmark modifier: it sees each raw result once. */
+const results = { count: 0, time: -1 }
+const resultsPlugin: OuafPlugin = {
+  name: 'playground-results',
+  version: '1.0.0',
+  setup(api) {
+    api.registerLandmarkModifier({
+      id: 'playground-results',
+      modify(faces) {
+        results.count++
+        results.time = faces.mediaTime
+      },
+    })
+  },
+}
+
 const engine = createEngine({
   canvas,
   assetsBaseUrl: new URL('./', document.baseURI).href,
   maxFaces: MAX_FACES,
-  plugins: [playgroundPlugin, throttlePlugin(throttle, createDefaultFaceTracker({ liteRt: LITERT })), ...(SIGNALS ? [perf.signalsPlugin] : [])],
+  plugins: [playgroundPlugin, resultsPlugin, throttlePlugin(throttle, createDefaultFaceTracker({ liteRt: LITERT })), ...(SIGNALS ? [perf.signalsPlugin] : [])],
   adaptation: ADAPT,
   ...(BACKEND && BACKEND !== 'measure' ? { trackerBackend: BACKEND } : {}),
   ...(SEED === undefined ? {} : { seed: SEED }),
@@ -116,6 +138,7 @@ const hook = {
   events: [] as Array<{ name: string; faceId: number; side: string | null }>,
   performance: perf.events,
   throttle,
+  results,
 }
 window.ouaf = hook
 

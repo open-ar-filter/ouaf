@@ -81,6 +81,41 @@ describe('CameraSource.open', () => {
     await expect(CameraSource.open()).rejects.toMatchObject({ code: 'not-supported' })
   })
 
+  it('asks again while the camera is busy (a tab that just closed), then gives up', async () => {
+    vi.useFakeTimers()
+    const track = { stop: vi.fn(), getSettings: () => ({}) }
+    const stream = { getTracks: () => [track], getVideoTracks: () => [track] }
+    const video = { setAttribute() {}, play: () => Promise.resolve(), srcObject: null as unknown }
+    const failures = ['NotReadableError', 'AbortError']
+    const getUserMedia = vi.fn(() => {
+      const name = failures.shift()
+      return name ? Promise.reject(domError(name)) : Promise.resolve(stream)
+    })
+    vi.stubGlobal('window', { isSecureContext: true })
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } })
+    const opening = CameraSource.open({ video: video as unknown as HTMLVideoElement })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(getUserMedia).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1000)
+    const cam = await opening
+    expect(getUserMedia).toHaveBeenCalledTimes(3)
+    expect(cam.stream).toBe(stream)
+
+    // Busy every time: three more tries (300 ms, 1 s, 2 s), then the error.
+    getUserMedia.mockImplementation(() => Promise.reject(domError('NotReadableError')))
+    getUserMedia.mockClear()
+    const failing = expect(CameraSource.open({ video: video as unknown as HTMLVideoElement })).rejects.toMatchObject({ code: 'in-use' })
+    await vi.advanceTimersByTimeAsync(3300)
+    await failing
+    expect(getUserMedia).toHaveBeenCalledTimes(4)
+    // Other errors are not retried.
+    getUserMedia.mockImplementation(() => Promise.reject(domError('NotAllowedError')))
+    getUserMedia.mockClear()
+    await expect(CameraSource.open({ video: video as unknown as HTMLVideoElement })).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(getUserMedia).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
   it('surfaces a permission refusal as an explicit error', async () => {
     vi.stubGlobal('window', { isSecureContext: true })
     vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: () => Promise.reject(domError('NotAllowedError')) } })

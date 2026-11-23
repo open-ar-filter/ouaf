@@ -327,7 +327,7 @@ export class TrackingHub {
     this.#submitted = this.#generation
     this.#submittedAt = performance.now()
     try {
-      const pending = still && tracker.trackImage ? tracker.trackImage(input, mediaTime, this.#back) : tracker.track(input, now, mediaTime, this.#back)
+      const pending = still && tracker.trackImage ? tracker.trackImage(input, mediaTime, this.#back) : tracker.track(input, now, mediaTime, this.#back, true)
       if (pending) {
         const done = pending.then(this.#onResult, this.#onFailure)
         this.#inflight = done

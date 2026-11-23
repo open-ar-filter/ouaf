@@ -60,7 +60,7 @@ async function open(options: { crop?: 'gpu' | 'canvas'; warnings?: string[] } = 
   const warnings: string[] = []
   const env = { assetsBaseUrl: 'https://example.test/app/', warn: (m: string) => void warnings.push(m) }
   const opening = openLiteRtTracker(CONFIG, env, { createWorker: () => worker as unknown as Worker })
-  expect(worker.posted[0]!.message).toEqual({ type: 'init', assetsBaseUrl: 'https://example.test/app/', crop: 'gpu', readback: 'sync' })
+  expect(worker.posted[0]!.message).toEqual({ type: 'init', assetsBaseUrl: 'https://example.test/app/', crop: 'gpu', readback: 'async' })
   worker.reply({ type: 'ready', crop: options.crop ?? 'gpu', readback: 'sync', warnings: options.warnings ?? [] })
   const tracker = await opening
   return { tracker, worker, warnings }
@@ -298,6 +298,22 @@ describe('LiteRtFrameTracker (page side of the worker)', () => {
     worker.reply({ ...answer(worker.frames[1]!), frame: 1 })
     await second
     expect([out.count, out.mediaTime]).toEqual([1, 0.1])
+  })
+
+  it('a file source frame (exact) is sent on its own, never answered with an offered frame', async () => {
+    const { tracker, worker } = await open()
+    const video = { videoWidth: 640, videoHeight: 480 } as HTMLVideoElement
+    const out = createFaceFrame(1)
+    const first = tracker.track(video, 1, 0.1, out)
+    tracker.offer(video, 2, 0.2)
+    worker.reply(answer(worker.frames[0]!))
+    await first
+    const exact = tracker.track(video, 3, 0.3, out, true)
+    expect(worker.frames.at(-1)).toMatchObject({ id: 3, exact: true })
+    worker.reply(answer(worker.frames[1]!))
+    worker.reply(answer(worker.frames[2]!))
+    await exact
+    expect(out.mediaTime).toBe(0.3)
   })
 
   it('reports a failed run once as a warning; a dead worker fails the call and every later one', async () => {

@@ -224,7 +224,7 @@ async function run(msg: FrameMessage, receivedAt: number): Promise<void> {
       result.hasBlendshapes = false
     } else {
       if (msg.reset) pipeline.reset()
-      await pipeline.run(frame, msg.width, msg.height, msg.blendshapes, result, msg.id)
+      await pipeline.run(frame, msg.width, msg.height, msg.blendshapes, result, msg.id, msg.exact ?? false)
     }
   } catch (err) {
     result.found = false

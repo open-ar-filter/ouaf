@@ -71,9 +71,11 @@ export interface FrameTracker {
   /**
    * Tracks `input`, writing the result into `out` (which the engine does not read until the call completes).
    * Synchronous trackers write `out` and return `undefined`; asynchronous ones (worker) return a promise.
-   * `timestampMs` increases strictly between calls.
+   * `timestampMs` increases strictly between calls. `exact`: a file source (spec §12.1), whose result must be this
+   * frame's; otherwise a tracker may answer with a result of an earlier frame (`FaceFrame.mediaTime` says which), e.g.
+   * one frame late to keep its worker busy.
    */
-  track(input: TrackerInput, timestampMs: number, mediaTime: number, out: FaceFrame): void | Promise<void>
+  track(input: TrackerInput, timestampMs: number, mediaTime: number, out: FaceFrame, exact?: boolean): void | Promise<void>
   /**
    * Tracks a still image (image sources, #32): detection from scratch, no state carried over from earlier frames
    * (MediaPipe IMAGE mode). Optional: without it the engine calls `track`.

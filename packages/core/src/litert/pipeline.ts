@@ -47,10 +47,11 @@ export interface PipelineOptions {
   /** The LiteRT.js script to load (default: the single-threaded build chosen by LiteRT.js under `litert/wasm/`). */
   liteRtUrl?: string
   /**
-   * GPU crops only. `sync` (default): each frame's crop is read back (`readPixels`) before its landmark model runs.
-   * `async`: the crop of frame N is read back into a pixel buffer while the landmark model runs on frame N − 1, so
-   * that the worker does not stall on the GPU (15–23 ms per result on the Redmi Note 11S's Mali-G57). Costs: results
-   * one frame late, and frame N's ROI comes from frame N − 2's landmarks (extrapolated from N − 3).
+   * GPU crops only. `async` (the tracker's default): the crop of frame N is read back into a pixel buffer while the
+   * landmark model runs on frame N − 1, so that the worker does not stall on the GPU (Redmi Note 11S's Mali-G57: the
+   * readback 15–16 → 5–6 ms, 17.5 → 20 Hz). Costs: results one frame late, and frame N's ROI comes from frame N − 2's
+   * landmarks (extrapolated from N − 3). `sync` (default here): each frame's crop is read back (`readPixels`) before
+   * its landmark model runs.
    */
   readback?: Readback
 }
@@ -93,7 +94,7 @@ export interface Pipeline {
   readonly timings: StageTimings
   readonly readback: Readback
   /** Tracks `frame` (an id) of `width`×`height`; `out.frame` says which frame the result describes. */
-  run(source: FrameSource, width: number, height: number, blendshapes: boolean, out: PipelineResult, frame?: number): Promise<void>
+  run(source: FrameSource, width: number, height: number, blendshapes: boolean, out: PipelineResult, frame?: number, exact?: boolean): Promise<void>
   /** Forgets the tracked face: the next run starts with the detector. */
   reset(): void
   dispose(): void
@@ -371,14 +372,16 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
       pending = undefined
       last.found = false
     },
-    async run(source, width, height, withBlendshapes, out, frame = 0) {
+    async run(source, width, height, withBlendshapes, out, frame = 0, exact = false) {
       timings.detectMs = timings.uploadMs = timings.cropMs = timings.readMs = timings.convertMs = timings.landmarksMs = timings.blendshapesMs = NaN
       uploaded = false
       out.found = false
       out.presence = 0
       out.hasBlendshapes = false
       out.frame = frame
-      const g = asyncReadback ? gpuCropper() : undefined
+      // A file source's frame gets its own result: no readback in flight across frames.
+      if (exact) pending = undefined
+      const g = asyncReadback && !exact ? gpuCropper() : undefined
       if (g && (tracked || pending)) {
         // Async readback: read the crop of the previous frame, start this frame's, then run the model on the former.
         const previous = pending

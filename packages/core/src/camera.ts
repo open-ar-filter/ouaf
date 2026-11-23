@@ -20,7 +20,16 @@ export interface CameraOptions {
   mirror?: boolean | 'auto'
   /** Video element to render the stream into. Default: a new, detached element. */
   video?: HTMLVideoElement
+  /**
+   * Delays (ms) before asking again when the camera is busy (`in-use`) or the request was interrupted (`aborted`).
+   * Chrome on Android releases the camera a few seconds after the tab that used it closes: a new page opening it
+   * within ≈ 4 s failed 5 times out of 9 on the Redmi Note 11S (none with a 10 s gap). Default: 300, 1000, 2000.
+   */
+  retryDelaysMs?: readonly number[]
 }
+
+/** `CameraOptions.retryDelaysMs` by default. */
+export const CAMERA_RETRY_DELAYS_MS: readonly number[] = [300, 1000, 2000]
 
 export type CameraErrorCode =
   | 'not-supported' // no getUserMedia in this browser
@@ -54,6 +63,24 @@ const DOM_ERRORS: Record<string, [CameraErrorCode, string]> = {
   OverconstrainedError: ['overconstrained', 'No camera satisfies the requested constraints.'],
   ConstraintNotSatisfiedError: ['overconstrained', 'No camera satisfies the requested constraints.'],
   AbortError: ['aborted', 'Opening the camera was interrupted.'],
+}
+
+/**
+ * `getUserMedia`, asked again after `retryDelaysMs` while the camera is busy or the request was interrupted: the
+ * camera may still be held by a page that just closed.
+ */
+async function openStream(options: CameraOptions): Promise<MediaStream> {
+  const delays = options.retryDelaysMs ?? CAMERA_RETRY_DELAYS_MS
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ video: videoConstraints(options), audio: false })
+    } catch (err) {
+      const error = toCameraError(err)
+      const delay = delays[attempt]
+      if ((error.code !== 'in-use' && error.code !== 'aborted') || delay === undefined) throw error
+      await new Promise((resolve) => setTimeout(resolve, delay))
+    }
+  }
 }
 
 /** Converts any error thrown while opening the camera into a `CameraError`. */
@@ -116,12 +143,7 @@ export class CameraSource implements VideoSource {
       throw new CameraError('not-supported', 'This browser does not support camera access (getUserMedia).')
     }
 
-    let stream: MediaStream
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints(options), audio: false })
-    } catch (err) {
-      throw toCameraError(err)
-    }
+    const stream = await openStream(options)
 
     const video = options.video ?? document.createElement('video')
     // iOS Safari: without `playsinline` the video goes fullscreen; without `muted` autoplay is refused.

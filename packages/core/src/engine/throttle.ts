@@ -50,9 +50,9 @@ export function throttleTracker(impl: FaceTrackerImpl, throttle: TrackingThrottl
         get description() {
           return throttle.ms > 0 ? `${inner.description}, throttled to ${Math.round(throttledMs(throttle, current, capacity))} ms` : inner.description
         },
-        track(input, timestampMs, mediaTime, out) {
+        track(input, timestampMs, mediaTime, out, exact) {
           const start = performance.now()
-          const result = inner.track(input, timestampMs, mediaTime, out)
+          const result = inner.track(input, timestampMs, mediaTime, out, exact)
           const ms = throttledMs(throttle, current, capacity)
           if (ms <= 0) return result
           return Promise.resolve(result).then(() => {

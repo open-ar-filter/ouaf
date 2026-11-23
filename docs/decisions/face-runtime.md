@@ -37,12 +37,30 @@ GPU and CPU delegates by measuring them ([`device-adaptation.md`](device-adaptat
   absolute numbers are pessimistic): 13.2–15.2 Hz, period 66–76 ms = the worker's run, 56–73 ms: crop 14.5–23 ms
   (upload 0.1–0.2 ms: the readback waits for the GPU) and landmarks 38–50 ms; blendshapes 6.8 ms when on. 2D-canvas
   crops are slower (crop 38–41 ms); the camera track and the `<video>`'s `VideoFrame` give the same rate.
-- **Async readback** (`readback: 'async'`, `?readback=async`, opt-in until the phone confirms it): the crop of
+- **Async readback** (default for WebGL2 crops; `readback: 'sync'`, `?readback=sync` to compare): the crop of
   frame N is read back into a pixel buffer (PBO and fence) while the landmark model runs on frame N − 1, so that the
   worker does not wait for the GPU. Results are one frame late (the worker says which frame a result describes, and
-  the page gives its media time), and frame N's ROI is extrapolated from the two previous results. On the desktop the
+  the page gives its media time), and frame N's ROI is extrapolated from the two previous results. File sources
+  (spec §12.1: each frame gets its own result) and still images stay synchronous (`FrameTracker.track`'s `exact`).
+  Against MediaPipe at 15 Hz (every second frame of the clips) it stays within the limits of the synchronous path
+  (median 0.7–1.3 % of the face size, p90 1.2–2.6 %, same frames found 87–98 %); with a 200 ms old ROI (every third
+  frame) fast head turns lose the face more often (78–82 % on `pesquet-talk` and `pesquet-walk`). On the desktop the
   readback is 1–2 ms and the time is in the frame's upload (`texImage2D(VideoFrame)` 47–60 ms for a clip, ≈ 22 ms for
   the fake camera, main thread throttled 4×), which it does not hide.
+
+  Redmi Note 11S (camera, `glasses`, 40 s per configuration, battery 51 % and charging, 2026-11-23):
+
+  | | read | crop | worker | landmarks | tracking | display |
+  |---|---|---|---|---|---|---|
+  | sync readback, camera track | 15.2–15.8 | 16.7–17.3 | 52.8–57.3 | 34–35 | 17.3–17.8 Hz | 18–21 fps |
+  | **async readback, camera track** | **4.8–6.5** | 6.4–8.2 | 47.8–49.0 | | **19.6–20.7 Hz** | 20–25 fps |
+  | async readback, `frames=element` | 4.5–5.5 | | 48–50 | | 14.2–19.9 Hz (noisier) | |
+
+  One sample of the async run had landmarks at 54 ms for a while (15.7 Hz, blendshapes dropped by the governor),
+  not reproduced: probably the model landing on a little core or heat. The camera track is kept as the default: no
+  clear gain over the `<video>`'s `VideoFrame` in the earlier runs, but steadier here. Benchmark on the phone: LiteRT
+  55.0 ms, MediaPipe GPU 101.0 ms, CPU 66.3 ms → LiteRT, then the same rate as forced (16.2–16.8 Hz with the sync
+  readback): nothing left behind by the benchmark any more.
 - **Loading LiteRT.js in a module worker**: one shim left of the three. Its loader runs the Emscripten script with
   `importScripts`, which throws in module workers: the worker fetches the script (the build LiteRT.js would pick) and
   replaces `importScripts` during the load by an indirect `eval` of it; `Module.locateFile` (Emscripten's own hook)
