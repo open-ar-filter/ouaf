@@ -78,6 +78,11 @@ export interface LayerContext {
   /** The filter's preloaded assets (spec §10.4: every asset is loaded before the filter is activated). */
   readonly assets: LoadedAssets
   /**
+   * The files the host gave the filter's `asset` parameters, loaded and checked (spec §9, §15), for the content
+   * properties bound to them (`compileContent`). Absent outside a filter.
+   */
+  readonly hostAssets?: HostAssetReader
+  /**
    * The filter's parameters (spec §9), read-only. Resolve a parameter once with `indexOf`, then read its **animated**
    * value every frame with `numberAt` / `numbers` (transitions); `get` gives the committed value (strings, selects).
    */
@@ -104,6 +109,15 @@ export interface LayerContext {
   random(): number
   /** Reports a non-fatal problem to the host (`engine.on('warning')`). */
   warn(message: string): void
+}
+
+/** The loaded files of a filter's `asset` parameters. */
+export interface HostAssetReader {
+  /**
+   * The loaded value of the file of asset parameter `name` (what the asset loader of its kind gives: a `StickerAsset`,
+   * a `ModelAsset`…), `null` while it has none. It changes at the start of a frame, once a new file is loaded.
+   */
+  get(name: string): unknown
 }
 
 interface LayerInstanceBase {
@@ -142,6 +156,28 @@ export interface ObjectLayer extends LayerInstanceBase {
    * for `overlay` layers, which then go to a scene drawn after the other overlays (#33).
    */
   readonly excludeFromCapture?: boolean
+  /**
+   * Where each instance sits on its anchor, for the draw order of transparent objects (spec §7): instances of the
+   * same face on the same anchor are drawn in the order of their offset along the anchor's z axis, then in stack and
+   * layer order (`draw-order.ts`). One entry per instance, made once (`createPlacement`), its `face` and `z` updated
+   * in `update` for the instances shown. Without it, the layer's objects are only depth-sorted.
+   */
+  readonly placements?: readonly ObjectPlacement[]
+}
+
+/** One instance of an object layer on its anchor (`ObjectLayer.placements`). */
+export interface ObjectPlacement {
+  /**
+   * The instance's object, a child of the layer's root: its matrix places it, it is drawn while `visible`, and every
+   * mesh under it is ordered with it.
+   */
+  readonly object: Object3D
+  /** The layer's anchor (`screen` included: one anchor for every face). */
+  readonly anchor: string
+  /** Stable id of the face the instance is shown for this frame (spec §5.4); ignored with `anchor: "screen"`. */
+  face: number
+  /** The instance's offset along the anchor frame's z axis this frame (anchor units, +z towards the camera). */
+  z: number
 }
 
 export type LayerInstance = PassLayer | ObjectLayer

@@ -78,6 +78,11 @@ export interface Frame<FS = Record<string, unknown>> {
   readonly time: number
   /** Seconds since the previous call to the script (covers the frames it skipped, spec §12.7). */
   readonly dt: number
+  /**
+   * Displayed width / height (e.g. 0.5625 for a 9:16 portrait image). Positions are normalized over the width and the
+   * height: multiply x by `aspect` to measure distances and draw circles on screen.
+   */
+  readonly aspect: number
   readonly faces: ReadonlyArray<FaceData<FS>>
   /** `uses: ["pairs"]` only. */
   readonly pairs?: ReadonlyArray<PairData<FS>>

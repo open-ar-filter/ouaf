@@ -5,6 +5,7 @@
 import { Type, type Static, type TObject, type TProperties } from 'typebox'
 import { AssetPick, AssetRef, Color, Id, Name, Vec2, Vec3 } from './common.ts'
 import { Bindable } from './bindings.ts'
+import { Content } from './content.ts'
 
 /** Render stages, in order. Within a stage, order follows the filter stack, then the layer order. */
 export const STAGES = ['background', 'video', 'face', 'warp', 'objects', 'color', 'overlay'] as const
@@ -73,7 +74,9 @@ export const TextLayer = layerType(
     ...Anchored,
     text: Bindable(Type.String({ maxLength: 500, description: 'Displayed text (emoji included).' })),
     size: Type.Optional(Bindable(Type.Number({ exclusiveMinimum: 0, default: 0.3, description: 'Font size (em), in anchor units.' }))),
-    font: Type.Optional({ ...AssetRef, default: 'builtin:font/sans-bold', description: 'Font: WOFF2 asset or "builtin:font/…".' }),
+    font: Type.Optional(
+      Content({ ...AssetRef, default: 'builtin:font/sans-bold', description: 'Font: font asset or "builtin:font/…", or bound to a parameter.' }, 'font'),
+    ),
     color: Type.Optional(Bindable({ ...Color, default: '#ffffff' })),
     outline: Type.Optional(
       Type.Object(
@@ -102,7 +105,7 @@ export const StickerLayer = layerType(
   'sticker',
   {
     ...Anchored,
-    src: Type.Union([AssetRef, AssetPick], { description: 'Image, spritesheet or video.' }),
+    src: Content(Type.Union([AssetRef, AssetPick], { description: 'Image, spritesheet or video, a pick, or bound to a parameter.' }), 'image'),
     size: Type.Optional(Bindable(Type.Number({ exclusiveMinimum: 0, default: 1, description: 'Height in anchor units (width follows the aspect ratio).' }))),
     blend: Type.Optional(Blend),
     loop: Type.Optional(Type.Boolean({ default: true, description: 'Video / spritesheet: loop playback.' })),
@@ -130,7 +133,10 @@ export const ModelLayer = layerType(
   'model',
   {
     ...Anchored,
-    src: Type.Union([AssetRef, AssetPick, Shape], { description: 'glTF/GLB model, random pick, or procedural primitive.' }),
+    src: Content(
+      Type.Union([AssetRef, AssetPick, Shape], { description: 'glTF/GLB model, pick, procedural primitive, or bound to a parameter.' }),
+      'model',
+    ),
     fit: Type.Optional(
       Type.Object(
         { width: Type.Optional(Type.Number({ exclusiveMinimum: 0 })), height: Type.Optional(Type.Number({ exclusiveMinimum: 0 })) },
@@ -167,7 +173,7 @@ const Amount = (description: string, min = -1, max = 1) => Type.Optional(Bindabl
 export const ColorLayer = layerType(
   'color',
   {
-    lut: Type.Optional({ ...AssetRef, description: '.cube color lookup table (or "builtin:lut/…").' }),
+    lut: Type.Optional(Content({ ...AssetRef, description: '.cube color lookup table (or "builtin:lut/…"), or bound to a parameter.' }, 'lut')),
     intensity: Type.Optional(Bindable(Type.Number({ minimum: 0, maximum: 1, default: 1, description: 'Strength of the LUT (mix with the image before it).' }))),
     brightness: Amount('Brightness.'),
     contrast: Amount('Contrast.'),

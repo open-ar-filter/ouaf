@@ -2,6 +2,8 @@
  * The `text` layer type (spec §6.3): text drawn with Canvas 2D into a texture, on a plane attached to an anchor
  * (spec §5, §6.2).
  *
+ * - `font`: a font asset, or chosen by a param, or set by the script (spec §8.1, `compileContent`): none gives the
+ *   default font. A new font redraws the texture.
  * - The texture is redrawn only when the text, its color or its wrap width change (`TextRaster`); the transform
  *   (`offset`, `rotation`, `size`), `opacity` and `visible` are applied on the GPU side every frame.
  * - One plane per selected face (`faces`). When neither `text` nor `color` (nor `size`, with `maxWidth`) reads face
@@ -12,7 +14,8 @@
  * - `orient: "screen"`: the plane stays parallel to the screen, upright, at the anchor's position and scale.
  */
 import { NO_FACE, compileBinding, compileNumberBinding, type CompiledBinding, type NumberBinding } from '../../bindings/index.ts'
-import type { FrameContext, LayerContext, LayerDecl, ObjectLayer } from '../../engine/layer-type.ts'
+import { createPlacement } from '../../engine/draw-order.ts'
+import type { FrameContext, LayerContext, LayerDecl, ObjectLayer, ObjectPlacement } from '../../engine/layer-type.ts'
 import type { AnchorFollow } from '../../anchors.ts'
 import {
   CanvasTexture,
@@ -29,7 +32,8 @@ import {
 } from 'three'
 import { compileScale } from '../scale.ts'
 import { selectFaces, type FacesSelector } from './faces.ts'
-import type { LoadedFont } from './font-loader.ts'
+import { compileContent } from '../../engine/content.ts'
+import { isLoadedFont, type LoadedFont } from './font-loader.ts'
 import type { TextAlign } from './layout.ts'
 import { TextRaster, type SurfaceFactory, type TextContext, type TextStyle } from './raster.ts'
 
@@ -77,13 +81,18 @@ export interface TextLayerOptions {
 interface Slot {
   raster: TextRaster
   texture: CanvasTexture<OffscreenCanvas>
+  /** The font the raster draws with. */
+  font: LoadedFont
 }
 
 export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: TextLayerOptions = {}): ObjectLayer {
+  // The manifest's font; the default one when `font` is bound to a parameter (shown while it gives no font).
   const font = ctx.assets.get<LoadedFont>(textFontRef(decl))
   const style = textStyle(decl, font)
   const env = ctx.bindings
   const at = (p: string) => (decl.id ? `${decl.id}.${p}` : p)
+  // `font` bound to a parameter, or set by the script (spec §8, §12.4).
+  const fontContent = compileContent(decl.font, { name: 'font', path: at('font'), accepts: isLoadedFont, what: 'a font' }, ctx)
 
   const text: CompiledBinding<string> = compileBinding(decl.text, { type: 'string', fallback: '', path: at('text'), name: 'text' }, env)
   const color: CompiledBinding<string> = compileBinding(decl.color ?? '#ffffff', { type: 'color', fallback: '#ffffff', path: at('color'), name: 'color' }, env)
@@ -113,12 +122,13 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
     const raster = new TextRaster(style, createSurface)
     const texture = new CanvasTexture(raster.surface.canvas as OffscreenCanvas)
     texture.colorSpace = SRGBColorSpace
-    slots.push({ raster, texture })
+    slots.push({ raster, texture, font })
   }
 
   const root = new Group()
   const geometry = new PlaneGeometry(1, 1)
   const meshes: Mesh<PlaneGeometry, MeshBasicMaterial>[] = []
+  const placements: ObjectPlacement[] = []
   for (let i = 0; i < instances; i++) {
     const material = new MeshBasicMaterial({
       map: slots[perFace ? i : 0]!.texture,
@@ -134,6 +144,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
     mesh.visible = false
     root.add(mesh)
     meshes.push(mesh)
+    placements.push(createPlacement(mesh, anchor))
   }
 
   // Per-frame scratch, allocated once.
@@ -155,6 +166,11 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
 
   /** Redraws the slot's texture if needed; false when there is nothing to draw. */
   const refresh = (slot: Slot, face: number, sizeValue: number): boolean => {
+    const chosen = fontContent.evaluate(face) ?? font
+    if (chosen !== slot.font) {
+      slot.font = chosen
+      slot.raster.setFont(chosen)
+    }
     const content = text.evaluate(face)
     const wrap = maxWidth === undefined ? Infinity : maxWidth / sizeValue
     if (slot.raster.update(content, color.evaluate(face), wrap)) {
@@ -168,9 +184,11 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
   }
 
   /** Places `mesh`; the size and scale factors are in `num[1..4]`. */
-  const place = (mesh: Mesh, face: number, anchorMatrix: Matrix4, raster: TextRaster) => {
+  const place = (mesh: Mesh, placement: ObjectPlacement, face: number, anchorMatrix: Matrix4, raster: TextRaster) => {
     const sizeValue = num[1]!
     const off = offset.evaluate(face)
+    placement.face = onScreen ? 0 : frameRef!.anchors.id(face)
+    placement.z = off[2]
     const rot = rotation.evaluate(face)
     euler.set(MathUtils.degToRad(rot[0]), MathUtils.degToRad(rot[1]), MathUtils.degToRad(rot[2]))
     quat.setFromEuler(euler)
@@ -197,6 +215,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
     stage: overlay ? 'overlay' : 'objects',
     object: root,
     excludeFromCapture: overlay && decl.excludeFromCapture === true,
+    placements,
     update(frame) {
       frameRef = frame
       let n: number
@@ -236,7 +255,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
           continue
         }
         mesh.material.opacity = Math.min(1, alpha)
-        place(mesh, face, onScreen ? screenMatrix : anchorMatrices[face]!, slot.raster)
+        place(mesh, placements[k]!, face, onScreen ? screenMatrix : anchorMatrices[face]!, slot.raster)
         mesh.visible = true
       }
       frameRef = undefined

@@ -8,7 +8,8 @@
  * - `video` draws the source frame (cover fit, mirroring), as the phase 0 renderer did. The source is a `<video>`
  *   or an image read directly (canvas, `<img>`, `ImageBitmap`, `VideoFrame`, #32).
  * - `objects` renders one scene shared by the whole stack, depth-sorted, with a perspective camera matched to the
- *   tracker (`ObjectsView.camera`); `overlay` renders a second scene after color grading.
+ *   tracker (`ObjectsView.camera`); `overlay` renders a second scene after color grading. Transparent objects of the
+ *   same face on the same anchor are drawn in the order of their offset z, then stack and layer order (`drawOrder`).
  * - Outputs (#33): overlay layers marked `excludeFromCapture` are a third scene, drawn last, straight into the canvas.
  *   While an output is in use (`capture`), the canvas is copied into it just before them, so photos, recordings and
  *   streams leave them out. They are therefore drawn above the other overlay layers.
@@ -43,6 +44,7 @@ import {
 import { imageHeight, imageWidth, type SourceImage } from '../frame-image.ts'
 import { computeVideoToClip, createVideoToClip, resolveRenderSize, type FitMode, type Size, type VideoToClip } from '../viewport.ts'
 import { TRACKER_FOV_Y } from './anchor-provider.ts'
+import { DrawOrder } from './draw-order.ts'
 import type { ObjectsView, PassContext, PassLayer } from './layer-type.ts'
 
 /** Vertex shader for full-screen passes: `position` is already in clip space; `vUv` covers [0, 1]. */
@@ -126,6 +128,8 @@ export class Compositor implements ObjectsView {
   readonly excludedOverlay = new Scene()
   /** Gets the frame before the excluded overlays, while it is `active` (the engine's outputs). */
   capture: CaptureSink | undefined
+  /** Draw order of the transparent objects of the three scenes (spec §7); the engine gives it the object layers. */
+  readonly drawOrder = new DrawOrder()
 
   #targets: [WebGLRenderTarget, WebGLRenderTarget]
   #image: SourceImage | undefined
@@ -172,6 +176,7 @@ export class Compositor implements ObjectsView {
     this.renderer.setPixelRatio(1)
     this.renderer.autoClear = false
     this.renderer.setClearColor(0x000000, 1)
+    this.renderer.setTransparentSort(this.drawOrder.compare)
 
     this.camera = new PerspectiveCamera(TRACKER_FOV_Y, 1, 1, 10000)
     this.camera.matrixAutoUpdate = false
@@ -343,6 +348,7 @@ export class Compositor implements ObjectsView {
     if (this.#disposed) return
     const renderer = this.renderer
     this.#upload()
+    if (showFilters) this.drawOrder.update(this.camera)
 
     const anyPass = showFilters && (hasActive(passes.background) || hasActive(passes.face) || hasActive(passes.warp) || hasActive(passes.color))
     if (!anyPass) {

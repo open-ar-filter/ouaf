@@ -23,7 +23,7 @@ import { isEasing } from './easing.ts'
 import { estimateSize } from './size.ts'
 import type { FrameDataBuilder, FrameDataSource } from './frame-data.ts'
 import type { OverrideValue, ScriptOverrides } from './overrides.ts'
-import type { WireCanvas, WireCommand, WireDone, WireEvent, WireFrame, WireInit } from './runtime.ts'
+import type { WireCanvas, WireCommand, WireDone, WireEvent, WireFont, WireFrame, WireInit } from './runtime.ts'
 
 export { estimateSize } from './size.ts'
 
@@ -75,6 +75,11 @@ export interface ScriptHostOptions {
    * Called only when the script draws canvas layers.
    */
   images?(): Promise<Record<string, ImageBitmap>>
+  /**
+   * The font assets the runtime registers in its Worker before `setup`, by asset name (spec §12.6): their bytes are
+   * copied to the sandbox. Called only when the script draws canvas layers.
+   */
+  fonts?(): WireFont[]
   /** A new image of canvas layer `layer` (index): the callee owns it from then on (and closes it). */
   drawn?(layer: number, image: ImageBitmap): void
   /** Clock for the watchdog (ms); default `performance.now`. */
@@ -162,6 +167,7 @@ export class ScriptHost {
       time,
       assets: images,
       canvases: canvases.map((c) => ({ ...c })),
+      fonts: canvases.length > 0 && this.#o.fonts ? this.#o.fonts() : [],
     }
     this.#send(0, init, Object.values(images))
   }
@@ -210,6 +216,7 @@ export class ScriptHost {
       seq: ++this.#seq,
       time,
       dt,
+      aspect: source.aspect,
       clock: this.#o.overrides.clock.time,
       faces: this.#o.frameData.build(source),
       events: this.#events,
@@ -352,7 +359,12 @@ export class ScriptHost {
         if (op === 'set') {
           if (value === null) prop.set(face, null)
           else if (prop.typeOf(value) === undefined) this.#warnOnce(`type:${layer}:${name}`, `.set(): ${JSON.stringify(value)} is not a valid "${name}" of ${this.#layerName(layer)} (${prop.types.join(' or ')}).`)
-          else prop.set(face, copy(value as OverrideValue))
+          else {
+            // Content properties (`src`, `font`, `lut`, `animation`) take the name of an asset (or animation) they show.
+            const problem = prop.problem(value)
+            if (problem) this.#warnOnce(`value:${layer}:${name}:${String(value)}`, `.set({ ${name}: ${JSON.stringify(value)} }) on ${this.#layerName(layer)}: ${problem}; ignored.`)
+            else prop.set(face, copy(value as OverrideValue))
+          }
           continue
         }
         this.#animate(layer, name, face, value, c[4])

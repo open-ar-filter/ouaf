@@ -4,6 +4,7 @@ import type { AnchorProvider } from '../src/engine/anchor-provider.ts'
 import type { FrameContext, LayerContext, LayerDecl } from '../src/engine/layer-type.ts'
 import type { FaceFrame } from '../src/face.ts'
 import { createCanvasLayer } from '../src/layers/canvas/layer.ts'
+import { scriptFontRefs, scriptFonts } from '../src/layers/canvas/script-fonts.ts'
 import { scriptImageRefs } from '../src/layers/canvas/script-images.ts'
 import type { StickerMaterial } from '../src/layers/sticker/material.ts'
 
@@ -129,5 +130,29 @@ describe('script image assets', () => {
     expect(scriptImageRefs({ assets, script: { entry: 'script.js', draw: ['c'] } }, (kind) => kind !== 'emoji')).toEqual(['star', 'walk', 'photo'])
     expect(scriptImageRefs({ assets, script: { entry: 'script.js' } })).toEqual([])
     expect(scriptImageRefs({ assets })).toEqual([])
+  })
+})
+
+describe('script fonts', () => {
+  const assets = {
+    title: 'builtin:font/rounded-bold',
+    body: 'assets/body.woff2',
+    hand: { src: 'assets/hand.otf' },
+    star: { svg: '<svg/>' },
+    grade: 'builtin:lut/noir',
+  }
+
+  it('lists the font assets, built-in ones included, only for a script that draws a canvas', () => {
+    expect(scriptFontRefs({ assets, script: { entry: 'script.js', draw: ['c'] } })).toEqual(['title', 'body', 'hand'])
+    expect(scriptFontRefs({ assets, script: { entry: 'script.js', draw: ['c'] } }, (kind) => kind !== 'font')).toEqual([])
+    expect(scriptFontRefs({ assets, script: { entry: 'script.js' } })).toEqual([])
+    expect(scriptFontRefs({ assets })).toEqual([])
+  })
+
+  it('gives the loaded bytes and face descriptors by asset name', () => {
+    const data = new ArrayBuffer(4)
+    const loaded: Record<string, unknown> = { title: { family: 'Ouaf Rounded', weight: '700', style: 'normal', data }, body: { family: 'x' } }
+    const preloaded = { get: <T>(ref: string) => loaded[ref] as T, has: (ref: string) => ref in loaded }
+    expect(scriptFonts(preloaded, ['title', 'body', 'missing'])).toEqual([{ name: 'title', data, weight: '700', style: 'normal' }])
   })
 })

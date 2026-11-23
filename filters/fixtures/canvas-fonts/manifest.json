@@ -1,0 +1,23 @@
+{
+  "ouaf": "1",
+  "id": "canvas-fonts",
+  "name": "Canvas fonts and frame.aspect (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "A declared font drawn in a canvas next to the platform fallback (#150, spec §12.6), and frame.aspect (spec §12.4).",
+  "requires": {},
+  "assets": {
+    "title": "builtin:font/handwritten"
+  },
+  "layers": [
+    { "id": "declared", "type": "canvas", "width": 160, "height": 40, "fps": 0, "anchor": "screen", "offset": [0, 0.2, 0], "size": 0.1 },
+    { "id": "fallback", "type": "canvas", "width": 160, "height": 40, "fps": 0, "anchor": "screen", "offset": [0, -0.2, 0], "size": 0.1 }
+  ],
+  "script": {
+    "entry": "script.js",
+    "uses": [],
+    "update": true,
+    "on": ["message:redraw"],
+    "draw": ["declared", "fallback"]
+  }
+}

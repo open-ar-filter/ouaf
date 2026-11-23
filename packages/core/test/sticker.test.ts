@@ -12,6 +12,10 @@ import { BLEND_FACTORS, StickerMaterial } from '../src/layers/sticker/material.t
 import { clockStep, frameRect, spriteFrame, videoDrift, videoTarget } from '../src/layers/sticker/playback.ts'
 import { instanceCount, pickIndex, selectFaces } from '../src/layers/sticker/select.ts'
 import type { BindingDataSource } from '../src/bindings/index.ts'
+import type { TParams } from '@ouaf/spec'
+import { bindingParams } from '../src/engine/filter.ts'
+import { ParamStore } from '../src/params/index.ts'
+import { ScriptOverrides } from '../src/script/overrides.ts'
 
 describe('sticker playback math', () => {
   it('advances the clock with the frame time; a backwards jump or a long gap counts as no time', () => {
@@ -249,6 +253,17 @@ describe('sticker layer', () => {
     layer.update(frameAt(0.033, anchors))
     expect([a!.visible, b!.visible]).toEqual([true, false])
     layer.dispose()
+  })
+
+  it('gives the place of each quad on its anchor, for the draw order (spec §7)', () => {
+    const decl = { type: 'sticker', src: 'img', anchor: 'mouth', offset: { bind: 'face.index', map: { '0': [0, 0, 0.1], '1': [0, 0, -0.2] } } }
+    const layer = createSticker(decl as unknown as LayerDecl, context({ img: asset('image', 10, 10) }))
+    layer.update(frameAt(0, fakeAnchors([4, 9])))
+    expect(layer.placements!.map((p) => [p.object, p.anchor, p.face, p.z])).toEqual(meshes(layer).map((m, i) => [m, 'mouth', [4, 9][i], [0.1, -0.2][i]]))
+    const screen = createSticker({ type: 'sticker', src: 'img', anchor: 'screen', offset: [0, 0, 0.3] } as LayerDecl, context({ img: asset('image', 10, 10) }))
+    screen.update(frameAt(0, fakeAnchors([4])))
+    expect(screen.placements!.map((p) => [p.anchor, p.face, p.z])).toEqual([['screen', 0, 0.3]])
+    for (const l of [layer, screen]) l.dispose()
   })
 
   it('scale multiplies the size, uniformly or per axis, bindable; a factor ≤ 0 hides the quad', () => {
@@ -494,6 +509,86 @@ describe('sticker layer', () => {
     const ctx = context({})
     ctx.assets.get = <T>() => 'vec4 effect(vec2 uv) { return vec4(1.0); }' as T
     expect(() => createSticker({ type: 'sticker', src: 'fx' } as LayerDecl, ctx)).toThrow(/not an image, spritesheet or video/)
+  })
+})
+
+describe('sticker layer: src bound to a param or set by a script (spec §8, §12.4, #140)', () => {
+  const params: TParams = {
+    style: { type: 'select', default: 'a', options: { a: 'A', b: 'B', c: 'C' } },
+    logo: { type: 'asset', accept: ['image/png'], optional: true },
+  }
+  /** A context with real params, host files from `host`, and the script registry `overrides`. */
+  function bound(assets: Record<string, StickerAsset>, host: Record<string, StickerAsset | null> = {}, overrides?: ScriptOverrides) {
+    const store = new ParamStore(params)
+    const ctx: LayerContext = {
+      ...context(assets),
+      params: store,
+      hostAssets: { get: (name) => host[name] ?? null },
+      bindings: { data, params: bindingParams(store), ...(overrides ? { overrides: overrides.forLayer(0) } : {}) },
+    }
+    return { ctx, store }
+  }
+  const shown = (layer: ObjectLayer) => meshes(layer).filter((m) => m.visible).map((m) => m.material.asset)
+
+  it('shows the asset a select param maps its value to, from the next frame; an unmapped value hides it', () => {
+    const assets = { red: asset('image', 10, 10), green: asset('image', 10, 10) }
+    const { ctx, store } = bound(assets)
+    const layer = createSticker({ type: 'sticker', src: { param: 'style', map: { a: 'red', b: 'green' } }, anchor: 'screen' } as LayerDecl, ctx)
+    const anchors = fakeAnchors([])
+    layer.update(frameAt(0, anchors))
+    expect(shown(layer)).toEqual([assets.red])
+    store.set('style', 'b')
+    layer.update(frameAt(0.033, anchors))
+    expect(shown(layer)).toEqual([assets.red]) // applied at the start of the next frame
+    store.beginFrame(66)
+    layer.update(frameAt(0.066, anchors))
+    expect(shown(layer)).toEqual([assets.green])
+    store.set('style', 'c')
+    store.beginFrame(100)
+    layer.update(frameAt(0.1, anchors))
+    expect(shown(layer)).toEqual([])
+    layer.dispose()
+  })
+
+  it('shows the host\'s file of an asset param, and nothing without one', () => {
+    const host: Record<string, StickerAsset | null> = { logo: null }
+    const { ctx } = bound({}, host)
+    const layer = createSticker({ type: 'sticker', src: { param: 'logo' } } as LayerDecl, ctx)
+    const anchors = fakeAnchors([1, 2])
+    layer.update(frameAt(0, anchors))
+    expect(shown(layer)).toEqual([])
+    host.logo = asset('image', 30, 10)
+    layer.update(frameAt(0.033, anchors))
+    expect(shown(layer)).toEqual([host.logo, host.logo])
+    // Its aspect ratio: 3:1.
+    expect(scaleOf(meshes(layer)[0]!.matrix)).toEqual([18, 6, 6])
+    layer.dispose()
+  })
+
+  it('takes the script\'s asset name per face or for every instance; null restores the manifest\'s pick', () => {
+    const overrides = new ScriptOverrides()
+    const ids = [1, 2]
+    overrides.idOf = (slot) => (slot < 0 ? 0 : ids[slot] ?? 0)
+    const assets = { a: asset('image', 10, 10), b: asset('image', 10, 10), c: asset('image', 10, 10), fx: 'shader' as unknown as StickerAsset }
+    const { ctx } = bound(assets, {}, overrides)
+    const layer = createSticker({ type: 'sticker', src: { pick: ['a', 'b'] } } as LayerDecl, ctx)
+    const anchors = fakeAnchors(ids)
+    layer.update(frameAt(0, anchors))
+    expect(shown(layer)).toEqual([assets.a, assets.b])
+    const src = overrides.property(0, 'src')!
+    expect(src.problem('c')).toBeUndefined()
+    expect(src.problem('fx')).toBe('no asset named "fx" is declared in "assets" as an image, spritesheet or video')
+    expect(src.problem('assets/c.png')).toMatch(/no asset named/)
+    src.set(2, 'c')
+    layer.update(frameAt(0.033, anchors))
+    expect(shown(layer)).toEqual([assets.a, assets.c])
+    src.set(undefined, 'c')
+    layer.update(frameAt(0.066, anchors))
+    expect(shown(layer)).toEqual([assets.c, assets.c])
+    src.set(undefined, null)
+    layer.update(frameAt(0.1, anchors))
+    expect(shown(layer)).toEqual([assets.a, assets.b])
+    layer.dispose()
   })
 })
 

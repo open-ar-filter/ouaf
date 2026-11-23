@@ -4,8 +4,10 @@
 import { formatIssues, validateManifest, type SpecRegistry, type Stage, type TManifest } from '@ouaf/spec'
 import { satisfies } from './semver.ts'
 import { Emitter } from './emitter.ts'
-import { IncompatibleEngineError, InvalidManifestError, MissingPluginError, OuafError, withParamErrors } from './errors.ts'
-import { preloadAssets, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
+import { IncompatibleEngineError, InvalidManifestError, InvalidParamError, MissingPluginError, OuafError, withParamErrors } from './errors.ts'
+import { boundAssetParams, contentRefs } from './content.ts'
+import { HostAssets } from './host-assets.ts'
+import { preloadAssets, resolveAssetRef, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
 import type { LayerContext, LayerDecl, LayerInstance, LayerTypeImpl, ObjectsView } from './layer-type.ts'
 import type { BindingDataSource, ParamsReader } from '../bindings/index.ts'
 import { ExpressionEventDetector, type EventSide, type ExpressionEventName } from '../expressions/index.ts'
@@ -15,6 +17,7 @@ import type { WebGLRenderer } from 'three'
 import { deriveSeed, SeededRandom } from '../random.ts'
 import { ScriptOverrides } from '../script/overrides.ts'
 import type { ScriptHost } from '../script/host.ts'
+import { scriptFontRefs } from '../layers/canvas/script-fonts.ts'
 import { scriptImageRefs } from '../layers/canvas/script-images.ts'
 
 /** Events of a filter handle. */
@@ -58,7 +61,10 @@ export interface FilterHandle {
   /**
    * Validates and queues a change, applied at the start of the next frame (spec §9). Numbers, colors and vectors
    * animate over the parameter's `transition` (ms), or `options.transition`; `apply: "reload"` parameters preload the
-   * filter again and swap it in without an empty frame. Throws `InvalidParamError`; nothing is applied then.
+   * filter again and swap it in without an empty frame. Throws `InvalidParamError`; nothing is applied then. The file
+   * of an `asset` parameter a layer shows is then loaded and checked on its content (spec §15) and swapped in at a
+   * frame start once ready; a file refused then is reported as an `InvalidParamError` (reason `content`) on
+   * `engine.on('error')`, and the parameter keeps its previous file.
    */
   setParam(name: string, value: unknown, options?: SetParamOptions): void
   /** Like `setParam` for several values, all or nothing. */
@@ -100,6 +106,8 @@ export interface FilterLoadEnv {
   /** Seed of a filter activation (spec §12.5); `FilterInstance.reseed` derives the layer sequences from it. */
   seed(filterId: string): number
   warn(message: string): void
+  /** Asynchronous failures (a host file refused, spec §15); default: `warn`. */
+  error?(error: Error): void
 }
 
 export interface LoadedLayer {
@@ -107,12 +115,17 @@ export interface LoadedLayer {
   readonly instance: LayerInstance
 }
 
-/** A filter's script (spec §12): its source, the values it gives the layers, the image assets of `f.asset()`. */
+/**
+ * A filter's script (spec §12): its source, the values it gives the layers, the image assets of `f.asset()` and the
+ * fonts of its canvases.
+ */
 export interface FilterScript {
   readonly code: string
   readonly overrides: ScriptOverrides
   /** Names of the preloaded image assets given to the script (canvas layers, spec §12.6). */
   readonly images: readonly string[]
+  /** Names of the preloaded font assets registered in the script's Worker (canvas layers, spec §12.6). */
+  readonly fonts: readonly string[]
 }
 
 /** What the engine keeps for each filter of the stack. */
@@ -123,6 +136,8 @@ export class FilterInstance {
   readonly params: ParamStore
   readonly layers: readonly LoadedLayer[]
   readonly assets: PreloadedAssets
+  /** The files of the filter's asset parameters (spec §9). */
+  readonly hostAssets: HostAssets | undefined
   readonly warnings: readonly string[]
   /** Needs face tracking / blendshapes (spec §4.1, §16.2). */
   readonly needsFace: boolean
@@ -152,6 +167,7 @@ export class FilterInstance {
     params: ParamStore
     layers: LoadedLayer[]
     assets: PreloadedAssets
+    hostAssets?: HostAssets
     warnings: string[]
     onListenerError: (error: unknown) => void
     maxFaces: number
@@ -166,6 +182,7 @@ export class FilterInstance {
     this.params = init.params
     this.layers = init.layers
     this.assets = init.assets
+    this.hostAssets = init.hostAssets
     this.warnings = init.warnings
     this.needsFace = !!init.manifest.requires.face
     this.needsBlendshapes = this.needsFace && (!!init.manifest.requires.blendshapes || usesBlendshapes(init.manifest))
@@ -213,6 +230,7 @@ export class FilterInstance {
     }
     this.assets.dispose()
     this.params.dispose()
+    this.hostAssets?.dispose()
     this.events.clear()
   }
 }
@@ -249,17 +267,11 @@ export async function loadFilter(
       throw new OuafError('filter-load', `Filter "${manifest.id}": the manifest declares a script but script.js could not be read.`, { cause })
     }
     // The image assets `f.asset()` gives to the canvas layers' `draw` functions (spec §12.6).
-    const images = env.layerTypes.has('canvas') ? scriptImageRefs(manifest, (kind) => env.loaders.has(kind as LoaderKind)) : []
-    script = { code, overrides: new ScriptOverrides(), images }
-  }
-
-  // `apply: "reload"` parameters are applied at the next frame like live ones until the engine preloads and swaps
-  // whole filters (ReloadHooks).
-  const params = new ParamStore(manifest.params, { presets: manifest.presets, onError: (e) => env.warn(`Filter "${manifest.id}": ${String(e)}`) })
-  if (initialParams) {
-    // Initial values apply at once, without transitions.
-    withParamErrors(manifest.id, () => params.setMany(initialParams, { transition: 0 }))
-    params.beginFrame(0)
+    const canLoad = (kind: string) => env.loaders.has(kind as LoaderKind)
+    const images = env.layerTypes.has('canvas') ? scriptImageRefs(manifest, canLoad) : []
+    // The font assets its canvases draw text with, by asset name (spec §12.6).
+    const fonts = env.layerTypes.has('canvas') ? scriptFontRefs(manifest, canLoad) : []
+    script = { code, overrides: new ScriptOverrides(), images, fonts }
   }
 
   const decls = manifest.layers as unknown as LayerDecl[]
@@ -273,19 +285,71 @@ export async function loadFilter(
     }
     return impl
   })
-  const refs: string[] = [...(script?.images ?? [])]
+  // The files of the asset parameters layers show (spec §9, §15): loaded and checked, then swapped in at a frame.
+  const bound = boundAssetParams(decls, env.registry, manifest.params)
+  const hostAssets = new HostAssets({ filterId: manifest.id, params: manifest.params, bound, loaders: env.loaders, assetsBaseUrl: env.assetsBaseUrl })
+  for (const name of bound.keys()) {
+    const def = manifest.params?.[name]
+    if (def?.type === 'asset' && !def.optional && !(initialParams && Object.hasOwn(initialParams, name))) {
+      env.warn(`Filter "${manifest.id}": parameter "${name}" needs a file from the host; the layers showing it stay hidden until it is set.`)
+    }
+  }
+  // Failures to load the initial files reject the filter; later ones are reported as errors.
+  let initialErrors: unknown[] | undefined = []
+  const reportParamError = (e: unknown) => {
+    if (initialErrors) initialErrors.push(e)
+    else if (e instanceof InvalidParamError && env.error) env.error(e)
+    else env.warn(`Filter "${manifest.id}": ${String(e)}`)
+  }
+  // `apply: "reload"` parameters are applied at the next frame like live ones until the engine preloads and swaps
+  // whole filters (ReloadHooks).
+  const params = new ParamStore(manifest.params, { presets: manifest.presets, assets: hostAssets, onError: reportParamError })
+  const failed = (error: unknown): never => {
+    params.dispose()
+    hostAssets.dispose()
+    throw error
+  }
+  if (initialParams) {
+    // Initial values apply at once, without transitions; their files are loaded before the filter is activated.
+    try {
+      withParamErrors(manifest.id, () => params.setMany(initialParams, { transition: 0 }))
+    } catch (error) {
+      failed(error)
+    }
+    params.beginFrame(0)
+    await params.assetsSettled()
+    if (initialErrors.length > 0) failed(initialErrors[0])
+    params.beginFrame(0)
+  }
+  initialErrors = undefined
+
+  const refs: string[] = [...(script?.images ?? []), ...(script?.fonts ?? [])]
   impls.forEach((impl, i) => {
     for (const ref of impl.assets?.(decls[i]!) ?? []) refs.push(ref)
   })
-  const assets = await preloadAssets({
-    source,
-    assets: manifest.assets,
-    refs,
-    loaders: env.loaders,
-    builtinUrl: env.builtinUrl,
-    assetsBaseUrl: env.assetsBaseUrl,
-    fetchImpl: env.fetchImpl,
-  })
+  // `map` values of content properties and, with a script, the declared assets it may set them to (spec §12.4).
+  const loadable = (name: string) => {
+    try {
+      return env.loaders.has(resolveAssetRef(name, manifest.assets).kind)
+    } catch {
+      return false
+    }
+  }
+  refs.push(...contentRefs(decls, env.registry, manifest.assets, script !== undefined, loadable))
+  let assets: PreloadedAssets
+  try {
+    assets = await preloadAssets({
+      source,
+      assets: manifest.assets,
+      refs,
+      loaders: env.loaders,
+      builtinUrl: env.builtinUrl,
+      assetsBaseUrl: env.assetsBaseUrl,
+      fetchImpl: env.fetchImpl,
+    })
+  } catch (error) {
+    failed(error)
+  }
 
   // Seeded before the layers are created: a layer may draw in `create`.
   const seed = env.seed(manifest.id)
@@ -298,9 +362,10 @@ export async function loadFilter(
     filterId: manifest.id,
     renderer: env.renderer,
     view: env.view,
-    assets,
+    assets: assets!,
+    hostAssets,
     params,
-    bindings: script ? { data: env.bindingData, params: reader, overrides: script.overrides.forLayer(i) } : { data: env.bindingData, params: reader },
+    bindings: script ?{ data: env.bindingData, params: reader, overrides: script.overrides.forLayer(i) } : { data: env.bindingData, params: reader },
     maxFaces: env.maxFaces,
     requiresFace: !!manifest.requires.face,
     warn: (message) => env.warn(`Filter "${manifest.id}": ${message}`),
@@ -313,9 +378,8 @@ export async function loadFilter(
     }
   } catch (error) {
     for (const l of layers) l.instance.dispose()
-    assets.dispose()
-    params.dispose()
-    throw error
+    assets!.dispose()
+    failed(error)
   }
   return new FilterInstance({
     key,
@@ -323,7 +387,8 @@ export async function loadFilter(
     source: source.label,
     params,
     layers,
-    assets,
+    assets: assets!,
+    hostAssets,
     warnings,
     maxFaces: env.maxFaces,
     onListenerError: (e) => env.warn(String(e)),

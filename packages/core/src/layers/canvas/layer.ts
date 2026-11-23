@@ -64,6 +64,7 @@ export function createCanvasLayer(decl: LayerDecl, ctx: LayerContext): CanvasLay
     stage: sticker.stage,
     object: root,
     ...(sticker.excludeFromCapture ? { excludeFromCapture: true } : {}),
+    ...(sticker.placements ? { placements: sticker.placements } : {}),
     get draws() {
       return draws
     },

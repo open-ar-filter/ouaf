@@ -16,11 +16,14 @@
  * Canvas layers (spec §12.6): one `OffscreenCanvas` per drawn canvas layer, in the Worker. A canvas is drawn at the
  * first frame, then when `fps` allows it (in media time: at most `fps` draws per second of `frame.time`) or after
  * `.invalidate()`. Each draw starts from a transparent canvas; its image goes to the engine as an `ImageBitmap`
- * (transferred, not copied), which the layer uploads to the GPU.
+ * (transferred, not copied), which the layer uploads to the GPU. The filter's font assets are registered in the
+ * Worker's font set (`self.fonts`) under their asset name before `setup`, from the bytes the engine sends: a `draw`
+ * function writes `ctx.font = '24px title'`. Without `FontFace` in the Worker, canvas text falls back to the
+ * platform's fonts, with one warning.
  *
  * Messages (structured clone over the port):
- * - engine → runtime: `{ t: 'init', code, layers, canvases, params, seed, clock, assets }`, `{ t: 'frame', seq,
- *   time, dt, clock, faces, pairs?, params?, events }`.
+ * - engine → runtime: `{ t: 'init', code, layers, canvases, params, seed, clock, assets, fonts }`, `{ t: 'frame',
+ *   seq, time, dt, aspect, clock, faces, pairs?, params?, events }`.
  * - runtime → engine: `{ t: 'done', seq, commands, emits, warnings, bitmaps? }` (`seq` 0 answers `init`),
  *   `{ t: 'fatal', message }` when `script.js` cannot be loaded.
  */
@@ -60,6 +63,19 @@ export interface WireInit {
   assets: Record<string, unknown>
   /** The canvas layers drawn by the script (`script.draw`). */
   canvases: WireCanvas[]
+  /** Font assets registered in the Worker for the canvases, by asset name (copied). */
+  fonts?: WireFont[]
+}
+
+/** A font asset for the script's canvases (spec §12.6). */
+export interface WireFont {
+  /** Asset name: the family a `draw` function writes in `ctx.font`. */
+  name: string
+  /** The font file (WOFF2, WOFF, TTF, OTF). */
+  data: ArrayBuffer
+  /** CSS `font-weight` and `font-style` of the face (a built-in font's own; `normal` for a package font). */
+  weight: string
+  style: string
 }
 
 /** A canvas layer drawn by the script (spec §12.6). */
@@ -78,6 +94,8 @@ export interface WireFrame {
   time: number
   /** Seconds since the previous frame sent to the script. */
   dt: number
+  /** Displayed width / height (spec §12.4). */
+  aspect: number
   clock: number
   faces: WireFace[]
   pairs?: Array<{ a: number; b: number; distance: number; contact: boolean }>
@@ -122,6 +140,14 @@ export interface RuntimeOptions {
   load: (code: string) => Promise<{ default?: unknown }>
   /** Creates a canvas of canvas layers (default: `new OffscreenCanvas`; the Node tests pass a fake one). */
   canvas?: (width: number, height: number) => RuntimeCanvas
+  /** Where the filter's fonts are registered (default: the global `FontFace` and `fonts`; the Node tests pass fakes). */
+  fonts?: RuntimeFonts
+}
+
+/** What the runtime uses of the CSS Font Loading API in its Worker (either may be missing in a browser). */
+export interface RuntimeFonts {
+  FontFace: (new (family: string, source: ArrayBuffer, descriptors: { weight: string; style: string }) => { load(): Promise<unknown> }) | undefined
+  set: { add(face: unknown): unknown } | undefined
 }
 
 /** What the runtime uses of an `OffscreenCanvas`. */
@@ -197,6 +223,9 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
   const load = options.load
   // Captured before hardening, like everything the runtime itself needs.
   const OC = (globalThis as unknown as { OffscreenCanvas?: new (w: number, h: number) => RuntimeCanvas }).OffscreenCanvas
+  type Face = { load(): Promise<unknown> }
+  const FF = options.fonts !== undefined ? options.fonts.FontFace : (globalThis as unknown as { FontFace?: RuntimeFonts['FontFace'] }).FontFace
+  const fontSet = options.fonts !== undefined ? options.fonts.set : (globalThis as unknown as { fonts?: RuntimeFonts['set'] }).fonts
   const makeCanvas = options.canvas ?? ((w: number, h: number): RuntimeCanvas => {
     if (!OC) throw new Error('OffscreenCanvas is not available in this browser, so canvas layers cannot be drawn.')
     return new OC(w, h)
@@ -431,6 +460,30 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
     }
   }
 
+  /**
+   * Registers the filter's fonts in the Worker's font set under their asset name (spec §12.6). `FontFace` takes the
+   * family as a plain name: a draw function writes `'24px title'`, and quotes a name that is a CSS keyword
+   * (`'24px "serif"'`, or `serif` is the generic family).
+   */
+  async function registerFonts(fonts: WireFont[]): Promise<void> {
+    if (fonts.length === 0) return
+    if (!FF || !fontSet) {
+      warn(`this browser has no FontFace in workers: canvas text is drawn with the platform's fonts instead of the filter's (${fonts.map((f) => `"${f.name}"`).join(', ')})`)
+      return
+    }
+    await Promise.all(
+      fonts.map(async (font) => {
+        try {
+          const face: Face = new FF(font.name, font.data, { weight: font.weight, style: font.style })
+          await face.load()
+          fontSet.add(face)
+        } catch (error) {
+          warn(`font "${font.name}" cannot be used in canvases: ${describe(error)}`)
+        }
+      }),
+    )
+  }
+
   async function init(m: Obj): Promise<void> {
     layerIds = m.layers as string[]
     params = Object.freeze({ ...(m.params as Obj) })
@@ -449,6 +502,8 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
     }
     clock = m.clock as number
     seedRandom(m.seed as number)
+    // The fonts are ready before `setup` (spec §12.6), as the page's are before the filter is activated (spec §10.4).
+    await registerFonts((m.fonts as WireFont[] | undefined) ?? [])
     let mod: { default?: unknown }
     try {
       mod = await load(m.code as string)
@@ -477,7 +532,7 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
       byId.set(face.id as number, face)
       return face
     })
-    const frameData: Obj = { time: m.time, dt: m.dt, faces }
+    const frameData: Obj = { time: m.time, dt: m.dt, aspect: m.aspect, faces }
     if (m.pairs) {
       frameData.pairs = (m.pairs as Array<{ a: number; b: number; distance: number; contact: boolean }>).map((p) => ({
         a: eventFace(p.a),

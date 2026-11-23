@@ -53,8 +53,13 @@ export const AssetEmoji = Type.Object(
   { additionalProperties: false, description: "Emoji drawn as an image, with the platform's emoji font or the host's reference set." },
 )
 
-export const AssetEntry = Type.Union([AssetPath, AssetFile, AssetInlineSvg, AssetEmoji], {
-  'x-hint': 'An "assets/…" path, { "src": "assets/…" }, { "svg": "<svg…>" } or { "emoji": "⭐" }.',
+export const AssetBuiltin = Type.String({
+  pattern: '^builtin:[a-z0-9][a-z0-9/_-]*$',
+  description: 'A built-in resource under a name of the filter, e.g. a font a canvas draws with (spec §12.6).',
+})
+
+export const AssetEntry = Type.Union([AssetPath, AssetFile, AssetInlineSvg, AssetEmoji, AssetBuiltin], {
+  'x-hint': 'An "assets/…" path, { "src": "assets/…" }, { "svg": "<svg…>" }, { "emoji": "⭐" } or a "builtin:…" resource.',
 })
 
 export const Assets = Type.Record(Name, AssetEntry, { maxProperties: 256, description: 'Asset table: name → file or inline content.' })
@@ -75,8 +80,12 @@ const EXT_KIND: Record<string, TAssetKind> = {
   json: 'data',
 }
 
-/** Infers the kind of an asset from its entry (extension, inline form). */
+/** Kinds of the built-in resources, by the first segment of their name (`font/sans` → `font`, spec §10.3). */
+const BUILTIN_KIND: Record<string, TAssetKind> = { font: 'font', lut: 'lut' }
+
+/** Infers the kind of an asset from its entry (extension, inline form, built-in resource). */
 export function assetKind(entry: TAssetEntry): TAssetKind | undefined {
+  if (typeof entry === 'string' && entry.startsWith('builtin:')) return BUILTIN_KIND[entry.slice('builtin:'.length).split('/')[0] ?? '']
   if (typeof entry === 'string') return kindFromPath(entry)
   if ('svg' in entry || 'emoji' in entry) return 'image'
   if (entry.kind) return entry.kind

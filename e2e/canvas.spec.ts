@@ -153,3 +153,55 @@ test('upload cost of a canvas redrawn at 30 fps, by size', async ({ page }) => {
   console.log(`canvas upload, ms per frame: ${JSON.stringify(Object.fromEntries(Object.entries(results).map(([k, v]) => [k, Number(v.toFixed(2))])))}`)
   expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
 })
+
+type Drawing = { id: string; font: string; width: number; hash: number; aspect: number }
+
+/**
+ * Fonts of the filter in canvases and `frame.aspect` (#150, spec §12.4, §12.6), with `filters/fixtures/canvas-fonts/`:
+ * the same words drawn in the declared font asset "title" (a built-in font under a name of the filter) and in an
+ * undeclared family (the platform's fallback). The script reports a hash of each image and the measured width.
+ */
+async function fontDrawings(page: Page, query = ''): Promise<{ draws: Drawing[]; aspects: number[]; size: [number, number] }> {
+  await page.goto(`/engine.html?source=no-face&autostart${query}`)
+  await page.waitForFunction(() => (window.ouaf?.frames ?? 0) > 0 || (window.ouaf?.errors.length ?? 0) > 0, undefined, { timeout: 60_000 })
+  return page.evaluate(async () => {
+    const draws: Drawing[] = []
+    const aspects: number[] = []
+    const handle = await window.ouaf!.engine.addFilter('/filters/fixtures/canvas-fonts/')
+    handle.on('filter:drawn', (d) => void draws.push(d as Drawing))
+    handle.on('filter:aspect', (a) => void aspects.push(a as number))
+    const until = async (test: () => boolean) => {
+      for (let i = 0; i < 200 && !test(); i++) await new Promise((r) => setTimeout(r, 50))
+    }
+    await until(() => draws.length >= 2 && aspects.length > 0)
+    handle.send('redraw')
+    await until(() => draws.length >= 4)
+    const canvas = document.getElementById('canvas') as HTMLCanvasElement
+    return { draws, aspects, size: [canvas.width, canvas.height] as [number, number] }
+  })
+}
+
+test('a canvas draws text with the filter’s declared font, by its asset name', async ({ page }) => {
+  const { draws } = await fontDrawings(page)
+  expect(await page.evaluate(() => [window.ouaf!.errors, window.ouaf!.warnings])).toEqual([[], []])
+  const declared = draws.filter((d) => d.id === 'declared')
+  const fallback = draws.filter((d) => d.id === 'fallback')
+  expect(declared).toHaveLength(2)
+  expect(fallback).toHaveLength(2)
+  expect(declared[0]!.font).toBe('28px title')
+  // The declared font is not the fallback: other glyph widths and other pixels.
+  expect(Math.abs(declared[0]!.width - fallback[0]!.width)).toBeGreaterThan(2)
+  expect(declared[0]!.hash).not.toBe(fallback[0]!.hash)
+  // Stable: the same image at every draw, and in another page (the reference screenshots of canvases rely on it).
+  expect(declared[1]!.hash).toBe(declared[0]!.hash)
+  const again = await fontDrawings(page)
+  expect(again.draws.find((d) => d.id === 'declared')!.hash).toBe(declared[0]!.hash)
+})
+
+test('frame.aspect is the displayed width / height', async ({ page }) => {
+  const { draws, aspects, size } = await fontDrawings(page)
+  const expected = size[0] / size[1]
+  expect(expected).toBeCloseTo(720 / 1280, 3) // the clip's own frame, 9:16
+  expect(aspects).toEqual([expected])
+  expect(draws.every((d) => d.aspect === expected)).toBe(true)
+})

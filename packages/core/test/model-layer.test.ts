@@ -13,6 +13,10 @@ import { checkGltf, cloneModel, isModelAsset, modelLoader, parseModel, type Mode
 import { createModel, fitScale, modelRefs, type ModelLayerInstance } from '../src/layers/model/layer.ts'
 import { HEAD_CENTER, HEAD_RADII, OCCLUDER_RENDER_ORDER } from '../src/layers/model/occluder.ts'
 import { createShapeAsset, parseHex, shapeGeometry } from '../src/layers/model/shapes.ts'
+import type { TParams } from '@ouaf/spec'
+import { bindingParams } from '../src/engine/filter.ts'
+import { ParamStore } from '../src/params/index.ts'
+import { ScriptOverrides } from '../src/script/overrides.ts'
 
 const FIXTURES = resolve(import.meta.dirname, '../../../filters/fixtures/model-screen/assets')
 const glb = (name: string) => readFileSync(resolve(FIXTURES, name))
@@ -235,6 +239,13 @@ describe('model layer', () => {
     layer.dispose()
   })
 
+  it('gives the place of each copy on its anchor, for the draw order of transparent objects (spec §7)', () => {
+    const layer = make({ src: 'box', anchor: 'noseTip', offset: [0, 0, 0.4] }, context({ box: box() }))
+    layer.update(frameAt(0, fakeAnchors([4, 9])))
+    expect(layer.placements!.map((p) => [p.object, p.anchor, p.face, p.z])).toEqual(holders(layer).map((h, i) => [h, 'noseTip', [4, 9][i], 0.4]))
+    layer.dispose()
+  })
+
   it('fit rescales the model to a width or height in anchor units, times scale', async () => {
     const lift = await parseModel(glb('lift.glb'), undefined) // a unit cube
     const layer = make({ src: 'lift', fit: { width: 0.5 }, scale: 2 }, context({ lift }, 1))
@@ -417,6 +428,99 @@ describe('model layer', () => {
     const ctx = context({})
     ctx.assets.get = <T>() => 'void main() {}' as T
     expect(() => make({ src: 'fx' }, ctx)).toThrow(/not a glTF model/)
+  })
+})
+
+describe('model layer: src bound to a param, src and animation set by a script (spec §8, §12.4, #140)', () => {
+  const box = () => createShapeAsset({ shape: 'box' })
+  const params: TParams = {
+    shape: { type: 'select', default: 'a', options: { a: 'A', b: 'B' } },
+    hat: { type: 'asset', accept: ['model/gltf-binary'], optional: true },
+  }
+  function bound(assets: Record<string, ModelAsset>, host: Record<string, ModelAsset | null> = {}, overrides?: ScriptOverrides) {
+    const store = new ParamStore(params)
+    const ctx: LayerContext = {
+      ...context(assets),
+      params: store,
+      hostAssets: { get: (name) => host[name] ?? null },
+      bindings: { data, params: bindingParams(store), ...(overrides ? { overrides: overrides.forLayer(0) } : {}) },
+    }
+    return { ctx, store }
+  }
+  const shown = (layer: ModelLayerInstance) => holders(layer).filter((h) => h.visible).map((h) => h.children[0]!.name)
+
+  it('shows the model a select param maps its value to, keeping the copies of the filter\'s models', () => {
+    const models = { a: box(), b: createShapeAsset({ shape: 'sphere' }) }
+    const { ctx, store } = bound(models)
+    const layer = make({ src: { param: 'shape', map: { a: 'a', b: 'b' } } }, ctx)
+    const anchors = fakeAnchors([1])
+    layer.update(frameAt(0, anchors))
+    expect(shown(layer)).toEqual(['box'])
+    const first = holders(layer)[0]!.children[0]
+    store.set('shape', 'b')
+    store.beginFrame(33)
+    layer.update(frameAt(0.033, anchors))
+    expect(shown(layer)).toEqual(['sphere'])
+    store.set('shape', 'a')
+    store.beginFrame(66)
+    layer.update(frameAt(0.066, anchors))
+    expect(holders(layer)[0]!.children[0]).not.toBe(first) // a copy of the map's model is made again when shown again
+    expect(shown(layer)).toEqual(['box'])
+    layer.dispose()
+  })
+
+  it('shows the host\'s model, nothing without one, and drops the copy of a replaced one', () => {
+    const host: Record<string, ModelAsset | null> = { hat: null }
+    const { ctx } = bound({}, host)
+    const layer = make({ src: { param: 'hat' } }, ctx)
+    const anchors = fakeAnchors([1])
+    layer.update(frameAt(0, anchors))
+    expect(shown(layer)).toEqual([])
+    host.hat = box()
+    layer.update(frameAt(0.033, anchors))
+    expect(shown(layer)).toEqual(['box'])
+    const material = materialsOf(holders(layer)[0]!)[0]!
+    let disposed = false
+    material.addEventListener('dispose', () => void (disposed = true))
+    host.hat = createShapeAsset({ shape: 'cone' })
+    layer.update(frameAt(0.066, anchors))
+    expect(shown(layer)).toEqual(['cone'])
+    expect(disposed).toBe(true)
+    layer.dispose()
+  })
+
+  it('takes the script\'s model and animation names; null restores the manifest values', async () => {
+    const lift = await parseModel(glb('lift.glb'), undefined)
+    const overrides = new ScriptOverrides()
+    overrides.idOf = (slot) => (slot < 0 ? 0 : 1)
+    const { ctx } = bound({ lift, other: box() }, {}, overrides)
+    const layer = make({ src: 'lift', animation: 'lift' }, ctx)
+    const anchors = fakeAnchors([1])
+    const node = () => holders(layer)[0]!.getObjectByName('lift')!
+    layer.update(frameAt(0, anchors))
+    layer.update(frameAt(0.5, anchors))
+    expect(Math.round(node().position.y * 1000) / 1000).toBe(1)
+    const animation = overrides.property(0, 'animation')!
+    expect(animation.problem('nope')).toBe('the model has no animation "nope"')
+    animation.set(undefined, 'spin')
+    layer.update(frameAt(0.75, anchors)) // restarted: `spin` does not move it
+    expect(node().position.y).toBe(0)
+    layer.update(frameAt(1, anchors))
+    expect(round(node().quaternion.toArray())).toEqual([0, 0, 0.707, 0.707])
+    animation.set(undefined, null)
+    layer.update(frameAt(1.25, anchors)) // `lift` again, from its start
+    layer.update(frameAt(1.75, anchors))
+    expect(Math.round(node().position.y * 1000) / 1000).toBe(1)
+
+    const src = overrides.property(0, 'src')!
+    expect(src.problem('other')).toBeUndefined()
+    src.set(undefined, 'other')
+    layer.update(frameAt(2, anchors))
+    expect(shown(layer)).toEqual(['box'])
+    src.set(undefined, null)
+    layer.update(frameAt(2.033, anchors))
+    expect(holders(layer)[0]!.getObjectByName('lift')).toBeDefined()
+    layer.dispose()
   })
 })
 

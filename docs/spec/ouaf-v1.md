@@ -187,7 +187,7 @@ where they are when the layer is shown again. When they start is given by each t
 | Property | Default | Description |
 |---|---|---|
 | `anchor` | `head` | Anchor (section 5). |
-| `offset` | `[0,0,0]` | Offset in the anchor frame, *bindable*. |
+| `offset` | `[0,0,0]` | Offset in the anchor frame, *bindable*. Its z also orders the objects on one anchor (section 7). |
 | `rotation` | `[0,0,0]` | Rotation in degrees around the x, y, z axes of the anchor frame, *bindable*. Euler order XYZ: the rotation matrix is Rx · Ry · Rz, so z is applied first, then y, then x. |
 | `scale` | `1` | Size multiplier, a number or `[x, y, z]`, *bindable*; e.g. animated by a script for a "pop" (12.4). It multiplies the layer's size (`size`, `fit`) along the x, y, z axes of the layer (the anchor frame turned by `rotation`): a number scales uniformly, `[1, 1.4, 1]` stretches vertically. `scale` is a visual transform of the drawn layer: a `text` is scaled as drawn, around its anchor point, without being laid out or rasterized again (its wrapping, `maxWidth`, does not change), so it is cheap to animate but can blur when enlarged (above about 1.5×). `size` is the font size: the text is laid out at it, and an engine MAY rasterize it again at a matching resolution. An animated "pop" uses `scale`; a lasting larger text uses `size`. An instance with a factor of 0 or less is not drawn. |
 | `orient` | `face` | `face`: follows the head; `screen`: keeps facing the screen (readable text). |
@@ -200,11 +200,11 @@ where they are when the layer is shown again. When they start is given by each t
 
 | Type | Role | Main properties |
 |---|---|---|
-| `text` | Text (emoji included) | `text`*, `size`, `font`, `color`, `outline`, `shadow`, `align`, `maxWidth`, `lineHeight` |
-| `sticker` | Image, spritesheet or video | `src` (asset or `{ pick }`), `size`, `blend`, `loop`, `autoplay`, `rate` |
-| `model` | 3D object | `src` (glTF, `{ pick }` or `{ shape }`), `scale`, `fit`, `animation`, `loop`, `occlusion` |
+| `text` | Text (emoji included) | `text`*, `size`, `font` (asset or `{ param }`), `color`, `outline`, `shadow`, `align`, `maxWidth`, `lineHeight` |
+| `sticker` | Image, spritesheet or video | `src` (asset, `{ pick }` or `{ param }`), `size`, `blend`, `loop`, `autoplay`, `rate` |
+| `model` | 3D object | `src` (glTF, `{ pick }`, `{ shape }` or `{ param }`), `scale`, `fit`, `animation`, `loop`, `occlusion` |
 | `warp` | Deformation | `kind` (`bulge`, `pinch`, `swirl`, `stretch`), `anchor` (one or more), `radius`, `strength`, `direction`, `faces` |
-| `color` | Color grading | `lut`, `intensity`, `brightness`, `contrast`, `saturation`, `temperature`, `tint`, `vignette`, `grain`, `region` |
+| `color` | Color grading | `lut` (asset or `{ param }`), `intensity`, `brightness`, `contrast`, `saturation`, `temperature`, `tint`, `vignette`, `grain`, `region` |
 | `shader` | GLSL effect | `src`, `stage` (`background`, `face`, `post`), `uniforms`, `textures` |
 | `canvas` | Canvas 2D drawing by the script | `width`, `height`, `size`, `fps`; `id` required |
 
@@ -275,17 +275,28 @@ background → video → face → warp → objects → color → overlay
 | `video` | Input image |
 | `face` | Face textures, shaders with `stage: "face"` |
 | `warp` | Deformations (applied to everything before) |
-| `objects` | `text`, `sticker`, `model`, `canvas`, depth-sorted |
+| `objects` | `text`, `sticker`, `model`, `canvas`, depth-sorted (below) |
 | `color` | `color` layers and shaders with `stage: "post"`, chained |
 | `overlay` | Layers with `overlay: true` |
 
 A host MAY stack several filters. Within a stage, order is the **stack** order, then the **layer** order.
 
 - Deformations, color grading and voice effects are **chained** in that order.
-- Objects are **merged** and depth-sorted.
+- Objects are **merged** and depth-sorted (below).
 - The background is **exclusive**: the last filter in the stack wins, and the engine SHOULD emit a warning.
 - Tracking (face, etc.) is **shared** by the whole stack: it is computed only once.
 - Filters are isolated from each other: each has its own sandbox and cannot read the others' state.
+
+**Order of objects.** Within the `objects` stage, and within the `overlay` stage, objects are drawn back to front by
+depth: the depth of each one's centre. Objects of the **same face on the same anchor** (the `screen` anchor counts
+as one anchor, whatever the face) are drawn in the order of their `offset` along the anchor frame's z axis instead,
+the lowest first (+z points towards the camera, 5.1): a higher `offset` z is drawn in front, whatever the head's
+rotation and the objects' `orient`. Equal offsets are drawn in stack order, then layer order, across filters. Objects
+of different anchors or faces keep the depth order; an engine places each same-anchor group among them by depth,
+without breaking the group's order. Only the order of drawing changes: an opaque model, and a head occluder
+(`occlusion: "head"`), still hide what is behind them with the depth buffer, whatever their order. A text 0.02 in
+front of its bubble on the same anchor thus stays in front when the head turns, which ordering by the depth of their
+centres does not ensure once they are not centred on each other.
 
 ## 8. Bindings
 
@@ -328,6 +339,46 @@ take their `default` value, as when no face is visible.
 Bindings are evaluated by the engine, **outside the sandbox**: they cost neither latency nor data transfer.
 The language is deliberately limited to these forms; any richer logic belongs in the script.
 
+### 8.1 Content properties
+
+`sticker.src`, `model.src`, `text.font` and `color.lut` hold an asset (10.1). They are not *bindable* (an asset is
+not tracking data: no `{ bind }`), but each takes, instead of an asset, a parameter binding of its own:
+
+| Form | Shows |
+|---|---|
+| `{ "param": "logo" }` | The file the host gives the `asset` parameter `logo` (9), once it has passed the checks of section 15. |
+| `{ "param": "style", "map": { "gold": "crown-gold", "flowers": "crown-flowers" } }` | The asset `map` gives for the value of the `select` or `string` parameter `style`. |
+
+- **Parameter types**: `asset`, without `map`; `select` or `string`, with `map` (required). Any other type is an error.
+- **`map` values** are asset references (10.1) of a kind the property shows: an image, spritesheet or video for
+  `sticker.src`, a model for `model.src`, a font for `text.font`, a LUT for `color.lut`. A validator reports any other
+  value as an error, and warns about an option of a `select` that has no entry in `map` and about a key that is not
+  an option (it never matches).
+- **`accept`** of an `asset` parameter bound to a content property lists only media types that property can show;
+  a validator reports any other:
+
+  | Property | Media types |
+  |---|---|
+  | `sticker.src` | `image/png`, `image/jpeg`, `image/webp`, `image/avif`, `image/svg+xml`, `image/ktx2` |
+  | `model.src` | `model/gltf-binary`, `model/gltf+json` |
+  | `text.font` | `font/woff2`, `font/woff`, `font/ttf`, `font/otf` |
+  | `color.lut` | `text/x-cube` (`.cube` has no registered media type) |
+
+  A host file is an image, never a spritesheet or a video (it has no `frames` or `alpha`). An `asset` parameter bound
+  to several content properties must fit all of them.
+- **No asset** (an `asset` parameter without a file, a value `map` does not list): a `sticker` or `model` layer is not
+  drawn, a `text` uses the default font (`builtin:font/sans-bold`), a `color` layer applies no LUT (its other
+  adjustments still apply).
+- **When it applies**: at the start of a frame, like any parameter change (9). The `map` values are assets of the
+  filter, preloaded with it (10.4): the next frame shows the new one. A host file is loaded and checked first, as with
+  `apply: "reload"`: the layer keeps showing its previous asset meanwhile, switches at the start of a frame (never
+  an empty frame), and the previous file is then released. The parameter's value (`f.params`, `paramChange`) changes
+  at that frame. A file that fails the checks is refused (9) and changes nothing.
+- **`{ pick }`** and a parameter binding are alternatives of `src`: a pick list holds assets only, and a `map` value is
+  one asset.
+- `shader.textures` are not content properties in v1 (a later version MAY add them).
+- A script MAY replace a content property's value with the name of a declared asset (12.4).
+
 ## 9. Parameters and presets
 
 ```json
@@ -348,6 +399,12 @@ The language is deliberately limited to these forms; any richer logic belongs in
   without an empty frame. Numbers, colors and vectors MAY be animated (`transition`).
 - `options: { "from": "host" }`: the list is supplied at runtime by the host.
 - An `asset` parameter is a file supplied at runtime; it goes through the same checks as an untrusted asset (section 15).
+  A layer shows it through a content property (8.1). When it is set, its declared media type, if it has one, MUST be
+  in `accept`, and its size at most `maxSize` and the package limit (50 MB, section 3); its content is checked when it
+  is loaded, and a file refused then is reported asynchronously, with the same kind of error (reference engine: an
+  `InvalidParamError` with the reason `content` on `engine.on('error')`); the parameter keeps its previous file.
+  `optional: true` lets the host remove the file (`null`). A parameter without a file, optional or not, shows no asset
+  (8.1) until the host gives one; an engine SHOULD warn about a non-optional one at load.
 - Preset values MUST be valid for their parameter.
 
 ## 10. Assets
@@ -360,9 +417,13 @@ The language is deliberately limited to these forms; any richer logic belongs in
   "fire": { "src": "assets/fire.mp4", "alpha": "packed" },
   "walk": { "src": "assets/walk.png", "frames": { "cols": 4, "rows": 2, "fps": 12 } },
   "star": { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'>…</svg>" },
-  "cool": { "emoji": "😎" }
+  "cool": { "emoji": "😎" },
+  "title": "builtin:font/rounded-bold"
 }
 ```
+
+An entry is an `assets/…` path, `{ "src": … }` with options, an inline `svg`, an `emoji`, or a built-in resource
+`builtin:…` (10.3) under a name of the filter: e.g. a built-in font a canvas draws with by that name (12.6).
 
 An asset reference (`src`, `font`, `lut`, `textures`…) is one of:
 
@@ -371,6 +432,8 @@ An asset reference (`src`, `font`, `lut`, `textures`…) is one of:
 - a **built-in resource** `builtin:…`.
 
 **Remote URLs are forbidden** (`http:`, `https:`, `data:`…): a remote asset would be a way to leak data.
+
+A content property (`src`, `font`, `lut`) may take a parameter binding instead of a reference (8.1).
 
 **Picking.** A `src` of `{ "pick": [...], "by": "face" | "random" }` (`sticker`, `model`) gives each selected face
 one asset of the list, kept while the face keeps its stable id (5.4); a face that leaves and comes back gets a new
@@ -389,7 +452,7 @@ is the same on every run; `by: "random"` draws an entry when the face gets its i
 | `model` | glTF 2.0 / GLB | Animations, Draco or meshopt compression. |
 | `lut` | `.cube` | |
 | `shader` | `.frag`, `.glsl` | Section 11. |
-| `font` | WOFF2, WOFF, TTF, OTF | |
+| `font` | WOFF2, WOFF, TTF, OTF | `text.font`; by asset name in canvases (12.6). |
 | `audio` | OGG, MP3, WAV, Opus | Sound effects triggered by the script. |
 | `lottie` | `.lottie`, or `.json` with `kind: "lottie"` | Reserved (Lottie plugin). |
 | `data` | JSON | Reserved: no v1 layer or script API reads it (plugin layers may). JSON a script uses is imported in `filter.js` and bundled into `script.js` by `ouaf pack` (3.1). A later version may add an API to read it (`f.data`), compatibly. |
@@ -534,9 +597,13 @@ read a `data` asset (10.2).
 **Layer handles.**
 
 - `.set(props)`: sets properties. Settable: every *bindable* property, plus the content properties `text`, `color`,
-  `font`, `src` (a declared asset), `lut`, `animation`, `size` and `scale`. Structural properties (`type`, `id`,
-  `anchor`, `faces`, `stage`, `kind`, `width`, `height`) cannot be set. A set value **replaces** the property's
-  binding, if any, until the script sets the property to `null`, which restores the manifest value (fixed or bound).
+  `font`, `src`, `lut`, `animation`, `size` and `scale`. `src` (`sticker`, `model`), `font` and `lut` take the name
+  of an asset declared in `assets` that the property can show (8.1), not a path or `builtin:`; an engine preloads
+  every such asset of a filter with a script (10.4), so the change shows at the next frame. `animation` takes the
+  name of a clip of the model, started from its beginning. Another value is ignored with a warning. Structural
+  properties (`type`, `id`, `anchor`, `faces`, `stage`, `kind`, `width`, `height`) cannot be set. A set value
+  **replaces** the property's binding, if any, or its `{ pick }`, until the script sets the property to `null`,
+  which restores the manifest value (fixed, picked or bound).
 - A shader layer's `uniforms` are set **one by one**: `.set({ uniforms: { amount: 2 } })` only changes `amount`,
   and `{ uniforms: { amount: null } }` only restores `amount`'s manifest value (fixed or bound). A value has the
   uniform's type, given by its manifest value: a number (`float`), a boolean (`bool`), `[x, y]` or `[x, y, z]`
@@ -564,7 +631,8 @@ changes nothing. The 64 KB are measured as for `f.emit` (reference engine: a wal
 bytes a character, numbers at 8, typed arrays and `ArrayBuffer`s at their byte length, keys included).
 
 **`frame` data.** `frame.time` (media time, s), `frame.dt` (s since the previous call to the script, which covers the
-frames it skipped, 12.7), `frame.faces` (list) and, with `uses: ["pairs"]`, `frame.pairs`. Each face has `id`
+frames it skipped, 12.7), `frame.aspect` (the displayed width / height, e.g. 0.5625 for a 9:16 portrait image),
+`frame.faces` (list) and, with `uses: ["pairs"]`, `frame.pairs`. Each face has `id`
 (stable while the face is tracked, 5.4), `index`, `state`, and, depending on `uses`:
 
 | `uses` | Per face |
@@ -576,7 +644,10 @@ frames it skipped, 12.7), `frame.faces` (list) and, with `uses: ["pairs"]`, `fra
 | `pairs` | (on `frame`) `pairs`: one `{ a, b, distance, contact }` per pair of faces (below). |
 
 - **Positions** (`anchors`, `landmarks`) are in **display space, normalized**: from 0 to 1 over the displayed image,
-  origin at the top left, **y down** (as in a canvas), mirroring applied, so they match what the person sees.
+  origin at the top left, **y down** (as in a canvas), mirroring applied, so they match what the person sees. x is
+  over the width and y over the height: `dx * frame.aspect` and `dy` measure an on-screen distance in screen heights
+  (a circle on screen has the same radius in both). There are no pixel sizes: they depend on the device, and a
+  canvas has its own size (12.6).
   `landmarks` `z` is a relative depth at the scale of `x` (smaller is closer to the camera).
 - **Pairs**: `a` and `b` are faces of `frame.faces`; `distance` is the on-screen distance between the two head
   centres, in **face units** (the mean eye distance of the two faces), so it does not depend on how far the people
@@ -607,6 +678,13 @@ pixels, origin at the top left, y down; `frame` is the data of 12.4 (the frame o
 - **Where.** A canvas layer has one image, shown on every face it selects (`faces`) like a sticker: `size` is its height
   in anchor units, the width follows `width / height`. Nothing is shown before the first draw.
 - `f.asset(name)` gives the manifest's image assets (12.4) to draw with `ctx.drawImage`.
+- **Fonts.** The `font` assets declared in the manifest's `assets` (font files, and built-in fonts under a name of
+  the filter, `"title": "builtin:font/rounded-bold"`, 10.1) are available to `ctx.font` under their asset name:
+  `ctx.font = '24px title'`. The engine registers them in the sandbox (reference engine: the Worker's `FontFaceSet`)
+  from the package bytes before `setup`, so they are ready at the first draw; nothing is fetched. A name that is a
+  CSS keyword (`serif`, `monospace`, `inherit`…) is quoted: `'24px "serif"'`. Any other family is the platform's,
+  which differs between devices. Where the platform cannot register fonts in the sandbox, an engine draws with the
+  platform's fonts and SHOULD warn once.
 
 The main cost is uploading the image to the GPU at each draw: keep canvases small, and `fps` low.
 
@@ -668,6 +746,10 @@ The sandbox runs the script off the rendering thread: a slow script makes its ow
    to untrusted code.
 3. **No identification.** An engine MUST NOT recognize or re-identify a person. Face ids are ephemeral.
 4. **Untrusted assets.** Size and dimensions are checked before decoding; SVGs are rendered as images; no remote resources.
+   The files a host gives `asset` parameters (9) are untrusted too: their format is identified from their content,
+   not from their declared type or name, and MUST be one of the accepted media types (8.1); then they pass the checks
+   of a package asset of their kind (size, dimensions before decoding, SVG rendered as an image, a glTF without
+   external files).
    A package is untrusted input too (3): links, special entries, unsafe paths and duplicate entries are refused, and
    decompression is bounded by the declared sizes and the size limit, so an archive cannot write outside the package
    or inflate without bound (zip bomb).

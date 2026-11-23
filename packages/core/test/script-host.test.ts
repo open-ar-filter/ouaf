@@ -47,6 +47,7 @@ function hostSetup(code: string, options: Partial<ScriptHostOptions> = {}) {
     bindingData: new FaceBindingData(faces),
     camera: new PerspectiveCamera(),
     videoToClip: { ax: 2, bx: -1, ay: -2, by: 1 },
+    aspect: 0.75,
   }
   const out = new Float64Array(1)
   return { host, overrides, opacity: () => (opacity.write(0, out, 0), out[0]!), warnings, errors, emits, source, conn: () => conn! }
@@ -82,6 +83,29 @@ describe('script host', () => {
     expect(s.warnings.join('\n')).toMatch(/no property "anchor" a script can set \(settable: opacity, text\)/)
     expect(s.warnings.join('\n')).toMatch(/"x" is not a valid "opacity"/)
     expect(s.warnings.join('\n')).toMatch(/only numbers, colors and vectors can be animated/)
+  })
+
+  it('sets content properties to the names they accept, ignores others with a warning, and restores them with null (#140)', async () => {
+    const s = hostSetup(`export default {
+      on: { 'message:go'(f, { data }) { f.layer('label').set({ src: data }) } },
+      setup(f) { f.layer('label').set({ src: 'nope' }); f.layer('label').animate({ src: 'hat' }, { duration: 10 }) },
+    }`)
+    const src = s.overrides.forLayer(0).content!('src', (name) => (name === 'hat' ? undefined : `no asset named "${name}"`))
+    await s.host.start({}, 0)
+    await idle(s.host)
+    s.host.beginFrame()
+    expect(s.warnings).toEqual([
+      'Filter "test": .set({ src: "nope" }) on layer "label": no asset named "nope"; ignored.',
+      'Filter "test": .animate() on "src" of layer "label": only numbers, colors and vectors can be animated.',
+    ])
+    expect(src.get(0)).toBeUndefined()
+    for (const value of ['hat', null]) {
+      s.host.queue({ name: 'message:go', payload: { data: value } })
+      s.host.endFrame(0, s.source)
+      await idle(s.host)
+      s.host.beginFrame()
+      expect(src.get(0)).toBe(value ?? undefined)
+    }
   })
 
   it('stops a script that does not answer within 1 s; the layers keep their values', async () => {
@@ -225,6 +249,35 @@ describe('script host', () => {
     expect(drawn).toEqual([[0, [1, 16, 8]]])
     expect(s.emits).toEqual([['star', 2]])
     expect(s.warnings).toEqual([])
+  })
+
+  it('gives frame.aspect, the displayed width / height, to update and draw (spec §12.4)', async () => {
+    const s = hostSetup(`export default { update(f, frame) { f.emit('update', frame.aspect) }, draw: { label(ctx, f, frame) { f.emit('draw', frame.aspect) } } }`, {
+      canvases: [{ layer: 0, width: 16, height: 8, fps: 0 }],
+      drawn: () => {},
+    })
+    await s.host.start({}, 0)
+    await idle(s.host)
+    s.host.beginFrame()
+    s.host.endFrame(0, s.source)
+    await idle(s.host)
+    s.host.beginFrame()
+    expect(s.emits).toEqual([['update', 0.75], ['draw', 0.75]])
+  })
+
+  it('sends the font assets with init when the script draws canvases (spec §12.6)', async () => {
+    const fonts = () => [{ name: 'title', data: new ArrayBuffer(8), weight: '700', style: 'normal' }]
+    // The Node runtime has no FontFace: its warning shows that the fonts arrived.
+    const drawing = hostSetup(`export default { draw: { label() {} } }`, { canvases: [{ layer: 0, width: 16, height: 8, fps: 0 }], fonts })
+    await drawing.host.start({}, 0)
+    await idle(drawing.host)
+    drawing.host.beginFrame()
+    expect(drawing.warnings.join('\n')).toMatch(/no FontFace in workers.*\("title"\)/)
+    const plain = hostSetup(`export default { setup() {} }`, { fonts })
+    await plain.host.start({}, 0)
+    await idle(plain.host)
+    plain.host.beginFrame()
+    expect(plain.warnings).toEqual([])
   })
 
   it('reports a sandbox that does not start', async () => {

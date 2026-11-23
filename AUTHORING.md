@@ -126,8 +126,10 @@ engine. "Left/right" in anchor names are the person's side (their left eye is on
 
 Layers are drawn in fixed stages, whatever their order in the list (§7):
 `background → video → face → warp → objects → color → overlay`. Within a stage, list order applies; objects (`text`,
-`sticker`, `model`, `canvas`) are depth-sorted. Warps deform everything drawn before them; color layers and post
-shaders are chained.
+`sticker`, `model`, `canvas`) are depth-sorted, except objects of the same face on the same anchor: those are drawn
+by their `offset` z (higher in front, whatever the head's rotation), then list order. A text over a bubble on the
+same anchor only needs a small z gap (`[0.2, 1, 0.01]` over `[0, 1, 0]`). Warps deform everything drawn before
+them; color layers and post shaders are chained.
 
 **Every layer**: `type` (required), `id` (unique; needed to drive it from a script), `visible` (bindable),
 `opacity` 0–1 (bindable). Hiding a layer does not pause its animations (§6.1).
@@ -141,13 +143,14 @@ layer (`[1, 1.4, 1]` stretches it vertically). It is a visual transform of what 
 rasterized again, so `scale` is the cheap way to animate a "pop", but a text enlarged a lot (above about 1.5×) gets
 blurry; for a lasting larger text, raise `size`.
 
-Bindable properties accept a fixed value, `{ "param": … }` or `{ "bind": … }` (section 8). The schema gives every
-bound and default; the main ones are below.
+Bindable properties accept a fixed value, `{ "param": … }` or `{ "bind": … }` (section 8). The asset properties
+`src` (sticker, model), `font` and `lut` accept an asset or a `{ "param": … }` binding (section 7). The schema gives
+every bound and default; the main ones are below.
 
 ### `text`
 
 `text` (required, bindable, 500 characters, emoji allowed), `size` (font size in anchor units, default 0.3,
-bindable), `font` (default `builtin:font/sans-bold`, or a font asset), `color` (default `#ffffff`, bindable),
+bindable), `font` (default `builtin:font/sans-bold`, a font asset, or a param: section 7), `color` (default `#ffffff`, bindable),
 `outline: { width, color }` (width relative to the font size, ≤ 0.5), `shadow: { color, blur?, offset? }`, `align`
 (`left`, `center`, `right`), `maxWidth` (wraps lines, anchor units), `lineHeight` (multiple of `size`, default 1.2).
 The anchor is on the alignment edge, at the vertical middle of the block. Emoji use the platform's emoji font.
@@ -159,7 +162,8 @@ The anchor is on the alignment edge, at the vertical middle of the block. Emoji 
 
 ### `sticker`
 
-`src` (required: an image, spritesheet or video asset, or `{ "pick": [...], "by": "face" | "random" }`), `size`
+`src` (required: an image, spritesheet or video asset, `{ "pick": [...], "by": "face" | "random" }`, or a param:
+section 7), `size`
 (height in anchor units, default 1, width from the aspect ratio, bindable), `blend` (`normal`, `add`, `multiply`,
 `screen`), `loop` (default true), `autoplay` (default true), `rate` (playback rate 0–4, bindable).
 Animations start when the filter is activated and when the first face appears. `{ pick }` gives each face one asset
@@ -173,7 +177,7 @@ of the list, kept while the face is tracked: `by: "face"` (default) cycles throu
 
 ### `model`
 
-`src` (required: a glTF/GLB asset, `{ pick }`, or a generated shape), `scale`, `fit: { width?, height? }` (rescales
+`src` (required: a glTF/GLB asset, `{ pick }`, a generated shape, or a param: section 7), `scale`, `fit: { width?, height? }` (rescales
 the bounding box to this size in anchor units), `animation` (glTF clip played from activation), `loop` (default
 true), `occlusion: "head"` (parts behind the head are hidden: hats, glasses temples). 1 glTF unit = 1 face unit.
 Shapes need no file: `{ "shape": "box" | "sphere" | "torus" | "ring" | "cone" | "cylinder" | "plane", "color"?,
@@ -198,7 +202,7 @@ otherwise (no `offset`). `opacity` scales the strength.
 
 ### `color`
 
-`lut` (a `.cube` asset or `builtin:lut/…`), `intensity` (strength of the LUT only, default 1), `brightness`,
+`lut` (a `.cube` asset, `builtin:lut/…`, or a param: section 7), `intensity` (strength of the LUT only, default 1), `brightness`,
 `contrast`, `saturation`, `temperature` (-1 to 1, default 0), `tint` (color multiplied in, its alpha is the
 strength), `vignette`, `grain` (0 to 1), `region: "all" | "face"` (`face`: only the face ovals, needs
 `requires.face`). All numbers and `tint` are bindable. Applied in that order on sRGB values (§6.3, Appendix E).
@@ -219,7 +223,8 @@ boolean, `[x, y]`, `[x, y, z]` or color; each bindable; 32 max), `textures` (nam
 A Canvas 2D image drawn by the script's `draw.<id>` function (section 10): `id` (required), `width`, `height`
 (pixels, 16–2048, required), `size` (displayed height in anchor units, default 1, bindable), `fps` (maximum redraws
 per second of media time, default 30; `0`: only the first time and after `invalidate()`). Keep it small and `fps`
-low: each redraw is uploaded to the GPU. Example in section 15.
+low: each redraw is uploaded to the GPU. Text uses the fonts declared in `assets` by their name (section 10).
+Example in section 15.
 
 ## 6. Assets
 
@@ -254,14 +259,16 @@ directly (§10.1). **Remote URLs (`http:`, `https:`, `data:`…) are forbidden.*
 | model | glTF 2.0 / GLB | Draco and meshopt compression supported; external files must stay under `assets/` (prefer GLB). |
 | lut | `.cube` | 1D or 3D. |
 | shader | `.frag`, `.glsl` | Section 11. |
-| font | WOFF2, WOFF, TTF, OTF | For `text.font`. |
+| font | WOFF2, WOFF, TTF, OTF | For `text.font`, and by asset name in canvases (`ctx.font`, section 10). |
 
 Data a script needs (word lists, levels, tables) is not an asset: import the JSON in `filter.ts`
 (`import levels from './levels.json'`, the file next to `filter.ts`, not in `assets/`) and `ouaf pack` bundles it
 into `script.js`. The `data` (`.json`) and `lottie` kinds are reserved: nothing reads them yet, and `ouaf validate`
 reports such assets as unused.
 
-The kind comes from the extension; set `kind` to override it. Built-in resources (§10.3), always available:
+The kind comes from the extension; set `kind` to override it. An entry can also be a built-in resource under a name
+of your own, e.g. `"title": "builtin:font/rounded-bold"` for the text of a canvas. Built-in resources (§10.3), always
+available:
 fonts `builtin:font/sans`, `builtin:font/sans-bold` (default), `builtin:font/rounded-bold`, `builtin:font/serif`,
 `builtin:font/mono`, `builtin:font/handwritten`; LUTs `builtin:lut/vintage`, `builtin:lut/noir`, `builtin:lut/warm`,
 `builtin:lut/cool`, `builtin:lut/vivid`. Credit third-party assets in `credits`, with a license that allows
@@ -295,11 +302,41 @@ change them.
 
 - Types: `number` (`min`, `max`, `step`), `boolean`, `string` and `text` (`maxLength`), `color`, `select`
   (`options`: value → label, or `{ "from": "host" }` for a list the host supplies), `vec2`, `vec3`, `asset` (a file
-  supplied at run time; no layer property can take it yet, see section 14).
+  supplied at run time, below).
 - Metadata: `label`, `description`, `group`, `visibleIf: { "<param>": value }`, `apply` (`live` default, or
   `reload`), `transition` (ms; numbers, colors and vectors animate to a new value).
 - A parameter binding must fit the property: a number param for a number, a `color` for a color, `vec3` for
   `offset`; text properties accept `string`, `text`, `select` and `color` params. Preset values must be valid.
+
+**Choosing an asset** (§8.1). The asset properties `src` (sticker, model), `font` (text) and `lut` (color) take a
+param too: a `select` (or `string`) param with `map` from its values to the filter's own assets, or an `asset` param
+whose file the host gives (a logo, a photo):
+
+```json ouaf=part
+{
+  "params": {
+    "crown": { "type": "select", "default": "gold", "options": { "gold": "Gold", "flowers": "Flowers" } },
+    "logo": { "type": "asset", "accept": ["image/png", "image/svg+xml"], "maxSize": 500000, "optional": true, "label": "Logo" }
+  },
+  "assets": { "gold": { "emoji": "👑" }, "flowers": { "emoji": "🌸" } },
+  "layers": [
+    { "type": "sticker", "anchor": "forehead", "offset": [0, 0.6, 0], "orient": "screen",
+      "src": { "param": "crown", "map": { "gold": "gold", "flowers": "flowers" } } },
+    { "type": "sticker", "anchor": "screen", "offset": [0, -0.42, 0], "size": 0.08, "overlay": true, "src": { "param": "logo" } }
+  ]
+}
+```
+
+- `map` values are asset names, `assets/…` paths or `builtin:` resources of the kind the property shows (image,
+  spritesheet or video; model; font; LUT); give every option of a `select` an entry. A value without one shows
+  nothing: the sticker or model is hidden, the text uses the default font, the color layer applies no LUT. The same
+  goes for an `asset` param without a file.
+- `accept` lists what the property can show: `image/png`, `image/jpeg`, `image/webp`, `image/avif`, `image/svg+xml`
+  for a sticker; `model/gltf-binary`, `model/gltf+json` for a model; `font/woff2`, `font/woff`, `font/ttf`, `font/otf`
+  for a font; `text/x-cube` for a LUT. A host file is an image, not a spritesheet or a video.
+- The engine checks the host's file like an asset of the package (§15): its content (not its name or declared type)
+  must be an accepted format, then the usual limits apply (4096 px per side…). A refused file leaves the previous one
+  in place; a valid one replaces it at the start of a frame, once loaded (never an empty frame).
 
 ## 8. Bindings
 
@@ -372,14 +409,14 @@ be plain JSON (no `Date`, `Map`, getters, `undefined` in lists). The top level o
 | `setup(f)` | once, when the filter is activated |
 | `update(f, frame)` | every frame the script receives; avoid it when a binding is enough |
 | `on.<event>(f, payload)` | for each event of section 9; face events get `{ face }` (`wink` also `side`), `paramChange` `{ name, value, previous }`, `message:<name>` `{ data }` |
-| `draw.<id>(ctx, f, frame)` | canvas layers: first frame, then up to `fps` times per second, and after `.invalidate()`; `ctx` is an `OffscreenCanvasRenderingContext2D` of `width × height` px, cleared before each call |
+| `draw.<id>(ctx, f, frame)` | canvas layers: first frame, then up to `fps` times per second, and after `.invalidate()`; `ctx` is an `OffscreenCanvasRenderingContext2D` of `width × height` px, cleared before each call; the `font` assets are its fonts by asset name (`ctx.font = '24px title'`) |
 
 **The `f` API** (§12.4):
 
 | | |
 |---|---|
 | `f.layer(id, face?)` | handle on a layer: every instance, or with `face` only that face's |
-| `.set({ … })` | sets properties until set to `null` (back to the manifest value). Settable today: the bindable properties: `visible`, `opacity`, `offset`, `rotation`, `size`, `scale`, `text`, `color`, sticker `rate`, warp `radius` / `strength` / `direction`, the color-layer numbers and `tint`, shader `uniforms: { name: value }` (one by one: `{ uniforms: { amount: null } }` restores only `amount`; a value keeps the uniform's type) |
+| `.set({ … })` | sets properties until set to `null` (back to the manifest value: fixed, picked or bound). Settable: the bindable properties: `visible`, `opacity`, `offset`, `rotation`, `size`, `scale`, `text`, `color`, sticker `rate`, warp `radius` / `strength` / `direction`, the color-layer numbers and `tint`, shader `uniforms: { name: value }` (one by one: `{ uniforms: { amount: null } }` restores only `amount`; a value keeps the uniform's type); and the asset properties `src` (sticker, model), `font`, `lut`, to the **name** of an asset declared in `assets` of the right kind (`{ src: 'crownGold' }`; not a path or `builtin:`), and model `animation` to a clip name |
 | `.animate({ prop: target }, { duration, easing?, delay?, repeat? })` | tween numbers, vectors, colors from the current value; `{ prop: { keyframes: [a, b, …] } }` plays evenly spaced values; `repeat: -1` loops |
 | `.play(name)` | model layers: start a glTF animation |
 | `.invalidate()` | canvas layers: redraw |
@@ -393,8 +430,9 @@ be plain JSON (no `Date`, `Map`, getters, `undefined` in lists). The top level o
 Easings: `linear`, and `in`, `out`, `inOut` × `Quad`, `Cubic`, `Back`, `Elastic`, `Bounce` (e.g. `outBack`);
 default `inOutQuad`.
 
-**`frame`**: `time` (s), `dt` (s since the previous call), `faces` (each with `id`, stable while tracked, `index`,
-`state`) and, depending on `script: { uses: [...] }` (data minimization, §12.4, §15.2):
+**`frame`**: `time` (s), `dt` (s since the previous call), `aspect` (displayed width / height), `faces` (each with
+`id`, stable while tracked, `index`, `state`) and, depending on `script: { uses: [...] }` (data minimization, §12.4,
+§15.2):
 
 | `uses` | Per face |
 |---|---|
@@ -404,7 +442,13 @@ default `inOutQuad`.
 | `face.landmarks` | `landmarks`: `Float32Array` of 478 × (x, y, z), same space |
 
 Declare only what the script reads: `script: { uses: [] }` when it reads nothing but ids; `face.*` uses need
-`requires.face`. Without `uses`, the script gets pose and blendshapes.
+`requires.face`. Without `uses`, the script gets pose and blendshapes. Positions are normalized over the width and
+the height: multiply x differences by `frame.aspect` to measure on-screen distances or keep circles round.
+
+**Canvas fonts**: a `draw` function sees only the platform's fonts, which differ between devices, plus the `font`
+assets of the manifest under their asset name: declare `"assets": { "title": "builtin:font/rounded-bold" }` (or a
+font file) and write `ctx.font = 'bold 24px title'`. Quote a name that is a CSS keyword (`'24px "serif"'`). Where a
+browser cannot load fonts in the script's Worker, the platform font is used and the engine warns.
 
 **Sandbox and timing** (§12.1, §12.7, §15):
 
@@ -479,10 +523,9 @@ Specified, or reserved, but not working in the reference engine today. Do not re
 - `ouaf preview` (#30): pack, then load the `.ouaf` (section 2).
 - `pairContact` / `pairSeparate` and `frame.pairs` (`uses: ["pairs"]`): no detector yet, `frame.pairs` is empty (#116).
 - Adaptive quality: dropping capabilities on slow devices, hiding below 15 Hz, `performance` events (§16; #34, #90).
-- Script `.set()` / `.animate()` of `src`, `font`, `lut`, `animation`: ignored with a warning (#26). These
-  properties are not bindable either.
+- A host file as a video or spritesheet sticker (only images), or as a shader texture: `textures` take assets only.
 - Starting a sticker with `autoplay: false` from a script; `f.sound()` and audio assets; `lottie` and `data` assets
-  (reserved: import JSON in `filter.ts`, section 6); `asset` params in layers.
+  (reserved: import JSON in `filter.ts`, section 6).
 - KTX2 textures; GLSL compilation in `ouaf validate`; reserved `requires` (`hands`, `segmentation`, `pose`, `audio`)
   and reserved events (`tap`…): warnings.
 - With a file source, the engine does not wait for the script yet, so offline renders of scripted filters are not
@@ -689,7 +732,8 @@ then `→` a hint. Fix errors first; warnings do not block (unless `--strict`). 
 | `format-mismatch`, `unsupported-format` | the content does not match the extension (a JPEG named `.png`), or an unsupported format (GIF…) | export again in a supported format, fix the extension |
 | `image-too-large`, `video-too-large`, `unsupported-codec` | over the limits of section 12, HEVC video… | resize / re-encode (H.264 MP4 or VP9 WebM) |
 | `unknown-param`, `param-type-mismatch`, `preset-invalid` | binding or preset on a missing param, of the wrong type or out of bounds | declare the param, use a fitting type |
-| `unknown-data-path`, `binding-range`, `binding-map-required`, `binding-map-key` | wrong `bind` path; `range` without `to`; data bound without `map` to a property of another type (a number into a color, a vector or `visible`; plugin text into a color); a `map` key that never matches (`"1.0"` for a number) | use a path of section 8; give both `range` and `to`; add `map` from data values to property values; write the key the hint gives (`"1"`) |
+| `asset-accept`, `asset-kind`, `binding-map-unexpected`, `binding-map-missing` | an asset param whose `accept` lists a type the property cannot show (`video/mp4` for a sticker); a `map` value of the wrong kind (a model for a sticker); `map` on an asset param; a `select` option without a `map` entry (warning) | follow the hint: it lists the accepted types; map every option to an asset the property shows (section 7) |
+| `unknown-data-path`, `binding-range`, `binding-map-required`, `binding-map-key` | wrong `bind` path; `range` without `to`; data bound without `map` to a property of another type (a number into a color, a vector or `visible`; plugin text into a color), or a `select` param bound to an asset property without `map`; a `map` key that never matches (`"1.0"` for a number, a key that is not an option) | use a path of section 8; give both `range` and `to`; add `map` from data (or param) values to property values; write the key the hint gives (`"1"`) |
 | `unknown-event`, `not-tunable` | wrong event name; `threshold` on an event that has none | names of section 9 |
 | `duplicate-id`, `missing-id`, `unknown-layer`, `not-canvas`, `canvas-not-drawn` | layer ids; a canvas needs an `id` and a `draw.<id>` function | give unique ids; add the draw function |
 | `shader-version`, `shader-main`, `shader-no-effect`, `shader-name` | `#version`, `main()`, no `effect()`, a reserved uniform name | write only `vec4 effect(vec2 uv)`; rename the uniform |

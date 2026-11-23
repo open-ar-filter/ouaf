@@ -6,7 +6,8 @@
  * the start of the next frame (`beginFrame`), so a host setting values at 60 Hz or faster never shows a half-applied
  * state. Numbers, colors and vectors can be animated (`transition`, in ms). Parameters with `apply: "reload"` are
  * preloaded in the background through the engine's `ReloadHooks` and swapped in at a frame boundary only once ready,
- * so there is never an empty frame.
+ * so there is never an empty frame. Files of the `asset` parameters a layer shows follow the same path, one parameter
+ * at a time (`AssetParamHooks`): loaded and checked in the background, swapped in at a frame start once ready.
  *
  * Reads for the bindings go through `ParamReader`: parameters are resolved once to an index, then numeric reads are
  * plain typed-array reads, without allocation.
@@ -19,6 +20,7 @@ import {
   isAnimatable,
   sameValue,
   writeComponents,
+  type AssetFile,
   type ParamValue,
   type SelectOptions,
 } from './values.ts'
@@ -69,9 +71,30 @@ export interface ReloadHooks<R = unknown> {
   discard?(prepared: R): void
 }
 
+/**
+ * Engine side of the `asset` parameters a layer shows (spec §9, §15): the file is loaded and checked in the
+ * background, and swapped in at a frame boundary once ready, so the layer never shows an empty frame. Until then the
+ * parameter keeps its previous value; a file that fails the checks leaves it unchanged.
+ */
+export interface AssetParamHooks<V = unknown> {
+  /** Whether parameter `name` goes through the hooks (an asset parameter some layer shows). */
+  handles(name: string): boolean
+  /** Loads and checks `file` for parameter `name`; rejects to refuse it. Should stop early when `signal` is aborted. */
+  load(name: string, file: AssetFile, signal: AbortSignal): Promise<V>
+  /**
+   * Called synchronously at the start of a frame (inside `beginFrame`): from now on parameter `name` shows `loaded`,
+   * or nothing (`null`: the file was removed). The new value is committed after it returns.
+   */
+  swap(name: string, loaded: V | null): void
+  /** Releases a loaded value that will never be swapped in (superseded, or the store disposed). */
+  discard(loaded: V): void
+}
+
 export interface ParamStoreOptions<R = unknown> {
   /** The manifest's `presets`. */
   presets?: TPresets | undefined
+  /** Engine hooks for the `asset` parameters layers show. Without them, a file is committed at the next frame. */
+  assets?: AssetParamHooks | undefined
   /**
    * Engine hooks for `apply: "reload"` parameters. Without them, those parameters are applied at the next frame like
    * `live` ones (there is nothing to preload).
@@ -137,6 +160,14 @@ interface Slot {
   /** Running transition: elapsed and total time (ms); `duration` 0 when none. */
   elapsed: number
   duration: number
+  /** Goes through the asset hooks. */
+  readonly asset: boolean
+  /** File being loaded or loaded (equals `value` when none). */
+  assetTarget: ParamValue
+  /** The running load, aborted when superseded. */
+  assetAbort: AbortController | undefined
+  /** Loaded, swapped in at the next frame. */
+  assetReady: { readonly value: ParamValue; readonly loaded: unknown } | undefined
 }
 
 interface Ready<R> {
@@ -183,6 +214,10 @@ export class ParamStore<R = unknown> implements ParamReader {
   #generation = 0
   #abort: AbortController | undefined
   #ready: Ready<R> | undefined
+  readonly #assets: AssetParamHooks | undefined
+  /** Asset loads in flight, and the slots with a loaded file to swap in. */
+  readonly #assetLoads = new Set<Promise<void>>()
+  #assetsReady = 0
   #disposed = false
 
   /**
@@ -193,6 +228,7 @@ export class ParamStore<R = unknown> implements ParamReader {
     this.#presets = options.presets ?? {}
     this.presetNames = Object.keys(this.#presets)
     this.#reload = options.reload
+    this.#assets = options.assets
     this.#onError = options.onError ?? ((err) => console.error(err))
     const entries = Object.entries(params ?? {})
     this.names = entries.map(([name]) => name)
@@ -221,6 +257,10 @@ export class ParamStore<R = unknown> implements ParamReader {
         reloadTarget: initial,
         elapsed: 0,
         duration: 0,
+        asset: def.type === 'asset' && this.#assets !== undefined && this.#assets.handles(name),
+        assetTarget: initial,
+        assetAbort: undefined,
+        assetReady: undefined,
       })
       offset += size
     }
@@ -364,12 +404,23 @@ export class ParamStore<R = unknown> implements ParamReader {
     return this.#pendingCount > 0
   }
 
+  /** Whether files of `asset` parameters are being loaded, or loaded and waiting for the next frame. */
+  get assetsPending(): boolean {
+    return this.#assetLoads.size > 0 || this.#assetsReady > 0
+  }
+
+  /** Resolves once no file of an `asset` parameter is being loaded (failures go to `onError`). */
+  async assetsSettled(): Promise<void> {
+    while (this.#assetLoads.size > 0) await Promise.all([...this.#assetLoads])
+  }
+
   // Engine side
 
   /**
    * Applies the frame's changes; the engine calls it once at the start of every frame, before evaluating bindings.
    * In order: running transitions advance to `now`, a ready reload is swapped in, queued changes are committed (live
-   * ones at once or as a transition starting now, reload ones handed to the preload), then listeners are notified.
+   * ones at once or as a transition starting now, reload ones handed to the preload, files of asset parameters handed
+   * to their load), loaded files are swapped in, then listeners are notified.
    * Allocation-free when nothing changes.
    *
    * @param now Frame time in ms, on any monotonic clock (only differences matter; a clock going back counts as 0).
@@ -383,6 +434,8 @@ export class ParamStore<R = unknown> implements ParamReader {
     if (this.#animating > 0) changed = this.#advance(dt)
     if (this.#ready) changed = this.#swap(this.#ready) || changed
     if (this.#pendingCount > 0) changed = this.#commitPending() || changed
+    // After the queued changes: a file set since supersedes a loaded one, which is then never shown.
+    if (this.#assetsReady > 0) changed = this.#swapAssets() || changed
     if (changed) this.#revision++
     if (this.#changes.length > 0) this.#notify()
     return changed
@@ -393,6 +446,7 @@ export class ParamStore<R = unknown> implements ParamReader {
     if (this.#disposed) return
     this.#disposed = true
     this.#cancelReload()
+    for (const s of this.#slots) if (s.asset) this.#cancelAsset(s)
     this.#listeners.clear()
     this.#pendingCount = 0
   }
@@ -466,6 +520,10 @@ export class ParamStore<R = unknown> implements ParamReader {
       const s = this.#slots[this.#pending[k]!]!
       s.hasPending = false
       const value = s.pending
+      if (s.asset) {
+        changed = this.#setAsset(s, value) || changed
+        continue
+      }
       if (s.reload) {
         if (!sameValue(value, s.reloadTarget)) {
           s.reloadTarget = value
@@ -562,6 +620,94 @@ export class ParamStore<R = unknown> implements ParamReader {
       this.#changes.push({ name, value, previous })
     }
     return request.changed.length > 0
+  }
+
+  /**
+   * A new file (or none) for an asset parameter: loaded in the background, then swapped in at a frame start
+   * (`#swapAssets`); removing the file needs nothing loaded and is committed now. True when committed now.
+   */
+  #setAsset(s: Slot, value: ParamValue): boolean {
+    if (sameValue(value, s.assetTarget)) return false // already loading, loaded or in use
+    this.#cancelAsset(s)
+    s.assetTarget = value
+    if (sameValue(value, s.value)) return false // back to the file in use
+    if (value === null) return this.#commitAsset(s, null, null)
+    const abort = new AbortController()
+    s.assetAbort = abort
+    let promise: Promise<unknown>
+    try {
+      promise = Promise.resolve(this.#assets!.load(s.name, value as AssetFile, abort.signal))
+    } catch (err) {
+      promise = Promise.reject(err)
+    }
+    const done: Promise<void> = promise
+      .then(
+        (loaded) => {
+          if (abort.signal.aborted || this.#disposed) {
+            this.#discardAsset(loaded)
+            return
+          }
+          s.assetAbort = undefined
+          s.assetReady = { value, loaded }
+          this.#assetsReady++
+        },
+        (err: unknown) => {
+          if (abort.signal.aborted || this.#disposed) return // superseded: the error is expected
+          s.assetAbort = undefined
+          s.assetTarget = s.value
+          this.#onError(err)
+        },
+      )
+      .finally(() => this.#assetLoads.delete(done))
+    this.#assetLoads.add(done)
+    return false
+  }
+
+  #swapAssets(): boolean {
+    let changed = false
+    for (const s of this.#slots) {
+      const ready = s.assetReady
+      if (!ready) continue
+      s.assetReady = undefined
+      this.#assetsReady--
+      changed = this.#commitAsset(s, ready.value, ready.loaded) || changed
+    }
+    return changed
+  }
+
+  #commitAsset(s: Slot, value: ParamValue, loaded: unknown): boolean {
+    try {
+      this.#assets!.swap(s.name, loaded)
+    } catch (err) {
+      if (loaded !== null) this.#discardAsset(loaded)
+      s.assetTarget = s.value
+      this.#onError(err)
+      return false
+    }
+    const previous = s.value
+    s.value = value
+    this.#changes.push({ name: s.name, value, previous })
+    return true
+  }
+
+  /** Stops the load of a file for `s` and drops a loaded one not swapped in yet. */
+  #cancelAsset(s: Slot): void {
+    s.assetAbort?.abort()
+    s.assetAbort = undefined
+    if (s.assetReady) {
+      this.#discardAsset(s.assetReady.loaded)
+      s.assetReady = undefined
+      this.#assetsReady--
+    }
+    s.assetTarget = s.value
+  }
+
+  #discardAsset(loaded: unknown): void {
+    try {
+      this.#assets?.discard(loaded)
+    } catch (err) {
+      this.#onError(err)
+    }
   }
 
   /** Aborts the running preload and discards a prepared result not swapped in yet. */

@@ -180,4 +180,45 @@ describe('script runtime: canvas layers', () => {
     const none = await ask(runtime(), init(`export default { setup(f) { try { f.asset('star') } catch (e) { f.emit('error', e.message) } } }`))
     expect(none.emits).toEqual([['error', 'f.asset("star"): image assets are given to scripts that draw canvas layers only.']])
   })
+
+  it('registers the font assets in the Worker under their asset name before setup (spec §12.6)', async () => {
+    const added: string[] = []
+    class FakeFace {
+      family: string
+      descriptors: unknown
+      bytes: number
+      constructor(family: string, data: ArrayBuffer, descriptors: unknown) {
+        this.family = family
+        this.descriptors = descriptors
+        this.bytes = data.byteLength
+      }
+      async load() {
+        await new Promise((r) => setTimeout(r, 5))
+        if (this.bytes === 0) throw new Error('not a font')
+        return this
+      }
+    }
+    const fonts = { FontFace: FakeFace, set: { add: (face: unknown) => void added.push(JSON.stringify(face)) } }
+    const list = [
+      { name: 'title', data: new ArrayBuffer(8), weight: '700', style: 'normal' },
+      { name: 'broken', data: new ArrayBuffer(0), weight: 'normal', style: 'normal' },
+    ]
+    const done = await ask(runtime({ fonts }), init(`export default { setup(f) { f.emit('setup') }, draw: { dot() {} } }`, { canvases: canvases(0), fonts: list }))
+    // Registered under the asset name, and done before setup ran.
+    expect(added).toEqual([JSON.stringify({ family: 'title', descriptors: { weight: '700', style: 'normal' }, bytes: 8 })])
+    expect(done.emits).toEqual([['setup', undefined]])
+    expect(done.warnings).toEqual(['font "broken" cannot be used in canvases: Error: not a font'])
+  })
+
+  it('without FontFace in the Worker, draws with the platform fonts and warns once', async () => {
+    const list = [
+      { name: 'title', data: new ArrayBuffer(8), weight: '700', style: 'normal' },
+      { name: 'body', data: new ArrayBuffer(8), weight: 'normal', style: 'normal' },
+    ]
+    const conn = runtime({ fonts: { FontFace: undefined, set: undefined } })
+    const done = await ask(conn, init(`export default { setup(f) { f.emit('setup') }, draw: { dot() {} } }`, { canvases: canvases(0), fonts: list }))
+    expect(done.emits).toEqual([['setup', undefined]])
+    expect(done.warnings).toEqual([`this browser has no FontFace in workers: canvas text is drawn with the platform's fonts instead of the filter's ("title", "body")`])
+    expect((await ask(conn, frame(1))).warnings).toEqual([])
+  })
 })

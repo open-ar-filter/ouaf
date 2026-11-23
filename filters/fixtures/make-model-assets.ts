@@ -1,9 +1,10 @@
 /**
- * Rebuilds the synthetic glTF models of the model fixtures (`model-screen/assets/`, `model/assets/`): unit cubes written from code, no
- * third-party model. CC0, like the fixtures.
+ * Rebuilds the synthetic glTF models of the model fixtures (`model-screen/assets/`, `model/assets/`, `content/assets/`):
+ * unit cubes written from code, no third-party model. CC0, like the fixtures.
  *
  * - `red.glb`, `gray.glb`: plain GLB, unlit material (`KHR_materials_unlit`), so the rendered color is known: the
- *   base color factor is linear, the canvas gets its sRGB encoding (linear 0.2158605 → 128).
+ *   base color factor is linear, the canvas gets its sRGB encoding (linear 0.2158605 → 128); also in
+ *   `content/assets/`.
  * - `green-draco.glb`: Draco compression (`KHR_draco_mesh_compression`).
  * - `blue-meshopt.glb`: meshopt compression (`EXT_meshopt_compression`).
  * - `lift.glb`: yellow, with two animations: `lift` (moves up 2 units and back, 2 s) and `spin` (a turn around z, 1 s);
@@ -277,3 +278,5 @@ for (const [name, gltf] of Object.entries(files)) {
 }
 mkdirSync(resolve(here, 'model/assets'), { recursive: true })
 copyFileSync(resolve(out, 'lift.glb'), resolve(here, 'model/assets/lift.glb'))
+mkdirSync(resolve(here, 'content/assets'), { recursive: true })
+for (const name of ['red.glb', 'gray.glb']) copyFileSync(resolve(out, name), resolve(here, `content/assets/${name}`))

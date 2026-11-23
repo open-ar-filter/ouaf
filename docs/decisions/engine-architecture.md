@@ -128,7 +128,8 @@ tracker; each v1 layer type is added there as its own plugin. Built-in plugins a
   pass (and its full-screen copy) for the frame.
 - **object** (`objects`, `overlay` stages): `{ kind: 'object', stage, object, update(frame) }`. `object` is a three.js
   root added to the shared scene; the layer positions its children in `update` (one per face when `faces` selects
-  several) and toggles their visibility. Depth sorting is three.js's.
+  several) and toggles their visibility. It may list its instances' `placements` (object, anchor, face id, offset
+  z) for the draw order below.
 
 `assets(decl)` lists the references the layer needs (`src`, `font`, `lut`, `textures`); the engine resolves them
 (asset name, `assets/…` path, `builtin:…`; remote URLs refused) and preloads them all with the loader registered for
@@ -136,6 +137,17 @@ their kind **before** the filter is activated (spec §10.4). The layer gets them
 are registered per kind by the plugin that owns the format (images and videos: sticker; glTF: model; `.cube`: color;
 fonts: text). The core loads `data` (JSON) and `shader` (text). Built-in resources (`builtin:lut/noir`) are fetched
 from `<assetsBaseUrl>builtins/`, where the host serves the `assets/` folder of `@ouaf/builtins` (`resolveBuiltin`).
+
+**Content properties** (spec §8.1: `sticker.src`, `model.src`, `text.font`, `color.lut`, marked `x-content` in their
+schema) may be bound to a param. The engine preloads their `map` values and, in a filter with a script, every
+declared asset of a kind they show (a script may set any of them; `contentRefs`). A layer compiles each with
+`compileContent` and evaluates it per face: the script's asset, the param's (a `map` value, or the host's file from
+`ctx.hostAssets`), or `undefined` for its own fixed asset or pick. Host files of `asset` params go through
+`HostAssets`: the declared type and size are checked by `setParam`; the content (`sniff` against `accept` and the
+property's kind, `hostFileProblem`) and the loader's checks run when the file is loaded, in the background
+(`ParamStore` asset hooks); the file is swapped in at the start of a frame once ready, and the one it replaces is
+released after that frame. A refused file emits an `InvalidParamError` (reason `content`) on `engine.on('error')`
+and changes nothing; an initial file (`addFilter(src, { params })`) that fails rejects `addFilter`.
 
 `ctx` (`LayerContext`) gives the WebGL renderer, the objects camera, the preloaded assets, the params (read-only:
 resolve a parameter once with `ctx.params.indexOf`, read its animated value each frame with `numberAt`) and `maxFaces`. `frame` (`FrameContext`, valid during the call only) gives `time`, `now`, `dt`, the latest `faces`
@@ -150,6 +162,20 @@ overlay go straight to the canvas, with no render target and no copy (stickers, 
 
 Stack rules: within a stage, stack order then layer order; passes are chained; objects are merged; the background is
 exclusive (last enabled filter wins, with a warning). The per-stage lists are rebuilt only when the stack changes.
+
+**Draw order of transparent objects** (`draw-order.ts`, #150): three.js sorts them back to front by the depth of their
+centre, which swaps objects stacked on one anchor when the head turns (a text 0.02 in front of its bubble, off its
+centre). Spec §7 orders objects of the same face on the same anchor by their offset z, then stack and layer order.
+`DrawOrder` is the renderer's transparent sort (`setTransparentSort`): before each render it sorts the placements
+shown into groups (stage, face id, anchor; the screen is one anchor) by offset z then rank, and gives the members of
+each group of two or more a sort depth, the running minimum of their own depths along the group (a member is never
+drawn before the ones it covers), with the group order as tie-break. Every other object keeps three's depth. Each
+render item thus has one fixed key, which keeps `Array.sort` well defined (a pairwise rule "same anchor: offset,
+else depth" would not be transitive), and each member sits among the other objects at its own depth, or at the depth of a member
+it must cover when it is deeper than that one.
+The meshes of a model's instance share its key and keep their own depth order among themselves. Insertion sort over
+preallocated entries: no per-frame allocation (`draw-order.test.ts`). Opaque objects and the head occluders are not
+affected: they use the depth buffer.
 
 Image buffers hold **sRGB-encoded bytes**, like the camera texture and the canvas: raw shader passes read and write
 them unchanged. Render targets are tagged sRGB with an RGBA8 internal format, and flagged `isXRRenderTarget`: three only
@@ -213,7 +239,16 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
   (`BindableProperty.name`) is wrapped by the bindings compiler (`BindingEnv.overrides`), so `.set()` and
   `.animate()` reach every layer type without code in the layers. Values are per face id or for every instance;
   animations run on a media-time clock. Layer types only need to pass `name` when they compile their properties.
-- **Frame data** (`frame-data.ts`): only what `script.uses` declares, in normalized display space.
+- **Frame data** (`frame-data.ts`): only what `script.uses` declares, in normalized display space, plus
+  `frame.aspect` (the render size's width / height: the displayed image, cover crop included; no pixel sizes, which
+  depend on the device).
+- **Canvas fonts** (#150, spec §12.6): the `font` assets of the manifest (files, or `builtin:font/…` under a name of
+  the filter) are preloaded with the others; the font loader keeps their bytes (`LoadedFont.data`) and the host sends
+  them with `init` (copied, since text layers keep using them). The runtime registers each one in the Worker's
+  `FontFaceSet` (`new FontFace(name, bytes)`, family = the asset name, unquoted: Chromium takes the string as the
+  name itself, quotes included) and awaits them before importing `script.js`, so `setup` and the first draw have
+  them. No fetch: the sandbox CSP is unchanged. Without `FontFace` or `self.fonts` in the Worker, one warning and the
+  platform's fonts.
 - **Seed**: the script's `f.random()` runs in the Worker, seeded with `scriptSeed(filter.seed)`; when the engine
   reseeds the filter (a new source run, #32), the next frame sent carries the new seed.
 - **Models and shaders**: `.play(name)` goes to `ModelLayerInstance.play`; shader uniforms are set as
@@ -225,7 +260,7 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 |---|---|---|
 | Params `apply: "reload"` | applied at the next frame like `live` | engine `ReloadHooks`: preload a new filter instance, swap it in |
 | Face tracker | MediaPipe tasks-vision, main thread | LiteRT.js pipeline in a worker (face-runtime.md, tracking-worker.md) |
-| Script content properties (`src`, `font`, `lut`, `animation`), `.invalidate()`, `f.asset()` | warning, ignored | #26 follow-up, #25 (canvas) |
+| Host files for a video or spritesheet sticker, or a shader texture | images only; `textures` take assets only | a later version (spec §8.1) |
 | Scripts waiting for the answer with file sources (spec §12.1) | never waits | #32 (offline sources) |
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
 | Head occluder (`model.occlusion: "head"`) | an ellipsoid of an average head on the `head` anchor | a head mesh fitted to the landmarks |

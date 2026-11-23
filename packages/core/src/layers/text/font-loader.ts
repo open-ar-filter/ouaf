@@ -16,6 +16,8 @@ export interface LoadedFont {
   readonly style: string
   /** The registered face, removed from the font set on dispose. */
   readonly face: FontFace
+  /** The font file, for the script's canvases (registered in its Worker, spec §12.6). */
+  readonly data: ArrayBuffer
 }
 
 function fontSet(): FontFaceSet | undefined {
@@ -24,6 +26,12 @@ function fontSet(): FontFaceSet | undefined {
 }
 
 let packageFonts = 0
+
+/** The loaded value of a font asset (`fontLoader`). */
+export function isLoadedFont(value: unknown): value is LoadedFont {
+  const f = value as Partial<LoadedFont> | null
+  return typeof f === 'object' && f !== null && typeof f.family === 'string' && typeof f.weight === 'string' && typeof f.style === 'string' && 'face' in f
+}
 
 export const fontLoader: AssetLoader<LoadedFont> = {
   kinds: ['font'],
@@ -40,7 +48,7 @@ export const fontLoader: AssetLoader<LoadedFont> = {
     const face = new FontFace(family, bytes, { weight, style })
     await face.load()
     fonts.add(face)
-    return { family, weight, style, face }
+    return { family, weight, style, face, data: bytes }
   },
   dispose(font) {
     fontSet()?.delete(font.face)
