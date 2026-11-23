@@ -254,6 +254,18 @@ describe('actionable errors', () => {
     expect(str.warnings).toEqual([])
   })
 
+  it('reports data and lottie assets that no layer uses, even with a script (spec §10.2: reserved kinds)', () => {
+    const r = validateManifest({
+      ...base,
+      requires: {},
+      assets: { levels: 'assets/levels.json', anim: 'assets/anim.lottie', star: { emoji: '⭐' }, beep: 'assets/beep.ogg' },
+      layers: [],
+      script: { entry: 'script.js', setup: true },
+    })
+    expect(codes(r.warnings)).toEqual(['unused-asset@/assets/levels', 'unused-asset@/assets/anim'])
+    expect(r.warnings[0]!.hint).toContain('import the JSON in filter.js')
+  })
+
   it('formatIssues produces readable text', () => {
     const r = validateManifest({ ...base, assets: { star: { emoji: '⭐' } }, layers: [{ type: 'sticker', src: 'star', anchor: 'nose' }] })
     const text = formatIssues(r, 'filters/test')

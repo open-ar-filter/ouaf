@@ -129,6 +129,19 @@ describe('ouaf pack: filter.ts → .ouaf', () => {
     expect(unzip(result.zip!)['script.js']).not.toMatch(/\bimport\s*[('"]/)
   })
 
+  it('bundles JSON imported by the script into script.js (spec §10.2: no data asset is needed)', async () => {
+    const dir = await folder({
+      'filter.js': `import levels from './levels.json'\n${filterJs()}`.replace('layers: []', `layers: [], setup(f) { f.state.first = levels.names[0] }`),
+      'levels.json': JSON.stringify({ names: ['easy', 'hard'] }),
+    })
+    const result = await packFolder(dir)
+    expect(result.report.errors).toEqual([])
+    expect(result.files).toEqual(['manifest.json', 'script.js'])
+    const script = unzip(result.zip!)['script.js']!
+    expect(script).toContain('"easy"')
+    expect(script).not.toMatch(/\bimport\b/)
+  })
+
   it('a data-only filter has no script section and no script.js', async () => {
     const dir = await folder({ 'filter.js': filterJs(`layers: [{ type: 'color', saturation: 0 }], state: { n: 1 }`) })
     const result = await packFolder(dir)

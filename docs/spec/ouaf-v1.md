@@ -66,6 +66,10 @@ The data MUST be plain JSON values (objects, lists, strings, finite numbers, boo
 else than `setup`, `update`, `on.<event>` and `draw.<layer>` is an error. Of the `script` section, the author only
 writes `uses` (12.2); `ouaf pack` fills in the rest from the functions.
 
+`filter.js` MAY import other modules and JSON files (`import levels from './levels.json'`): `ouaf pack` bundles them
+into `script.js`. This is how a script gets static data (word lists, levels, tables): a v1 script cannot read a
+`data` asset (10.2).
+
 ## 4. Manifest
 
 | Field | Type | Req. | Description |
@@ -169,7 +173,7 @@ where they are when the layer is shown again. When they start is given by each t
 | `anchor` | `head` | Anchor (section 5). |
 | `offset` | `[0,0,0]` | Offset in the anchor frame, *bindable*. |
 | `rotation` | `[0,0,0]` | Rotation in degrees around the x, y, z axes of the anchor frame, *bindable*. Euler order XYZ: the rotation matrix is Rx · Ry · Rz, so z is applied first, then y, then x. |
-| `scale` | `1` | Size multiplier, a number or `[x, y, z]`, *bindable*; e.g. animated by a script for a "pop" (12.4). It multiplies the layer's size (`size`, `fit`) along the x, y, z axes of the layer (the anchor frame turned by `rotation`): a number scales uniformly, `[1, 1.4, 1]` stretches vertically. A `text` is scaled as drawn, around its anchor point: its wrapping (`maxWidth`) does not change. An instance with a factor of 0 or less is not drawn. |
+| `scale` | `1` | Size multiplier, a number or `[x, y, z]`, *bindable*; e.g. animated by a script for a "pop" (12.4). It multiplies the layer's size (`size`, `fit`) along the x, y, z axes of the layer (the anchor frame turned by `rotation`): a number scales uniformly, `[1, 1.4, 1]` stretches vertically. `scale` is a visual transform of the drawn layer: a `text` is scaled as drawn, around its anchor point, without being laid out or rasterized again (its wrapping, `maxWidth`, does not change), so it is cheap to animate but can blur when enlarged (above about 1.5×). `size` is the font size: the text is laid out at it, and an engine MAY rasterize it again at a matching resolution. An animated "pop" uses `scale`; a lasting larger text uses `size`. An instance with a factor of 0 or less is not drawn. |
 | `orient` | `face` | `face`: follows the head; `screen`: keeps facing the screen (readable text). |
 | `follow` | `auto` | What the anchor **position** follows: `rigid`: the head pose only (stable, ignores expressions); `expression`: the live landmarks (moves with the mouth, brows, cheeks); `auto`: the anchor's default (5.3). Rotation always follows the head. No effect with `anchor: "screen"`. |
 | `faces` | `all` | Faces affected (5.4). |
@@ -371,7 +375,7 @@ is the same on every run; `by: "random"` draws an entry when the face gets its i
 | `font` | WOFF2, WOFF, TTF, OTF | |
 | `audio` | OGG, MP3, WAV, Opus | Sound effects triggered by the script. |
 | `lottie` | `.lottie`, or `.json` with `kind: "lottie"` | Reserved (Lottie plugin). |
-| `data` | JSON | Data read by the script. |
+| `data` | JSON | Reserved: no v1 layer or script API reads it (plugin layers may). JSON a script uses is imported in `filter.js` and bundled into `script.js` by `ouaf pack` (3.1). A later version may add an API to read it (`f.data`), compatibly. |
 
 The kind is inferred from the extension; `kind` overrides it when needed.
 
@@ -397,6 +401,10 @@ vec4 effect(vec2 uv) {
 ```
 
 - **Fragment only**, GLSL ES 3.0, **without** a `#version` directive or `main()`: the engine provides the wrapper.
+- **Output.** The engine's `main()` mixes the color returned by `effect(uv)` over `ouaf_sample(uv)` by its alpha
+  (clamped to 0–1) times the layer's `opacity`, and, on the `face` stage, the soft edge of the face mesh:
+  `mix(ouaf_sample(uv).rgb, c.rgb, a)`. The result is opaque: returning `vec4(c.rgb, 0.0)` leaves the image as it
+  is, and an `opacity` of 0.5 blends the effect halfway.
 - Each `uniforms` entry becomes a uniform of the same name (number → `float`, boolean → `bool`, `vec2`, `vec3`,
   color → `vec4`); each `textures` entry a `sampler2D` of the same name. These names MUST therefore be GLSL
   identifiers (letters, digits and `_`, not starting with a digit) that are not GLSL keywords or built-in names
@@ -503,12 +511,20 @@ export default defineFilter({
 | `f.random()` | Number in [0, 1) from the filter's seeded generator (12.5). |
 | `f.after(ms, fn)`, `f.every(ms, fn)` | Timers in **media time**: `fn(f)` runs at the first frame whose time reaches the deadline. They return `{ cancel() }` and are all cancelled when the filter is deactivated. |
 
+Static data (word lists, levels, tables) is imported in `filter.js` and bundled by `ouaf pack` (3.1); v1 has no API to
+read a `data` asset (10.2).
+
 **Layer handles.**
 
 - `.set(props)`: sets properties. Settable: every *bindable* property, plus the content properties `text`, `color`,
   `font`, `src` (a declared asset), `lut`, `animation`, `size` and `scale`. Structural properties (`type`, `id`,
   `anchor`, `faces`, `stage`, `kind`, `width`, `height`) cannot be set. A set value **replaces** the property's
   binding, if any, until the script sets the property to `null`, which restores the manifest value (fixed or bound).
+- A shader layer's `uniforms` are set **one by one**: `.set({ uniforms: { amount: 2 } })` only changes `amount`,
+  and `{ uniforms: { amount: null } }` only restores `amount`'s manifest value (fixed or bound). A value has the
+  uniform's type, given by its manifest value: a number (`float`), a boolean (`bool`), `[x, y]` or `[x, y, z]`
+  (`vec2`, `vec3`), a color (`vec4`); a script cannot add a uniform nor change its type. `.animate()` animates
+  number, vector and color uniforms (`{ uniforms: { amount: 4 } }`).
 - `.animate(props, { duration, easing?, delay?, repeat? })`: animates numbers, vectors and colors, played by the
   engine at the frame rate (no per-frame message). A value is the target, animated from the current value: a number,
   a color or a vector (`{ scale: [1, 1.4, 1] }` stretches vertically). Keyframes are written `{ keyframes: [...] }`:

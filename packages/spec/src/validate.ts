@@ -556,6 +556,9 @@ function shaderPath(ctx: Ctx, ref: string): string | undefined {
   return typeof src === 'string' && src.startsWith('assets/') ? src : undefined
 }
 
+/** Asset kinds a script can use without a layer referencing them (`f.asset`, `f.sound`, spec §12.4); unknown too. */
+const SCRIPT_READABLE_KINDS = new Set<string | undefined>(['image', 'spritesheet', 'video', 'audio', undefined])
+
 function checkRequiresAndAssets(ctx: Ctx) {
   const req = ctx.manifest.requires
   for (const k of ['hands', 'segmentation', 'pose', 'audio'] as const) {
@@ -581,9 +584,11 @@ function checkRequiresAndAssets(ctx: Ctx) {
   const assets = (ctx.manifest.assets ?? {}) as Record<string, TAssetEntry>
   for (const [name, entry] of Object.entries(assets)) {
     const kind = assetKind(entry)
-    // Assets used only by the script (sounds, canvas images) cannot be detected here.
-    if (!ctx.usedAssets.has(name) && (!ctx.manifest.script || kind === 'model' || kind === 'lut' || kind === 'shader' || kind === 'font')) {
-      warn(ctx, 'unused-asset', `/assets/${name}`, `Asset "${name}" is not referenced by any layer: it makes the package heavier.`)
+    // Assets used only by the script (sounds, canvas images) cannot be detected here. The other kinds cannot be read
+    // by a script: `data` and `lottie` are reserved for later versions (spec §10.2), used only by plugin layers.
+    if (!ctx.usedAssets.has(name) && (!ctx.manifest.script || !SCRIPT_READABLE_KINDS.has(kind))) {
+      warn(ctx, 'unused-asset', `/assets/${name}`, `Asset "${name}" is not referenced by any layer: it makes the package heavier.`,
+        kind === 'data' ? 'A script does not read data assets: import the JSON in filter.js, ouaf pack bundles it into script.js (spec §10.2).' : undefined)
     }
     if (kind === undefined) {
       warn(ctx, 'unknown-kind', `/assets/${name}`, `Could not infer the kind of asset "${name}" from its extension.`, 'Set "kind", e.g. { "src": "…", "kind": "lottie" }.')
