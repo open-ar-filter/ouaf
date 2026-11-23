@@ -11,7 +11,7 @@
  * run gives the same faces).
  */
 import { createFaceFrame, type FaceFrame, type TrackerInput } from '../face.ts'
-import type { FaceTrackerImpl, FrameTracker, LandmarkModifier, TrackerConfig, TrackerEnv } from './plugin.ts'
+import type { BackendInfo, FaceTrackerImpl, FrameTracker, LandmarkModifier, TrackerConfig, TrackerEnv } from './plugin.ts'
 
 /** Sliding window of the tracking rate (spec §16.1: "a few seconds"). */
 export const TRACKING_RATE_WINDOW_MS = 3000
@@ -20,6 +20,10 @@ const RATE_CAPACITY = 256
 export interface TrackingNeeds {
   face: boolean
   blendshapes: boolean
+  /** Faces to look for (spec §16.2, extra faces dropped); default and at most: the engine's `maxFaces`. */
+  maxFaces?: number
+  /** Analysis resolution relative to the frame (spec §16.2); default 1. */
+  analysisScale?: number
 }
 
 export class TrackingHub {
@@ -42,11 +46,19 @@ export class TrackingHub {
   #configVersion = 0
   #needed = false
   #disposed = false
+  #benchmarked = false
   /** Completion times of recent results (ring buffer). */
   #times = new Float64Array(RATE_CAPACITY)
+  /** Time from submit to completion of the same results (ms). */
+  #durations = new Float64Array(RATE_CAPACITY)
+  /** Faces found by the same results. */
+  #faceCounts = new Uint8Array(RATE_CAPACITY)
+  #submittedAt = 0
   #timesStart = 0
   #timesCount = 0
   #lastNow = 0
+  /** Results completed before this time are left out of the rate (`restartRate`). */
+  #rateFrom = -Infinity
   #results = 0
   #onError: (error: unknown) => void
   #onResult = (): void => {
@@ -71,7 +83,7 @@ export class TrackingHub {
     this.#env = options.env
     this.#modifiers = options.modifiers
     this.#onError = options.onError
-    this.#config = { maxFaces: options.maxFaces, blendshapes: false }
+    this.#config = { maxFaces: options.maxFaces, blendshapes: false, analysisScale: 1 }
     this.#front = createFaceFrame(options.maxFaces)
     this.#back = createFaceFrame(options.maxFaces)
     this.#empty = createFaceFrame(1)
@@ -89,6 +101,16 @@ export class TrackingHub {
 
   get description(): string | undefined {
     return this.#tracker?.description
+  }
+
+  /** The tracker's backend and how it was chosen (spec §16.4), when it says. */
+  get backend(): BackendInfo | undefined {
+    return this.#tracker?.backend
+  }
+
+  /** The tracker is measuring its backends: the tracking rate is not representative meanwhile. */
+  get measuring(): boolean {
+    return this.#tracker?.measuring ?? false
   }
 
   /** Total completed results since the tracker started (`clear` counts as one: an empty result). */
@@ -109,9 +131,17 @@ export class TrackingHub {
     return this.#needed && !this.#tracker && this.#starting ? this.#starting : undefined
   }
 
-  /** Tracking rate in Hz over the sliding window ending at the last `submit` (spec §16.1). */
+  /** The configuration the tracker runs with (or will, once started). */
+  get config(): Readonly<TrackerConfig> {
+    return this.#config
+  }
+
+  /**
+   * Tracking rate in Hz over the sliding window ending at the last `submit` (spec §16.1), or since the last
+   * `restartRate` when that is more recent.
+   */
   get rateHz(): number {
-    const cutoff = this.#lastNow - TRACKING_RATE_WINDOW_MS
+    const cutoff = Math.max(this.#lastNow - TRACKING_RATE_WINDOW_MS, this.#rateFrom)
     let n = 0
     let first = Infinity
     for (let i = 0; i < this.#timesCount; i++) {
@@ -127,13 +157,74 @@ export class TrackingHub {
     return ((n - 1) * 1000) / span
   }
 
+  /**
+   * Mean time from a frame's submission to its result (ms) over the same window as `rateHz`: what one result costs,
+   * whatever the frame rate (NaN before the first result). The tracking rate cannot exceed `1000 / pipelineMs`.
+   */
+  get pipelineMs(): number {
+    const cutoff = Math.max(this.#lastNow - TRACKING_RATE_WINDOW_MS, this.#rateFrom)
+    let n = 0
+    let sum = 0
+    for (let i = 0; i < this.#timesCount; i++) {
+      const k = (this.#timesStart + i) % RATE_CAPACITY
+      if (this.#times[k]! >= cutoff) {
+        n++
+        sum += this.#durations[k]!
+      }
+    }
+    return n > 0 ? sum / n : Number.NaN
+  }
+
+  /**
+   * Tracking rate (Hz) and pipeline time (ms) over the same window, from the results that found at least `faces`
+   * faces only: a tracker is much faster without a face to analyse (MediaPipe then runs only its detector), so these
+   * say what tracking costs with the faces. The rate is 1000 / the mean interval before such results. NaN without
+   * at least two such results. Writes `[rate, pipeline]` into `out`.
+   */
+  rateWithFaces(faces: number, out: Float64Array): void {
+    const cutoff = Math.max(this.#lastNow - TRACKING_RATE_WINDOW_MS, this.#rateFrom)
+    let intervals = 0
+    let gaps = 0
+    let n = 0
+    let sum = 0
+    let previous = Number.NaN
+    for (let i = 0; i < this.#timesCount; i++) {
+      const k = (this.#timesStart + i) % RATE_CAPACITY
+      const t = this.#times[k]!
+      if (t < cutoff) continue
+      if (this.#faceCounts[k]! >= faces) {
+        n++
+        sum += this.#durations[k]!
+        if (!Number.isNaN(previous)) {
+          intervals++
+          gaps += t - previous
+        }
+      }
+      previous = t
+    }
+    out[0] = intervals > 0 && gaps > 0 ? (1000 * intervals) / gaps : Number.NaN
+    out[1] = n > 0 ? sum / n : Number.NaN
+  }
+
+  /**
+   * Restarts the rate window at `now` (same clock as `submit`): the rate then only counts the results completed
+   * since, e.g. after the configuration changed (spec §16.2) or after a pause of frames.
+   */
+  restartRate(now: number): void {
+    this.#rateFrom = now
+  }
+
   /** Starts, reconfigures or stops tracking for the union of the active filters' needs. */
   async setNeeds(needs: TrackingNeeds): Promise<void> {
     if (this.#disposed) return
     this.#needed = needs.face
     if (!needs.face) return // the tracker is kept warm: turning a face filter back on is instant
-    const config: TrackerConfig = { maxFaces: this.maxFaces, blendshapes: needs.blendshapes }
-    const changed = config.blendshapes !== this.#config.blendshapes
+    const config: TrackerConfig = {
+      maxFaces: Math.max(1, Math.min(this.maxFaces, Math.trunc(needs.maxFaces ?? this.maxFaces))),
+      blendshapes: needs.blendshapes,
+      analysisScale: Math.max(0.1, Math.min(1, needs.analysisScale ?? 1)),
+    }
+    const changed = !sameConfig(config, this.#config)
     this.#config = config
     if (this.#tracker) {
       if (changed) {
@@ -153,7 +244,7 @@ export class TrackingHub {
       this.#tracker = tracker
       this.#configVersion++
       // The needs may have changed while it started.
-      if (this.#config.blendshapes !== config.blendshapes) tracker.configure(this.#config)
+      if (!sameConfig(this.#config, config)) tracker.configure(this.#config)
       return tracker
     })
     try {
@@ -169,8 +260,14 @@ export class TrackingHub {
     this.#lastNow = now
     const tracker = this.#tracker
     if (!this.#needed || !tracker || this.#busy) return
+    // Live frames: the tracker may measure its backends on them (spec §16.4), once.
+    if (!this.#benchmarked) {
+      this.#benchmarked = true
+      tracker.benchmark?.()
+    }
     this.#busy = true
     this.#submitted = this.#generation
+    this.#submittedAt = performance.now()
     try {
       const pending = tracker.track(input, now, mediaTime, this.#back)
       if (pending) this.#inflight = pending.then(this.#onResult, this.#onFailure)
@@ -194,6 +291,7 @@ export class TrackingHub {
     if (!this.#needed || !tracker || this.#disposed) return
     this.#busy = true
     this.#submitted = this.#generation
+    this.#submittedAt = performance.now()
     try {
       const pending = still && tracker.trackImage ? tracker.trackImage(input, mediaTime, this.#back) : tracker.track(input, now, mediaTime, this.#back)
       if (pending) {
@@ -223,6 +321,8 @@ export class TrackingHub {
     this.#generation++
     this.#front.count = 0
     this.#results++
+    // A benchmark aborted by a file source may run on the next live one (`FrameTracker.benchmark` runs it once).
+    this.#benchmarked = false
   }
 
   dispose(): void {
@@ -242,11 +342,20 @@ export class TrackingHub {
     this.#results++
     const t = performance.now()
     if (this.#timesCount < RATE_CAPACITY) {
-      this.#times[(this.#timesStart + this.#timesCount) % RATE_CAPACITY] = t
+      const k = (this.#timesStart + this.#timesCount) % RATE_CAPACITY
+      this.#times[k] = t
+      this.#durations[k] = t - this.#submittedAt
+      this.#faceCounts[k] = Math.min(255, done.count)
       this.#timesCount++
     } else {
       this.#times[this.#timesStart] = t
+      this.#durations[this.#timesStart] = t - this.#submittedAt
+      this.#faceCounts[this.#timesStart] = Math.min(255, done.count)
       this.#timesStart = (this.#timesStart + 1) % RATE_CAPACITY
     }
   }
+}
+
+function sameConfig(a: TrackerConfig, b: TrackerConfig): boolean {
+  return a.maxFaces === b.maxFaces && a.blendshapes === b.blendshapes && a.analysisScale === b.analysisScale
 }

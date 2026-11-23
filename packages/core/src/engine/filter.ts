@@ -52,6 +52,11 @@ export interface FilterHandle {
   readonly warnings: readonly string[]
   /** Disabled filters stay loaded but are neither drawn nor tracked for. */
   enabled: boolean
+  /**
+   * Hidden by the engine because face tracking is too slow on this device (spec §16.3; `engine.on('performance')`):
+   * not drawn, no events, no script calls, until the tracking rate recovers. Only filters that use the face.
+   */
+  readonly suspended: boolean
   /** Position in the stack (0 = drawn first within each stage). */
   readonly index: number
   /** Committed parameter values (the targets of running transitions), as a fresh object. */
@@ -142,6 +147,8 @@ export class FilterInstance {
   /** Needs face tracking / blendshapes (spec §4.1, §16.2). */
   readonly needsFace: boolean
   readonly needsBlendshapes: boolean
+  /** `requires.blendshapes`: the device governor must not drop them (spec §4.1, §16.2). */
+  readonly requiresBlendshapes: boolean
   readonly events: Emitter<FilterEvents>
   /** Expression detectors with the filter's tuning (spec §13); only for face filters. */
   readonly expressions: ExpressionEventDetector | undefined
@@ -158,6 +165,11 @@ export class FilterInstance {
   /** Set by the engine while the script runs. */
   host: ScriptHost | undefined
   enabled = true
+  /**
+   * Hidden by the device governor (spec §16.3): the tracking rate is below the floor. A suspended filter is neither
+   * drawn nor given events or script calls, but face tracking keeps running for it.
+   */
+  suspended = false
   disposed = false
 
   constructor(init: {
@@ -185,7 +197,8 @@ export class FilterInstance {
     this.hostAssets = init.hostAssets
     this.warnings = init.warnings
     this.needsFace = !!init.manifest.requires.face
-    this.needsBlendshapes = this.needsFace && (!!init.manifest.requires.blendshapes || usesBlendshapes(init.manifest))
+    this.requiresBlendshapes = this.needsFace && !!init.manifest.requires.blendshapes
+    this.needsBlendshapes = this.requiresBlendshapes || (this.needsFace && usesBlendshapes(init.manifest))
     this.authorShader = init.layers.some((l) => l.instance.authorShader === true)
     this.events = new Emitter(init.onListenerError)
     this.expressions = this.needsFace ? new ExpressionEventDetector({ maxFaces: init.maxFaces, events: init.manifest.events }) : undefined
@@ -195,6 +208,11 @@ export class FilterInstance {
     this.script = init.script
     // Changes are committed by `params.beginFrame`, at the start of a frame (spec §9).
     this.params.onChange((change) => this.events.emit('paramChange', change))
+  }
+
+  /** Drawn and run this frame: enabled and not suspended by the device governor. */
+  get active(): boolean {
+    return this.enabled && !this.suspended
   }
 
   /** Seed of the current activation. */
@@ -474,6 +492,9 @@ export function createHandle(
       if (filter.enabled === value) return
       filter.enabled = value
       stack.changed()
+    },
+    get suspended() {
+      return filter.suspended
     },
     get index() {
       return stack.indexOf(filter)

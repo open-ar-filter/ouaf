@@ -2,10 +2,11 @@
  * Engine page (`/engine.html`): drives `@ouaf/core`'s public API, the way a host would. Used by the browser tests
  * (`window.ouaf`) and by the layer-type work as a harness, until the playground app (#36) is rebuilt on the engine.
  */
-import { CameraSource, VideoFileSource, createEngine, memorySource, type Engine, type EngineStats, type VideoSource } from '@ouaf/core'
+import { BACKEND_STORE_PREFIX, CameraSource, VideoFileSource, createEngine, memorySource, throttlePlugin, type Engine, type EngineStats, type PerformanceEvent, type TrackingThrottle, type VideoSource } from '@ouaf/core'
 import * as core from '@ouaf/core'
 import { renderDemos } from './demos.ts'
 import { renderParams } from './params-panel.ts'
+import { createPerfPanel } from './perf-panel.ts'
 import { playgroundPlugin } from './test-plugin.ts'
 
 declare global {
@@ -20,6 +21,10 @@ declare global {
       warnings: string[]
       errors: string[]
       events: Array<{ name: string; faceId: number; side: string | null }>
+      /** `performance` events (spec §16.3), oldest first. */
+      performance: PerformanceEvent[]
+      /** Simulated tracking time (`?throttle=<ms>`); set `ms` to change it live. */
+      throttle: TrackingThrottle
     }
   }
 }
@@ -35,8 +40,55 @@ const video = document.getElementById('video') as HTMLVideoElement
 const log = document.getElementById('log') as HTMLPreElement
 const startButton = document.getElementById('start') as HTMLButtonElement
 
-const engine = createEngine({ canvas, assetsBaseUrl: new URL('./', document.baseURI).href, maxFaces: MAX_FACES, plugins: [playgroundPlugin], ...(SEED === undefined ? {} : { seed: SEED }) })
-const hook = { engine, core, memorySource, stats: undefined as EngineStats | undefined, frames: 0, warnings: [] as string[], errors: [] as string[], events: [] as Array<{ name: string; faceId: number; side: string | null }> }
+/**
+ * `?throttle=<ms>`: simulated tracking time per result (slow device, #90), changeable live in the panel. The
+ * throttled tracker is always installed (0 = off), so that the panel can turn it on without reloading.
+ */
+const throttle: TrackingThrottle = { ms: Math.max(0, Number(params.get('throttle')) || 0) }
+/**
+ * Device adaptation (spec §16): `?adapt=1` / `?adapt=0`. Default: on for the camera or with `?throttle`, off for the
+ * test clips otherwise, so that the browser tests do not depend on the speed of the machine.
+ */
+const ADAPT = params.has('adapt') ? params.get('adapt') !== '0' : !SOURCE || throttle.ms > 0
+/** `?signals`: compares the expression signals from blendshapes and from the geometry, live. */
+const SIGNALS = params.has('signals')
+/**
+ * `?backend=CPU|GPU` forces the tracker's backend; `?backend=measure` forgets the backend measured before on this
+ * device (spec §16.4), so that the benchmark runs again. Default: the cached choice, else measured.
+ */
+const BACKEND = params.get('backend') ?? undefined
+if (BACKEND === 'measure') {
+  try {
+    for (const key of Object.keys(localStorage)) if (key.startsWith(BACKEND_STORE_PREFIX)) localStorage.removeItem(key)
+  } catch {
+    // No storage: nothing was cached.
+  }
+}
+const perf = createPerfPanel(throttle, { signals: SIGNALS })
+log.after(perf.element)
+
+const engine = createEngine({
+  canvas,
+  assetsBaseUrl: new URL('./', document.baseURI).href,
+  maxFaces: MAX_FACES,
+  plugins: [playgroundPlugin, throttlePlugin(throttle), ...(SIGNALS ? [perf.signalsPlugin] : [])],
+  adaptation: ADAPT,
+  ...(BACKEND && BACKEND !== 'measure' ? { trackerBackend: BACKEND } : {}),
+  ...(SEED === undefined ? {} : { seed: SEED }),
+})
+perf.attach(engine)
+const hook = {
+  engine,
+  core,
+  memorySource,
+  stats: undefined as EngineStats | undefined,
+  frames: 0,
+  warnings: [] as string[],
+  errors: [] as string[],
+  events: [] as Array<{ name: string; faceId: number; side: string | null }>,
+  performance: perf.events,
+  throttle,
+}
 window.ouaf = hook
 
 const lines = new Map<string, string>()
@@ -84,6 +136,7 @@ async function addFilter(src: string | File, label: string): Promise<void> {
   // Expression events delivered to the filter (spec §13): counts and the last one.
   const counts = new Map<string, number>()
   handle.on('expression', (e) => {
+    perf.expression(e)
     counts.set(e.name, (counts.get(e.name) ?? 0) + 1)
     hook.events.push(e)
     const last = `${e.name}${e.side ? ` (${e.side})` : ''}, face ${e.faceId}`

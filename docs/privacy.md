@@ -11,6 +11,14 @@ There is one exception, coming from a third-party dependency, that hosts embeddi
 (a `Blob`, a `MediaStream`). The engine stores and uploads nothing: what happens to them is the host's decision. The
 engine never opens the microphone; a recording has sound only when the host passes its own audio tracks.
 
+## Stored on the device
+
+The engine stores one thing in the page's `localStorage`: the face tracker's backend measured on this device (spec
+§16.4), so that the short benchmark of the first start is not run again. Key `ouaf:tracker-backend:<engine
+version>:<tracker>`, value `{ backend, measuredMs, userAgent, at }` (the chosen backend, the time per frame of each
+backend measured, the browser it was measured with, the date). It is never sent anywhere. Hosts can force the backend
+instead (`EngineOptions.trackerBackend`), and the entry disappears with the site's data.
+
 ## Filter scripts
 
 A filter's script (spec §12) is untrusted code: the engine runs it in a sandbox that cannot reach the network, the

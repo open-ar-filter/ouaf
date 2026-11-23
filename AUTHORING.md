@@ -398,7 +398,8 @@ Expression events fire **once** at the start of a gesture, with hysteresis (§13
 
 Tune them in the manifest: `"events": { "smile": { "threshold": 0.6, "minDurationMs": 150 } }` (`threshold` 0–1,
 only for events that have one; `minDurationMs` 0–5000). Face events need `requires.face`. They keep working when the
-engine drops blendshapes. `pairContact` / `pairSeparate` are specified but not emitted yet (section 14).
+engine drops blendshapes. Blinks and winks also use the shape of the eyelids, so a person whose `eyeBlink` score stays
+low still blinks; keep the default blink threshold unless you have measured otherwise. `pairContact` / `pairSeparate` are specified but not emitted yet (section 14).
 
 ## 10. Scripts
 
@@ -514,6 +515,12 @@ Performance: prefer bindings to `update`, keep canvases small and slow, few vide
 `invalidate()`, GLB with compressed meshes, and `requires.blendshapes` only when truly needed (it prevents the
 engine from dropping them on slow devices).
 
+On a slow device (§16), the engine first drops blendshapes (`face.blendshapes.*` bindings take their `default`,
+scripts get none, expression events still fire, from the landmarks), then the faces beyond those tracked, then the
+analysis resolution; below 12 Hz of tracking for 3 s it hides face filters and shows the plain camera until the rate
+is back above 14 Hz. Give blendshape bindings a sensible `default`. To see it on a desktop, open
+`/engine.html?throttle=120&filter=…` (simulated slow tracking, also a slider in the panel).
+
 ## 13. Privacy and security
 
 - A filter cannot send data anywhere: no network in scripts, no remote assets, SVGs without scripts (§15).
@@ -528,7 +535,8 @@ engine from dropping them on slow devices).
 Specified, or reserved, but not working in the reference engine today. Do not rely on them:
 
 - `pairContact` / `pairSeparate` and `frame.pairs` (`uses: ["pairs"]`): no detector yet, `frame.pairs` is empty (#116).
-- Adaptive quality: dropping capabilities on slow devices, hiding below 15 Hz, `performance` events (§16; #34, #90).
+- Lowering the rendering resolution when the frame budget is exceeded (#34): the engine only adapts face tracking
+  (§16) and warns about heavy stacks.
 - A host file as a video or spritesheet sticker (only images), or as a shader texture: `textures` take assets only.
 - Starting a sticker with `autoplay: false` from a script; `f.sound()` and audio assets; `lottie` and `data` assets
   (reserved: import JSON in `filter.ts`, section 6).

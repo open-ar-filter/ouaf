@@ -1,0 +1,13 @@
+{
+  "ouaf": "1",
+  "id": "blendshapes-required",
+  "name": "Blendshapes required (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Device adaptation fixture (#90): a red tint bound to jawOpen, with requires.blendshapes, so the governor never drops blendshapes and hides the filter instead.",
+  "requires": { "face": true, "blendshapes": true, "plugins": ["playground@^1"] },
+  "layers": [
+    { "type": "playground:dot", "anchor": "noseTip", "color": "#ff00ff", "size": 0.5 },
+    { "type": "playground:tint", "color": "#ff2020", "amount": { "bind": "face.blendshapes.jawOpen", "range": [0, 0.4], "to": [0.5, 1], "default": 0 } }
+  ]
+}

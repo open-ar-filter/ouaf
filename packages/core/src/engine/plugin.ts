@@ -42,9 +42,22 @@ export interface PluginApi {
 
 /** What the engine tells a tracker it needs (the union of the active filters' `requires`, spec §7). */
 export interface TrackerConfig {
+  /**
+   * Faces to look for: the engine's `maxFaces`, or fewer while the governor has dropped the extra faces (spec §16.2:
+   * the number of faces tracked when they were dropped).
+   */
   maxFaces: number
-  /** Blendshapes are needed by at least one active filter (and not dropped by the governor, spec §16.2). */
+  /**
+   * Blendshapes are wanted: a face filter is enabled (expression events read them, spec §13) and the governor has not
+   * dropped them (§16.2). When false the tracker may skip them; the engine ignores them either way.
+   */
   blendshapes: boolean
+  /**
+   * Resolution of the image to analyse, relative to the frame: 1, or less while the governor has dropped the analysis
+   * resolution (spec §16.2). Landmarks stay normalized to the frame, and `FaceFrame.width` / `height` keep the
+   * frame's size.
+   */
+  analysisScale: number
 }
 
 /**
@@ -73,7 +86,27 @@ export interface FrameTracker {
   reset?(): void | Promise<void>
   /** Applies a new configuration (blendshapes on/off, fewer faces); takes effect on a later `track`. */
   configure(config: TrackerConfig): void
+  /**
+   * Inference backend in use (`CPU`, `GPU`…) and how it was chosen (spec §16.4): measured now, read from the local
+   * cache, forced by the host, or the only one available. Optional.
+   */
+  readonly backend?: BackendInfo
+  /**
+   * Called once, on the first frame of a live source, when the tracker may measure its backends on real frames
+   * (spec §16.4: never with file sources, whose results must not depend on timing). Optional.
+   */
+  benchmark?(): void
+  /** A benchmark is running: results come from several backends and the tracking rate is not judged meanwhile. */
+  readonly measuring?: boolean
   dispose(): void
+}
+
+/** The backend of a tracker and why (spec §16.4). */
+export interface BackendInfo {
+  readonly name: string
+  readonly source: 'measured' | 'cached' | 'forced' | 'only' | 'pending'
+  /** Median time per result of each backend measured (ms), when measured (now or from the cache). */
+  readonly measuredMs?: Readonly<Record<string, number>>
 }
 
 export interface FaceTrackerImpl {
@@ -91,6 +124,14 @@ export interface FaceTrackerImpl {
 export interface TrackerEnv {
   readonly assetsBaseUrl: string
   warn(message: string, cause?: unknown): void
+  /** Backend forced by the host (`EngineOptions.trackerBackend`); undefined: the tracker chooses (spec §16.4). */
+  readonly backend?: string
+  /**
+   * Local storage for the tracker's measured backend choice (spec §16.4): one value per tracker id and engine version,
+   * kept on the device (`localStorage` when available), never transmitted (§15). `get` gives undefined when nothing
+   * is stored or storage is unavailable.
+   */
+  readonly store?: { get(): unknown; set(value: unknown): void }
 }
 
 /** Modifies landmarks after tracking, before anchors and layers (e.g. caricature). Must not allocate. */

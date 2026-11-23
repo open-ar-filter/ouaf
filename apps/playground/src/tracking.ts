@@ -76,6 +76,13 @@ function withStatus(tracker: FaceTracker, row: HTMLElement): FaceTracker {
     },
     setRunningMode: (mode) => tracker.setRunningMode(mode),
     resetState: () => tracker.resetState(),
+    get numFaces() {
+      return tracker.numFaces
+    },
+    get blendshapes() {
+      return tracker.blendshapes
+    },
+    reconfigure: (options) => tracker.reconfigure(options),
     dispose() {
       tracker.dispose()
     },

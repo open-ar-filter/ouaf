@@ -28,6 +28,10 @@
       <code>&amp;filter=&lt;url&gt;</code> (repeatable) loads filter folders, e.g. <code>/filters/&lt;id&gt;/</code>, or
       <code>.ouaf</code> packages, e.g. <code>/filters/&lt;id&gt;.ouaf</code>,
       <code>&amp;maxFaces=N</code>, <code>&amp;seed=N</code>, <code>&amp;autostart</code>.
+      Device adaptation: <code>&amp;throttle=&lt;ms&gt;</code> simulates slow tracking (also in the panel),
+      <code>&amp;adapt=1|0</code> turns the governor on or off (default: on for the camera or with a throttle),
+      <code>&amp;signals</code> compares the expression signals from blendshapes and from the geometry,
+      <code>&amp;backend=CPU|GPU</code> forces the tracker backend, <code>&amp;backend=measure</code> measures it again.
       Open a <code>.ouaf</code> file below, or drop it on the page.
     </p>
     <details id="demos">
