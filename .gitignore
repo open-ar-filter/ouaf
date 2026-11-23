@@ -9,5 +9,5 @@ dist/
 /test-results/
 /playwright-report/
 /packages/builtins/.work/
-# Filters unpacked for preview in the playground (AUTHORING.md section 2)
-/filters/*.preview/
+# Packages built from filters/ with `ouaf pack` (served by the playground, AUTHORING.md section 2)
+/filters/**/*.ouaf

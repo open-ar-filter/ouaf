@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { packageSource } from '../../core/src/engine/package.ts'
 import { scriptRuntime, type WireDone } from '../../core/src/script/runtime.ts'
 import { ask, fakeScope, frame, init } from '../../core/test/script-helpers.ts'
 import { run } from '../src/cli.ts'
@@ -106,6 +107,17 @@ describe('ouaf pack: filter.ts → .ouaf', () => {
     expect(packed[1]!.commands).toEqual([['set', 0, 1, { text: '😄 × 1' }]])
     expect(packed[2]!.emits).toEqual([['smiles', 2]])
     expect(packed[3]!.commands).toEqual([['set', 0, null, { text: null }]])
+  })
+
+  it('round trip: the engine reads the package (packageSource of @ouaf/core) as it was written', async () => {
+    const result = await packFolder(authoring)
+    const source = await packageSource(result.zip!, { label: 'smile-counter.ouaf' })
+    const files = unzip(result.zip!)
+    expect(await source.manifest()).toEqual(JSON.parse(files['manifest.json']!))
+    expect(await (await source.file('script.js')).text()).toBe(files['script.js'])
+    const star = await source.file('assets/star.png')
+    expect(star.type).toBe('image/png')
+    expect(Buffer.from(await star.arrayBuffer())).toEqual(await readFile(join(authoring, 'assets/star.png')))
   })
 
   it('is deterministic: the same folder gives the same bytes, whatever the file times', async () => {

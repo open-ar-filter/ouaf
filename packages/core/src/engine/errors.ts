@@ -2,7 +2,7 @@
  * Errors raised by the engine's public API. Every error has a stable `code` (for hosts and tests) and an actionable
  * message; nothing is fixed silently (spec §9: invalid values are rejected, never corrected).
  */
-import type { Issue } from '@ouaf/spec'
+import type { Issue, PackageProblemCode, ZipErrorCode } from '@ouaf/spec'
 import { ParamError, type ParamErrorCode } from '../params/errors.ts'
 
 export type OuafErrorCode =
@@ -15,6 +15,8 @@ export type OuafErrorCode =
   | 'asset'
   | 'invalid-param'
   | 'filter-load'
+  /** A `.ouaf` package breaks a package rule (spec §3): see `PackageError.reason`. */
+  | 'invalid-package'
   | 'shader'
   | 'gpu-context-lost'
   | 'disposed'
@@ -48,6 +50,34 @@ export class InvalidManifestError extends OuafError {
   constructor(source: string, issues: readonly Issue[], message: string) {
     super('invalid-manifest', message)
     this.issues = issues
+    this.source = source
+  }
+}
+
+/**
+ * Why a `.ouaf` package is refused: the issue codes of `ouaf validate` for the same problems (`zip-invalid`: not a
+ * zip, or a corrupt entry; `zip-unsupported`: ZIP64, encryption, a compression method other than store and deflate).
+ */
+export type PackageErrorReason = ZipErrorCode | PackageProblemCode | 'missing-manifest'
+
+/**
+ * A `.ouaf` package breaks a package rule (spec §3, §15.4): not a readable zip, a link or special entry, an unsafe
+ * path, a duplicate entry, too many entries or too large, no `manifest.json`, or an entry whose data is corrupt (size
+ * or CRC-32, or one that inflates past its declared size). A corrupt asset file reaches the host as the `cause` of an
+ * `AssetError`.
+ */
+export class PackageError extends OuafError {
+  override name = 'PackageError'
+  readonly reason: PackageErrorReason
+  /** The entry concerned (`assets/hat.png`); empty for the package as a whole. */
+  readonly path: string
+  /** Where the package came from (URL, file name or label), for messages. */
+  readonly source: string
+
+  constructor(source: string, reason: PackageErrorReason, path: string, message: string, options?: { cause?: unknown }) {
+    super('invalid-package', `Invalid filter package ${source}: ${message}`, options)
+    this.reason = reason
+    this.path = path
     this.source = source
   }
 }

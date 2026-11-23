@@ -41,8 +41,24 @@ assets/           optional — files referenced by the manifest (section 10)
 ```
 
 - Paths MUST be relative, use `/`, contain no `..`, and asset files MUST live under `assets/`.
-- A package MUST NOT contain symbolic links or files outside this layout; an engine MUST ignore them.
-- Recommended size: **≤ 5 MB** (warning above); an engine MAY refuse packages above **50 MB**.
+- Paths are compared **exactly as written**: case-sensitive, without Unicode normalization (`assets/Hat.png` and
+  `assets/hat.png` are two files). A validator SHOULD warn about paths that differ only by case or normalization,
+  since most file systems cannot hold both once the package is unpacked.
+- An engine and a validator MUST **refuse** a package that contains a symbolic link or another special entry (device,
+  FIFO…), an unsafe path (absolute, with a drive letter or `\`, with a `.`, `..` or empty segment) or the same path
+  twice.
+- A package SHOULD NOT contain regular files outside this layout: an engine MUST ignore them, a validator warns.
+- **Size** is that of the content, the files unpacked: **≤ 5 MB** recommended (a validator warns above); an engine
+  MAY refuse a package whose files total more than **50 MB** unpacked, or that has more than **1000 entries**. The
+  size of the archive itself is not a limit.
+- An engine MUST protect itself while it reads a package: it bounds the declared sizes before decompressing anything,
+  and MUST stop decompressing an entry as soon as it goes past its declared size or the limit. It MAY stop reading
+  or downloading an archive larger than the limit plus the zip structure (in the reference implementation, 1 KiB per
+  entry for headers and names, 64 KiB for the archive comment and 0.1 % of the content for deflate: 51.14 MB).
+- **Zip features**: entries are stored or deflated (methods 0 and 8), names are UTF-8 (general purpose flag bit 11;
+  plain ASCII names read the same without it), and directory entries are allowed and ignored. ZIP64, encryption,
+  multi-disk archives and other compression methods are not supported: an engine refuses them with an explicit
+  error. Each entry's size and CRC-32 are checked.
 - During development, an engine MAY load the unzipped **folder**, served over HTTP.
 
 ### 3.1 Authoring: `filter.js` → package
@@ -606,6 +622,9 @@ The sandbox runs the script off the rendering thread: a slow script makes its ow
    to untrusted code.
 3. **No identification.** An engine MUST NOT recognize or re-identify a person. Face ids are ephemeral.
 4. **Untrusted assets.** Size and dimensions are checked before decoding; SVGs are rendered as images; no remote resources.
+   A package is untrusted input too (3): links, special entries, unsafe paths and duplicate entries are refused, and
+   decompression is bounded by the declared sizes and the size limit, so an archive cannot write outside the package
+   or inflate without bound (zip bomb).
 5. **Denial of service.** The script never blocks rendering, at most one frame is in flight to it, a script that
    does not answer within 1 s is stopped (12.7), and GPU context loss is handled (11).
 6. **Deceptive UI.** `overlay` layers are drawn into the canvas: a filter cannot create input fields.

@@ -46,10 +46,11 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
     files: /^[\w-]+\.(woff2|cube)$/,
   })),
   {
-    // Filter folders (demos #37, test fixtures), committed at the repository root: `/filters/<id>/manifest.json`.
+    // Filter folders (demos #37, test fixtures), committed at the repository root: `/filters/<id>/manifest.json`; and
+    // the packages built from them with `ouaf pack` (`/filters/<id>.ouaf`, gitignored).
     prefix: 'filters/',
     dir: resolve(here, '../../filters'),
-    files: /\.(json|png|webp|jpe?g|avif|svg|ktx2|mp4|webm|glb|gltf|bin|cube|frag|glsl|woff2?|ttf|otf|ogg|mp3|wav|opus|js)$/,
+    files: /\.(json|png|webp|jpe?g|avif|svg|ktx2|mp4|webm|glb|gltf|bin|cube|frag|glsl|woff2?|ttf|otf|ogg|mp3|wav|opus|js|ouaf)$/,
     nested: true,
   },
   {
@@ -79,6 +80,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.gltf': 'model/gltf+json',
   '.woff2': 'font/woff2',
   '.cube': 'text/plain; charset=utf-8',
+  '.ouaf': 'application/zip',
 }
 
 function listFiles(dir: string, files: RegExp, nested = false): string[] {
