@@ -1,0 +1,44 @@
+{
+  "ouaf": "1",
+  "id": "wink-crown",
+  "name": { "en": "Wink crown", "fr": "Couronne clin d'œil" },
+  "version": "1.0.0",
+  "description": {
+    "en": "glTF animations: a crown drops onto each head when the face appears (clip \"drop\", played by the engine) and spins when that person winks (the script plays \"spin\").",
+    "fr": "Animations glTF : une couronne tombe sur chaque tête qui apparaît (clip « drop », joué par le moteur) et tourne quand la personne fait un clin d'œil (le script joue « spin »)."
+  },
+  "author": "Ouaf contributors",
+  "license": "CC0-1.0",
+  "tags": ["demo", "model", "gltf", "animation", "events"],
+  "requires": { "face": true },
+  "assets": { "crown": "assets/crown.glb" },
+  "layers": [
+    {
+      "id": "crown",
+      "type": "model",
+      "src": "crown",
+      "anchor": "forehead",
+      "offset": [0, 0.3, -0.75],
+      "rotation": [-8, 0, 0],
+      "scale": 1.25,
+      "animation": "drop",
+      "loop": false,
+      "occlusion": "head"
+    },
+    {
+      "id": "hint",
+      "type": "text",
+      "text": "Wink to spin the crown",
+      "anchor": "screen",
+      "offset": [0, -0.43, 0],
+      "size": 0.04,
+      "font": "builtin:font/sans-bold",
+      "color": "#ffd34d",
+      "outline": { "width": 0.12, "color": "#00000099" },
+      "overlay": true,
+      "excludeFromCapture": true
+    }
+  ],
+  "events": { "wink": { "threshold": 0.5 } },
+  "script": { "entry": "script.js", "on": ["wink"], "uses": [] }
+}

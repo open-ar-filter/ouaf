@@ -1,0 +1,32 @@
+{
+  "ouaf": "1",
+  "id": "big-eyes",
+  "name": { "en": "Big eyes", "fr": "Grands yeux" },
+  "version": "1.0.0",
+  "description": {
+    "en": "Warp and bindings: the eyes grow as the mouth opens (jawOpen 0–0.5 mapped to a bulge of 0.5–1) and the mouth shrinks; eye radius and mouth pinch are parameters.",
+    "fr": "Déformation et liaisons : les yeux grossissent quand la bouche s'ouvre (jawOpen 0–0,5 → gonflement 0,5–1), la bouche rétrécit ; rayon et pincement en paramètres."
+  },
+  "author": "Ouaf contributors",
+  "license": "CC0-1.0",
+  "tags": ["demo", "warp", "bindings"],
+  "requires": { "face": true },
+  "params": {
+    "radius": { "type": "number", "default": 0.6, "min": 0.3, "max": 0.8, "step": 0.05, "transition": 200, "label": { "en": "Eye radius", "fr": "Rayon des yeux" } },
+    "mouth": { "type": "number", "default": 0.6, "min": 0, "max": 1, "step": 0.05, "transition": 200, "label": { "en": "Small mouth", "fr": "Petite bouche" } }
+  },
+  "presets": {
+    "cute": { "radius": 0.6, "mouth": 0.6 },
+    "subtle": { "radius": 0.4, "mouth": 0.2 }
+  },
+  "layers": [
+    {
+      "type": "warp",
+      "kind": "bulge",
+      "anchor": ["leftEye", "rightEye"],
+      "radius": { "param": "radius" },
+      "strength": { "bind": "face.blendshapes.jawOpen", "range": [0, 0.5], "to": [0.5, 1], "default": 0.5 }
+    },
+    { "type": "warp", "kind": "pinch", "anchor": "mouth", "radius": 0.7, "strength": { "param": "mouth" } }
+  ]
+}

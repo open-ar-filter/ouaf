@@ -1,0 +1,19 @@
+{
+  "ouaf": "1",
+  "id": "canvas-bubble",
+  "name": { "en": "Canvas bubble", "fr": "Bulle dessinée" },
+  "version": "1.0.0",
+  "description": {
+    "en": "Canvas layer: the script draws a speech bubble in Canvas 2D; its phrase changes, two eyes follow the head turn and each blink adds a heart (f.asset, invalidate).",
+    "fr": "Calque canvas : le script dessine une bulle en Canvas 2D ; sa phrase change, deux yeux suivent la tête et chaque clignement ajoute un cœur (f.asset, invalidate)."
+  },
+  "author": "Ouaf contributors",
+  "license": "CC0-1.0",
+  "tags": ["demo", "canvas", "script"],
+  "requires": { "face": true },
+  "assets": { "heart": "assets/heart.svg" },
+  "layers": [
+    { "id": "bubble", "type": "canvas", "width": 256, "height": 160, "fps": 4, "anchor": "forehead", "offset": [1.9, 0.9, 0], "size": 2, "orient": "screen" }
+  ],
+  "script": { "entry": "script.js", "on": ["blink"], "draw": ["bubble"], "uses": ["face.pose"] }
+}

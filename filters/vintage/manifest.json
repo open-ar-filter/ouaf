@@ -1,0 +1,50 @@
+{
+  "ouaf": "1",
+  "id": "vintage",
+  "name": { "en": "Vintage film", "fr": "Film d'époque" },
+  "version": "1.0.0",
+  "description": {
+    "en": "Color and shader layers: the built-in vintage LUT with grain and vignette, then a GLSL shader for an old film's weave, flicker, light leak, scratches and dust. No face tracking.",
+    "fr": "Calques couleur et shader : le LUT vintage intégré, grain et vignettage, puis un shader GLSL de vieux film (flottement, scintillement, rayures, poussière). Sans visage."
+  },
+  "author": "Ouaf contributors",
+  "license": "CC0-1.0",
+  "tags": ["demo", "color", "lut", "shader"],
+  "requires": {},
+  "params": {
+    "intensity": { "type": "number", "default": 0.9, "min": 0, "max": 1, "step": 0.05, "transition": 300, "label": { "en": "Look", "fr": "Intensité" } },
+    "grain": { "type": "number", "default": 0.35, "min": 0, "max": 1, "step": 0.05, "label": { "en": "Grain", "fr": "Grain" } },
+    "scratches": { "type": "number", "default": 0.7, "min": 0, "max": 1, "step": 0.05, "label": { "en": "Scratches", "fr": "Rayures" } },
+    "dust": { "type": "number", "default": 0.5, "min": 0, "max": 1, "step": 0.05, "label": { "en": "Dust", "fr": "Poussière" } },
+    "flicker": { "type": "number", "default": 0.6, "min": 0, "max": 1, "step": 0.05, "label": { "en": "Flicker", "fr": "Scintillement" } },
+    "leak": { "type": "color", "default": "#ff8a3d66", "label": { "en": "Light leak", "fr": "Fuite de lumière" } }
+  },
+  "presets": {
+    "clean": { "grain": 0.1, "scratches": 0, "dust": 0, "flicker": 0, "leak": "#ff8a3d00" },
+    "damaged": { "grain": 0.6, "scratches": 1, "dust": 1, "flicker": 1, "leak": "#ff6a2daa" }
+  },
+  "assets": { "film": "assets/film.frag" },
+  "layers": [
+    {
+      "id": "grade",
+      "type": "color",
+      "lut": "builtin:lut/vintage",
+      "intensity": { "param": "intensity" },
+      "contrast": 0.08,
+      "vignette": 0.55,
+      "grain": { "param": "grain" }
+    },
+    {
+      "id": "film",
+      "type": "shader",
+      "src": "film",
+      "stage": "post",
+      "uniforms": {
+        "scratches": { "param": "scratches" },
+        "dust": { "param": "dust" },
+        "flicker": { "param": "flicker" },
+        "leak": { "param": "leak" }
+      }
+    }
+  ]
+}

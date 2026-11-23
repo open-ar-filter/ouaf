@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 120">
+  <!-- Two cat ears, for the first face of the duo. CC0, Ouaf demo filters. -->
+  <path d="M20 116 L48 6 L128 92 Z" fill="#f08a24" stroke="#5a2e08" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M46 96 L56 34 L102 84 Z" fill="#ffc4d0"/>
+  <path d="M280 116 L252 6 L172 92 Z" fill="#f08a24" stroke="#5a2e08" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M254 96 L244 34 L198 84 Z" fill="#ffc4d0"/>
+</svg>

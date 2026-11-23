@@ -1,0 +1,66 @@
+{
+  "ouaf": "1",
+  "id": "text-bubble",
+  "name": { "en": "Speech bubble", "fr": "Bulle de BD" },
+  "version": "1.0.0",
+  "description": {
+    "en": "Demo of the text layer without any script: a speech bubble next to the head whose message, color and size are parameters, a handwritten caption under the chin and a title on the screen.",
+    "fr": "Démo du calque texte sans script : une bulle à côté de la tête dont le message, la couleur et la taille sont des paramètres, une légende manuscrite sous le menton et un titre à l'écran."
+  },
+  "author": "Ouaf contributors",
+  "license": "CC0-1.0",
+  "tags": ["demo", "text", "params"],
+  "requires": { "face": true },
+  "params": {
+    "message": { "type": "string", "default": "Hello there!", "label": { "en": "Message", "fr": "Message" } },
+    "color": { "type": "color", "default": "#1a1a2e", "label": { "en": "Text color", "fr": "Couleur du texte" } },
+    "size": { "type": "number", "default": 0.34, "min": 0.2, "max": 0.5, "step": 0.02, "transition": 200, "label": { "en": "Text size", "fr": "Taille du texte" } },
+    "caption": { "type": "boolean", "default": true, "label": { "en": "Caption", "fr": "Légende" } }
+  },
+  "presets": {
+    "shout": { "message": "OUAF!", "color": "#d01040", "size": 0.5 },
+    "whisper": { "message": "psst… over here", "color": "#506080", "size": 0.24, "caption": false }
+  },
+  "assets": { "bubble": "assets/bubble.svg" },
+  "layers": [
+    { "id": "bubble", "type": "sticker", "src": "bubble", "anchor": "forehead", "offset": [1.55, 0.65, 0], "size": 1.6, "orient": "screen" },
+    {
+      "id": "message",
+      "type": "text",
+      "text": { "param": "message" },
+      "anchor": "forehead",
+      "offset": [1.6, 0.84, 0.02],
+      "orient": "screen",
+      "size": { "param": "size" },
+      "color": { "param": "color" },
+      "font": "builtin:font/rounded-bold",
+      "maxWidth": 1.9,
+      "lineHeight": 1.05
+    },
+    {
+      "id": "caption",
+      "type": "text",
+      "text": "#ouaf",
+      "anchor": "chin",
+      "offset": [0, -0.5, 0.1],
+      "size": 0.6,
+      "font": "builtin:font/handwritten",
+      "color": "#ffe14d",
+      "outline": { "width": 0.08, "color": "#1a1a2e" },
+      "shadow": { "color": "#00000080", "blur": 0.2, "offset": [0.04, -0.06] },
+      "visible": { "param": "caption" }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "TEXT DEMO",
+      "anchor": "screen",
+      "offset": [0, 0.44, 0],
+      "size": 0.045,
+      "font": "builtin:font/mono",
+      "color": "#ffffff",
+      "outline": { "width": 0.12, "color": "#00000099" },
+      "overlay": true
+    }
+  ]
+}
