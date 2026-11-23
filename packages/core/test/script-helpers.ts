@@ -3,7 +3,7 @@
  * with `new Function`), and the bindings environment.
  */
 import type { BindingEnv } from '../src/bindings/index.ts'
-import { scriptRuntime, type RuntimeScope, type WireDone } from '../src/script/runtime.ts'
+import { scriptRuntime, type RuntimeOptions, type RuntimeScope, type WireDone } from '../src/script/runtime.ts'
 
 export const env = (overrides?: BindingEnv['overrides']): BindingEnv => ({
   data: { resolve: () => undefined },
@@ -66,9 +66,9 @@ export class FakeCanvas {
 export const fakeImage = (image: unknown) => [...new Uint16Array(image as ArrayBuffer)]
 
 /** Starts the runtime in-process; returns the engine's end of the channel (script.js comes with `init`). */
-export function runtime(): TestConnection {
+export function runtime(options: Partial<RuntimeOptions> = {}): TestConnection {
   const scope = fakeScope()
-  scriptRuntime(scope, { harden: false, load: (c) => load(c) as Promise<{ default?: unknown }>, canvas: (w, h) => new FakeCanvas(w, h) })
+  scriptRuntime(scope, { harden: false, load: (c) => load(c) as Promise<{ default?: unknown }>, canvas: (w, h) => new FakeCanvas(w, h), ...options })
   const channel = new MessageChannel()
   scope.send({ t: 'port' }, [channel.port2])
   const conn = {

@@ -202,6 +202,21 @@ describe('script host', () => {
     expect(s.warnings).toEqual([])
   })
 
+  it('sends the font assets with init when the script draws canvases (spec §12.6)', async () => {
+    const fonts = () => [{ name: 'title', data: new ArrayBuffer(8), weight: '700', style: 'normal' }]
+    // The Node runtime has no FontFace: its warning shows that the fonts arrived.
+    const drawing = hostSetup(`export default { draw: { label() {} } }`, { canvases: [{ layer: 0, width: 16, height: 8, fps: 0 }], fonts })
+    await drawing.host.start({}, 0)
+    await idle(drawing.host)
+    drawing.host.beginFrame()
+    expect(drawing.warnings.join('\n')).toMatch(/no FontFace in workers.*\("title"\)/)
+    const plain = hostSetup(`export default { setup() {} }`, { fonts })
+    await plain.host.start({}, 0)
+    await idle(plain.host)
+    plain.host.beginFrame()
+    expect(plain.warnings).toEqual([])
+  })
+
   it('reports a sandbox that does not start', async () => {
     const s = hostSetup('', { connect: () => Promise.reject(new OuafError('script', 'no sandbox')) })
     await s.host.start({}, 0)

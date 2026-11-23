@@ -55,6 +55,7 @@ import { TrackingHub } from './tracking.ts'
 import { FrameDataBuilder, type FrameDataSource } from '../script/frame-data.ts'
 import { ScriptHost } from '../script/host.ts'
 import { openSandbox } from '../script/sandbox.ts'
+import { scriptFonts } from '../layers/canvas/script-fonts.ts'
 import { scriptImages } from '../layers/canvas/script-images.ts'
 
 /**
@@ -1127,6 +1128,7 @@ export class Engine {
         return l && typeof l.width === 'number' && typeof l.height === 'number' ? [{ layer, width: l.width, height: l.height, fps: l.fps ?? 30 }] : []
       }),
       images: () => scriptImages(filter.assets, script.images),
+      fonts: () => scriptFonts(filter.assets, script.fonts),
       drawn: (layer, image) => {
         const instance = filter.layers[layer]?.instance as (LayerInstance & { setImage?: (image: ImageBitmap) => void }) | undefined
         if (typeof instance?.setImage === 'function') instance.setImage(image)

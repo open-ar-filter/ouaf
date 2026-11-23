@@ -371,9 +371,13 @@ The language is deliberately limited to these forms; any richer logic belongs in
   "fire": { "src": "assets/fire.mp4", "alpha": "packed" },
   "walk": { "src": "assets/walk.png", "frames": { "cols": 4, "rows": 2, "fps": 12 } },
   "star": { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'>…</svg>" },
-  "cool": { "emoji": "😎" }
+  "cool": { "emoji": "😎" },
+  "title": "builtin:font/rounded-bold"
 }
 ```
+
+An entry is an `assets/…` path, `{ "src": … }` with options, an inline `svg`, an `emoji`, or a built-in resource
+`builtin:…` (10.3) under a name of the filter: e.g. a built-in font a canvas draws with by that name (12.6).
 
 An asset reference (`src`, `font`, `lut`, `textures`…) is one of:
 
@@ -400,7 +404,7 @@ is the same on every run; `by: "random"` draws an entry when the face gets its i
 | `model` | glTF 2.0 / GLB | Animations, Draco or meshopt compression. |
 | `lut` | `.cube` | |
 | `shader` | `.frag`, `.glsl` | Section 11. |
-| `font` | WOFF2, WOFF, TTF, OTF | |
+| `font` | WOFF2, WOFF, TTF, OTF | `text.font`; by asset name in canvases (12.6). |
 | `audio` | OGG, MP3, WAV, Opus | Sound effects triggered by the script. |
 | `lottie` | `.lottie`, or `.json` with `kind: "lottie"` | Reserved (Lottie plugin). |
 | `data` | JSON | Reserved: no v1 layer or script API reads it (plugin layers may). JSON a script uses is imported in `filter.js` and bundled into `script.js` by `ouaf pack` (3.1). A later version may add an API to read it (`f.data`), compatibly. |
@@ -618,6 +622,13 @@ pixels, origin at the top left, y down; `frame` is the data of 12.4 (the frame o
 - **Where.** A canvas layer has one image, shown on every face it selects (`faces`) like a sticker: `size` is its height
   in anchor units, the width follows `width / height`. Nothing is shown before the first draw.
 - `f.asset(name)` gives the manifest's image assets (12.4) to draw with `ctx.drawImage`.
+- **Fonts.** The `font` assets declared in the manifest's `assets` (font files, and built-in fonts under a name of
+  the filter, `"title": "builtin:font/rounded-bold"`, 10.1) are available to `ctx.font` under their asset name:
+  `ctx.font = '24px title'`. The engine registers them in the sandbox (reference engine: the Worker's `FontFaceSet`)
+  from the package bytes before `setup`, so they are ready at the first draw; nothing is fetched. A name that is a
+  CSS keyword (`serif`, `monospace`, `inherit`…) is quoted: `'24px "serif"'`. Any other family is the platform's,
+  which differs between devices. Where the platform cannot register fonts in the sandbox, an engine draws with the
+  platform's fonts and SHOULD warn once.
 
 The main cost is uploading the image to the GPU at each draw: keep canvases small, and `fps` low.
 

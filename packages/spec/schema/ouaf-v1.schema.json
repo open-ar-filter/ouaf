@@ -141,6 +141,11 @@
       "x-bindable": true,
       "x-hint": "Fixed value, { \"param\": \"name\" } or { \"bind\": \"face.…\" }."
     },
+    "AssetBuiltin": {
+      "type": "string",
+      "pattern": "^builtin:[a-z0-9][a-z0-9/_-]*$",
+      "description": "A built-in resource under a name of the filter, e.g. a font a canvas draws with (spec §12.6)."
+    },
     "AssetEmoji": {
       "type": "object",
       "required": ["emoji"],
@@ -153,9 +158,10 @@
         { "$ref": "#/$defs/AssetPath" },
         { "$ref": "#/$defs/AssetFile" },
         { "$ref": "#/$defs/AssetInlineSvg" },
-        { "$ref": "#/$defs/AssetEmoji" }
+        { "$ref": "#/$defs/AssetEmoji" },
+        { "$ref": "#/$defs/AssetBuiltin" }
       ],
-      "x-hint": "An \"assets/…\" path, { \"src\": \"assets/…\" }, { \"svg\": \"<svg…>\" } or { \"emoji\": \"⭐\" }."
+      "x-hint": "An \"assets/…\" path, { \"src\": \"assets/…\" }, { \"svg\": \"<svg…>\" }, { \"emoji\": \"⭐\" } or a \"builtin:…\" resource."
     },
     "AssetFile": {
       "type": "object",

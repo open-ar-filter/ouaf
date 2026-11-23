@@ -300,6 +300,37 @@ describe('actionable errors', () => {
     expect(r.warnings[0]!.hint).toContain('import the JSON in filter.js')
   })
 
+  it('accepts built-in resources in assets, under a name of the filter (spec §10.1), and checks them', () => {
+    const ok = validateManifest({
+      ...base,
+      requires: {},
+      assets: { title: 'builtin:font/rounded-bold', grade: 'builtin:lut/noir' },
+      layers: [
+        { type: 'text', text: 'Hi', font: 'title', anchor: 'screen' },
+        { type: 'color', lut: 'grade' },
+      ],
+    })
+    expect(ok.errors).toEqual([])
+    expect(ok.warnings).toEqual([])
+    const bad = validateManifest({ ...base, requires: {}, assets: { title: 'builtin:font/round' }, layers: [{ type: 'text', text: 'Hi', font: 'title', anchor: 'screen' }] })
+    expect(codes(bad.errors)).toEqual(['unknown-builtin@/assets/title'])
+    expect(bad.errors[0]!.message).toContain('"builtin:font/')
+    // Not a remote URL, nor another scheme.
+    expect(validateManifest({ ...base, requires: {}, assets: { title: 'https://example.com/f.woff2' }, layers: [] }).ok).toBe(false)
+  })
+
+  it('counts fonts as used by a script that draws canvas layers (spec §12.6), not by one that does not', () => {
+    const manifest = (draw: string[] | undefined) => ({
+      ...base,
+      requires: {},
+      assets: { title: 'builtin:font/rounded-bold', body: 'assets/body.woff2' },
+      layers: [{ id: 'card', type: 'canvas', width: 64, height: 64, anchor: 'screen' }],
+      script: { entry: 'script.js', ...(draw ? { draw } : { setup: true }) },
+    })
+    expect(validateManifest(manifest(['card'])).warnings).toEqual([])
+    expect(codes(validateManifest(manifest(undefined)).warnings)).toEqual(['canvas-not-drawn@/layers/0', 'unused-asset@/assets/title', 'unused-asset@/assets/body'])
+  })
+
   it('formatIssues produces readable text', () => {
     const r = validateManifest({ ...base, assets: { star: { emoji: '⭐' } }, layers: [{ type: 'sticker', src: 'star', anchor: 'nose' }] })
     const text = formatIssues(r, 'filters/test')

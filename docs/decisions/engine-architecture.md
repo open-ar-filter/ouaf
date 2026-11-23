@@ -228,6 +228,13 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
   `.animate()` reach every layer type without code in the layers. Values are per face id or for every instance;
   animations run on a media-time clock. Layer types only need to pass `name` when they compile their properties.
 - **Frame data** (`frame-data.ts`): only what `script.uses` declares, in normalized display space.
+- **Canvas fonts** (#150, spec §12.6): the `font` assets of the manifest (files, or `builtin:font/…` under a name of
+  the filter) are preloaded with the others; the font loader keeps their bytes (`LoadedFont.data`) and the host sends
+  them with `init` (copied, since text layers keep using them). The runtime registers each one in the Worker's
+  `FontFaceSet` (`new FontFace(name, bytes)`, family = the asset name, unquoted: Chromium takes the string as the
+  name itself, quotes included) and awaits them before importing `script.js`, so `setup` and the first draw have
+  them. No fetch: the sandbox CSP is unchanged. Without `FontFace` or `self.fonts` in the Worker, one warning and the
+  platform's fonts.
 - **Seed**: the script's `f.random()` runs in the Worker, seeded with `scriptSeed(filter.seed)`; when the engine
   reseeds the filter (a new source run, #32), the next frame sent carries the new seed.
 - **Models and shaders**: `.play(name)` goes to `ModelLayerInstance.play`; shader uniforms are set as
