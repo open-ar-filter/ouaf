@@ -158,6 +158,16 @@ export interface FaceTracker {
    * is tracked as if it were the first: each run of a file source then gives the same result (spec §12.5).
    */
   resetState(): Promise<void>
+  /** Faces looked for now: `maxFaces`, or fewer after `reconfigure` (spec §16.2). */
+  readonly numFaces: number
+  /** Blendshapes are computed (`FaceFrame.blendshapes` stays at 0 otherwise). */
+  readonly blendshapes: boolean
+  /**
+   * Changes the number of faces looked for (1 to `maxFaces`) and whether blendshapes are computed (spec §16.2), e.g.
+   * for the device governor. Resolves once the landmarker is reconfigured; MediaPipe rebuilds its graph, so the face
+   * regions tracked from the previous frames are dropped. Do not call `detect` before it resolves.
+   */
+  reconfigure(options: { numFaces?: number; blendshapes?: boolean }): Promise<void>
   dispose(): void
 }
 

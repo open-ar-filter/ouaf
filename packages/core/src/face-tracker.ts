@@ -145,7 +145,7 @@ export async function createFaceTrackerWith(options: FaceTrackerOptions, backend
       closeQuietly(landmarker)
       throw err
     }
-    return new MediaPipeFaceTracker(landmarker, delegate, maxFaces, warn)
+    return new MediaPipeFaceTracker(landmarker, delegate, maxFaces, options.blendshapes ?? true, warn)
   }
 
   if ((options.delegate ?? 'GPU') === 'GPU') {
@@ -156,6 +156,22 @@ export async function createFaceTrackerWith(options: FaceTrackerOptions, backend
     }
   }
   return open('CPU')
+}
+
+/** Width in pixels of a tracker input: `videoWidth` (video), `displayWidth` (`VideoFrame`), `naturalWidth`, `width`. */
+export function trackerInputWidth(source: TrackerInput): number {
+  if ('videoWidth' in source) return source.videoWidth
+  if ('displayWidth' in source) return source.displayWidth
+  if ('naturalWidth' in source) return source.naturalWidth
+  return source.width
+}
+
+/** Height in pixels of a tracker input (see `trackerInputWidth`). */
+export function trackerInputHeight(source: TrackerInput): number {
+  if ('videoHeight' in source) return source.videoHeight
+  if ('displayHeight' in source) return source.displayHeight
+  if ('naturalHeight' in source) return source.naturalHeight
+  return source.height
 }
 
 function closeQuietly(landmarker: Landmarker): void {
@@ -178,12 +194,43 @@ class MediaPipeFaceTracker implements FaceTracker {
   #switching: Promise<void> | undefined
   /** MediaPipe blendshape index → index in `BLENDSHAPE_NAMES` (-1: unknown), built from the first result. */
   #blendshapeMap: Int8Array | undefined
+  /** Current `numFaces` and blendshapes output (`reconfigure`). */
+  #numFaces: number
+  #blendshapes: boolean
 
-  constructor(landmarker: Landmarker, delegate: Delegate, maxFaces: number, warn: (message: string, cause?: unknown) => void) {
+  constructor(landmarker: Landmarker, delegate: Delegate, maxFaces: number, blendshapes: boolean, warn: (message: string, cause?: unknown) => void) {
     this.#landmarker = landmarker
     this.delegate = delegate
     this.maxFaces = maxFaces
+    this.#numFaces = maxFaces
+    this.#blendshapes = blendshapes
     this.#warn = warn
+  }
+
+  get numFaces(): number {
+    return this.#numFaces
+  }
+
+  get blendshapes(): boolean {
+    return this.#blendshapes
+  }
+
+  async reconfigure(options: { numFaces?: number; blendshapes?: boolean }): Promise<void> {
+    while (this.#switching) await this.#switching
+    const landmarker = this.#landmarker
+    if (!landmarker) return
+    const numFaces = Math.max(1, Math.min(this.maxFaces, Math.trunc(options.numFaces ?? this.#numFaces)))
+    const blendshapes = options.blendshapes ?? this.#blendshapes
+    if (numFaces === this.#numFaces && blendshapes === this.#blendshapes) return
+    this.#switching = landmarker.setOptions({ numFaces, outputFaceBlendshapes: blendshapes, runningMode: this.#mode }).then(() => {
+      this.#numFaces = numFaces
+      this.#blendshapes = blendshapes
+    })
+    try {
+      await this.#switching
+    } finally {
+      this.#switching = undefined
+    }
   }
 
   /**
@@ -247,19 +294,8 @@ class MediaPipeFaceTracker implements FaceTracker {
   #begin(source: TrackerInput, mediaTime: number, out: FaceFrame): Landmarker | undefined {
     out.count = 0
     out.mediaTime = mediaTime
-    if ('videoWidth' in source) {
-      out.width = source.videoWidth
-      out.height = source.videoHeight
-    } else if ('displayWidth' in source) {
-      out.width = source.displayWidth
-      out.height = source.displayHeight
-    } else if ('naturalWidth' in source) {
-      out.width = source.naturalWidth
-      out.height = source.naturalHeight
-    } else {
-      out.width = source.width
-      out.height = source.height
-    }
+    out.width = trackerInputWidth(source)
+    out.height = trackerInputHeight(source)
     const landmarker = this.#landmarker
     if (!landmarker || out.width === 0 || out.height === 0) return undefined
     return landmarker

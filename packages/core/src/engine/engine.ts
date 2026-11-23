@@ -20,7 +20,7 @@
  */
 import { resolveBuiltin } from '@ouaf/builtins'
 import { DEFAULT_SCRIPT_USES, createRegistry, extendRegistry, type ScriptUse, type SpecRegistry, type Stage } from '@ouaf/spec'
-import { createFaceFrame, type FaceFrame } from '../face.ts'
+import { BLENDSHAPES_STRIDE, createFaceFrame, type FaceFrame } from '../face.ts'
 import { FrameScheduler, type VideoFrameInfo } from '../scheduler.ts'
 import type { VideoSource } from '../video-source.ts'
 import { OfflineVideoSource } from '../offline-video.ts'
@@ -28,7 +28,9 @@ import { assertReadable, describeImage, isCanvas, isFrameImage, isSecurityError,
 import { checkSeed, deriveSeed, FILE_SOURCE_SEED, randomSeed, SeededRandom } from '../random.ts'
 import type { FitMode } from '../viewport.ts'
 import { FaceIdentityTracker, FaceSmoother } from '../anchoring/index.ts'
-import { createSignals, readExpressionSignals } from '../expressions/index.ts'
+import { blendshapeSignals, createSignals, geometrySignals, readExpressionSignals } from '../expressions/index.ts'
+import { DeviceGovernor, type Capability, type GovernorTuning, type PerformanceState } from './governor.ts'
+import { BACKEND_STORE_PREFIX, localBackendStore } from './backend-choice.ts'
 import { FaceAnchors } from './anchor-provider.ts'
 import { CORE_LOADERS, memorySource, urlSource, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
 import { fetchPackage, isPackageUrl, packageSource } from './package.ts'
@@ -104,7 +106,32 @@ export interface EngineOptions {
   seed?: number
   /** Opens the sandbox of a filter's script (tests). Default: a sandboxed iframe running a Worker (spec §15.1). */
   openSandbox?: (label: string) => ReturnType<typeof openSandbox>
+  /**
+   * Device adaptation (spec §16): with live sources, drop optional capabilities when face tracking is too slow, and
+   * hide the face filters below the 15 Hz floor (`on('performance')`). Default: true. `false` keeps everything on
+   * whatever the rate (tests, benchmarks); an object tunes the governor (`DEFAULT_GOVERNOR_TUNING`).
+   */
+  adaptation?: boolean | Partial<GovernorTuning>
+  /**
+   * Inference backend of the face tracker (built-in tracker: `CPU` or `GPU`). Default: chosen by measuring both on
+   * the first frames of a live source, then cached on the device per engine version (`localStorage`, never
+   * transmitted; spec §16.4). Until then the GPU is tried first.
+   */
+  trackerBackend?: string
 }
+
+/** Analysis resolution while the governor has dropped it (spec §16.2), relative to the frame. */
+export const REDUCED_ANALYSIS_SCALE = 0.5
+/** A pause between frames longer than this (ms) restarts the measure of the tracking rate (background tab…). */
+const GOVERNOR_PAUSE_MS = 1500
+/** The governor is consulted at most this often (ms). */
+const GOVERNOR_PERIOD_MS = 100
+/**
+ * Heavy stack (#34): the engine's main-thread time per frame above this share of the frame interval, for
+ * `HEAVY_STACK_WINDOWS` stats windows in a row, gives one warning per stack change.
+ */
+const HEAVY_STACK_LOAD = 0.5
+const HEAVY_STACK_WINDOWS = 3
 
 /** How the engine runs a source (spec §12.1): see `Engine.regime`. */
 export type SourceRegime = 'live' | 'file'
@@ -130,8 +157,15 @@ export interface EngineStats {
   trackingHz: number
   /** Faces in the latest tracking result. */
   faces: number
-  /** Mean time spent in the engine per frame (ms): params, layer updates and render submission. */
+  /**
+   * Mean time spent in the engine per frame on the main thread (ms): params, layer updates and render submission
+   * (GPU time not included). Compare with the frame interval, `1000 / fps`: the frame budget (#34).
+   */
   frameMs: number
+  /** Longest `frameMs` of a frame over the last second. */
+  frameMsMax: number
+  /** Mean time per frame spent by a tracker that runs on the main thread (ms; 0 for a tracker in a worker). */
+  trackMs: number
   /** Tracker backend in use, when tracking runs. */
   tracker: string | undefined
   /** Internal resolution (px) the engine renders at. */
@@ -139,11 +173,16 @@ export interface EngineStats {
   height: number
 }
 
-/** `engine.on('performance')` (spec §16.3); emitted by the device governor (#90). */
+/**
+ * `engine.on('performance')` (spec §16.3), emitted by the device governor at each change of `state` or `dropped`;
+ * `engine.performance` gives the current one.
+ */
 export interface PerformanceEvent {
-  state: 'ok' | 'degraded' | 'unsupported'
-  /** Optional capabilities dropped, in drop order. */
-  dropped: readonly string[]
+  /** `ok`; `degraded`: optional capabilities dropped; `unsupported`: the face filters are hidden (raw camera). */
+  state: PerformanceState
+  /** Optional capabilities dropped (spec §16.2), in drop order: `blendshapes`, `extraFaces`, `resolution`. */
+  dropped: readonly Capability[]
+  /** Tracking rate measured (Hz) when the state changed. */
   trackingHz: number
 }
 
@@ -278,6 +317,21 @@ export class Engine {
   #statsStart = 0
   #statsFrames = 0
   #statsMs = 0
+  #statsMaxMs = 0
+  #statsTrackMs = 0
+  /** Main-thread time of the tracker call of the frame being drawn (ms). */
+  #frameTrackMs = 0
+  /** Stats windows in a row over the heavy-stack load, and whether this stack was warned about (#34). */
+  #heavyWindows = 0
+  #heavyWarned = false
+  /** Device governor (spec §16); undefined when `adaptation` is off. */
+  #governor: DeviceGovernor | undefined
+  #performance: PerformanceEvent = { state: 'ok', dropped: [], trackingHz: 0 }
+  /** Capabilities the enabled stack may lose (recomputed on stack changes). */
+  #droppable = new Set<Capability>()
+  /** Faces looked for while the extra faces are dropped: the faces tracked when they were. */
+  #reducedFaces = 1
+  #governedAt = Number.NaN
   #disposed = false
   #contextLost = false
   #onContextLost = (event: Event) => this.#contextLostHandler(event)
@@ -304,9 +358,16 @@ export class Engine {
     for (const plugin of options.builtins === false ? [] : builtinPlugins()) this.use(plugin)
     for (const plugin of options.plugins ?? []) this.use(plugin)
 
+    const impl = this.#trackers.at(-1)
     this.#tracking = new TrackingHub({
-      impl: this.#trackers.at(-1),
-      env: { assetsBaseUrl: this.assetsBaseUrl, warn: (message) => this.#warn(message) },
+      impl,
+      env: {
+        assetsBaseUrl: this.assetsBaseUrl,
+        warn: (message) => this.#warn(message),
+        ...(options.trackerBackend ? { backend: options.trackerBackend } : {}),
+        // The measured backend choice stays on the device (spec §16.4, §15).
+        store: localBackendStore(`${BACKEND_STORE_PREFIX}${ENGINE_VERSION}:${impl?.id ?? 'none'}`),
+      },
       maxFaces,
       modifiers: this.#modifiers,
       onError: (error) => this.#error(error),
@@ -343,6 +404,16 @@ export class Engine {
       },
     }
     this.#openSandbox = options.openSandbox ?? openSandbox
+    const adaptation = options.adaptation ?? true
+    if (adaptation !== false) this.#governor = new DeviceGovernor(adaptation === true ? {} : adaptation)
+  }
+
+  /**
+   * Device adaptation now (spec §16): `ok`, `degraded` (optional capabilities dropped) or `unsupported` (face
+   * filters hidden), as last reported by `on('performance')`, with the current tracking rate.
+   */
+  get performance(): PerformanceEvent {
+    return { ...this.#performance, trackingHz: this.#tracking.rateHz }
   }
 
   get disposed(): boolean {
@@ -658,7 +729,11 @@ export class Engine {
     this.#statsStart = 0
     this.#statsFrames = 0
     this.#statsMs = 0
+    this.#statsMaxMs = 0
+    this.#statsTrackMs = 0
     this.#resetFaces()
+    // A new source starts with every capability on (spec §16.3: judged again over its first seconds).
+    this.#resetGovernor()
     for (const f of this.#stack) f.reseed(this.#filterSeed(f.manifest.id))
     this.#compositor.setSource(image, mirrored)
   }
@@ -717,13 +792,15 @@ export class Engine {
   #onVideoFrame(info: VideoFrameInfo): void {
     const feed = this.#feed
     if (this.#disposed || feed?.kind !== 'video') return
-    const start = performance.now()
-    this.#compositor.beginFrame()
     // The frame's time (s): the media time for files (deterministic, spec §12.5); for a live source the clock, since
     // browsers do not always advance a camera's media time (Firefox reports 0 for every frame).
     const time = this.#live ? info.now / 1000 : info.mediaTime
+    const start = performance.now()
     this.#tracking.submit(feed.source.video, info.now, time)
-    this.#draw(time, info.now, start)
+    const tracked = performance.now()
+    this.#frameTrackMs = tracked - start
+    this.#compositor.beginFrame()
+    this.#draw(time, info.now, tracked)
   }
 
   /** A canvas the host draws into (live regime): read on every animation frame. */
@@ -737,9 +814,12 @@ export class Engine {
         // It may have been tainted since the last check (drawn from another origin): WebGL would refuse it silently.
         if (++frames % CANVAS_CHECK_FRAMES === 0) assertReadable(feed.canvas, () => this.#scratchContext())
         this.#compositor.setFrame(feed.canvas)
-        this.#compositor.beginFrame()
+        const submitted = performance.now()
         this.#tracking.submit(feed.canvas, now, now / 1000)
-        this.#draw(now / 1000, now, start)
+        const tracked = performance.now()
+        this.#frameTrackMs = tracked - submitted
+        this.#compositor.beginFrame()
+        this.#draw(now / 1000, now, start + (tracked - submitted))
       } catch (error) {
         this.#sourceFailed(feed, error)
       }
@@ -909,7 +989,7 @@ export class Engine {
 
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
-      if (!filter.enabled) continue
+      if (!filter.active) continue
       const layers = filter.layers
       for (let l = 0; l < layers.length; l++) layers[l]!.instance.update(frame)
     }
@@ -921,17 +1001,18 @@ export class Engine {
     // Then the frame goes to the scripts that are not busy with a previous one (spec §12.7).
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
-      if (filter.enabled) filter.host?.endFrame(time, this.#scriptData)
+      if (filter.active) filter.host?.endFrame(time, this.#scriptData)
     }
     const end = performance.now()
     this.#recordStats(end, end - start, faces.count)
+    if (this.#regime === 'live') this.#govern(now)
   }
 
   /** Records which filters draw author shader code this frame (context loss suspects, spec §11). */
   #markAuthorShaders(now: number): void {
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
-      if (!filter.authorShader || !filter.enabled) continue
+      if (!filter.authorShader || !filter.active) continue
       const layers = filter.layers
       for (let l = 0; l < layers.length; l++) {
         const instance = layers[l]!.instance
@@ -954,7 +1035,7 @@ export class Engine {
     this.#contextLost = true
     const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
     const since = performance.now() - CONTEXT_LOSS_WINDOW_MS
-    const suspects = hidden ? [] : this.#stack.filter((f) => f.enabled && f.authorShader && f.lastAuthorDraw >= since)
+    const suspects = hidden ? [] : this.#stack.filter((f) => f.active && f.authorShader && f.lastAuthorDraw >= since)
     for (const f of suspects) f.enabled = false
     if (suspects.length) {
       this.#stackChanged()
@@ -984,6 +1065,10 @@ export class Engine {
       this.#seenResults = tracking.results
       this.#identity.update(raw, raw.mediaTime)
       this.#smoother.update(raw, raw.mediaTime, this.#smoothed)
+      // Blendshapes dropped (spec §16.2), or not computed yet after a reconfiguration: bindings take their default,
+      // scripts get none, and expression events come from the landmark geometry (§13).
+      // A tracker may keep computing them while they are dropped (MediaPipe: no gain, see builtin.ts).
+      if (raw.count > 0) this.#bindingData.blendshapes = tracking.config.blendshapes && hasBlendshapes(raw)
       this.#detectExpressions(raw.mediaTime * 1000)
     }
     this.#smoother.predict(this.#smoothed, time, this.#drawn)
@@ -997,11 +1082,11 @@ export class Engine {
   #detectExpressions(timeMs: number): void {
     const faces = this.#smoothed
     const identity = this.#identity
-    readExpressionSignals(faces, this.#signals)
+    readExpressionSignals(faces, this.#signals, this.#bindingData.blendshapes ? blendshapeSignals : geometrySignals)
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
       const detector = filter.expressions
-      if (!detector || !filter.enabled) continue
+      if (!detector || !filter.active) continue
       const out = detector.update(timeMs, identity.count, identity.ids, this.#signals)
       const host = filter.host
       if (host) {
@@ -1029,23 +1114,50 @@ export class Engine {
   #recordStats(now: number, ms: number, faces: number): void {
     this.#statsFrames++
     this.#statsMs += ms
+    if (ms > this.#statsMaxMs) this.#statsMaxMs = ms
+    this.#statsTrackMs += this.#frameTrackMs
+    this.#frameTrackMs = 0
     if (this.#statsStart === 0) this.#statsStart = now
     const elapsed = now - this.#statsStart
     if (elapsed < 1000) return
+    const fps = (this.#statsFrames * 1000) / elapsed
+    const frameMs = this.#statsMs / this.#statsFrames
     if (this.#events.has('stats')) {
       this.#events.emit('stats', {
-        fps: (this.#statsFrames * 1000) / elapsed,
+        fps,
         trackingHz: this.#tracking.rateHz,
         faces,
-        frameMs: this.#statsMs / this.#statsFrames,
+        frameMs,
+        frameMsMax: this.#statsMaxMs,
+        trackMs: this.#statsTrackMs / this.#statsFrames,
         tracker: this.#tracking.description,
         width: this.#compositor.width,
         height: this.#compositor.height,
       })
     }
+    this.#checkHeavyStack(frameMs, fps)
     this.#statsStart = now
     this.#statsFrames = 0
     this.#statsMs = 0
+    this.#statsMaxMs = 0
+    this.#statsTrackMs = 0
+  }
+
+  /**
+   * Frame budget (#34): warns once per stack change when the engine's own work takes more than half of the frame
+   * interval for a few seconds in a row (tracking not counted: the governor handles it).
+   */
+  #checkHeavyStack(frameMs: number, fps: number): void {
+    if (this.#heavyWarned || !(fps > 0)) return
+    const budget = 1000 / fps
+    this.#heavyWindows = frameMs > HEAVY_STACK_LOAD * budget ? this.#heavyWindows + 1 : 0
+    if (this.#heavyWindows < HEAVY_STACK_WINDOWS) return
+    this.#heavyWarned = true
+    const ids = this.#stack.filter((f) => f.active).map((f) => `"${f.manifest.id}"`)
+    this.#warn(
+      `The filter stack${ids.length ? ` (${ids.join(', ')})` : ''} takes ${frameMs.toFixed(1)} ms per frame on the main thread, ` +
+        `${Math.round((100 * frameMs) / budget)} % of the ${budget.toFixed(1)} ms between frames at ${fps.toFixed(0)} fps: it may not keep up on this device.`,
+    )
   }
 
   async #load(src: FilterInput, params: Readonly<Record<string, unknown>> | undefined): Promise<FilterInstance> {
@@ -1170,9 +1282,14 @@ export class Engine {
     for (const key of ['background', 'face', 'warp', 'color'] as const) passes[key].length = 0
     for (const o of this.#objects) o.object.removeFromParent()
     this.#objects.length = 0
+    this.#heavyWindows = 0
+    this.#heavyWarned = false
+    // Face filters are hidden while the governor says the device tracks too slowly (spec §16.3), new ones included.
+    const hidden = this.#governor?.hidden ?? false
+    for (const f of this.#stack) f.suspended = hidden && f.needsFace
 
-    // The background is exclusive: the last enabled filter that has one wins (spec §7).
-    const enabled = this.#stack.filter((f) => f.enabled)
+    // The background is exclusive: the last active filter that has one wins (spec §7).
+    const enabled = this.#stack.filter((f) => f.active)
     const withBackground = enabled.filter((f) => [...f.layersOf('background')].length > 0)
     const backgroundOwner = withBackground.at(-1)
     if (withBackground.length > 1) {
@@ -1196,13 +1313,92 @@ export class Engine {
     this.#compositor.drawOrder.setLayers(this.#objects)
   }
 
+  /**
+   * Starts or reconfigures tracking for the enabled filters (suspended ones included: tracking keeps measuring,
+   * spec §16.3), less what the governor dropped. Blendshapes are computed for every face filter, since expression
+   * events read them (spec §13), unless dropped (§16.2).
+   */
   async #updateTracking(): Promise<void> {
     const enabled = this.#stack.filter((f) => f.enabled)
+    const face = enabled.some((f) => f.needsFace)
+    const droppable = this.#droppable
+    droppable.clear()
+    if (face) {
+      if (!enabled.some((f) => f.requiresBlendshapes)) droppable.add('blendshapes')
+      if (this.maxFaces > 1) droppable.add('extraFaces')
+      droppable.add('resolution')
+    }
+    const dropped = (c: Capability) => droppable.has(c) && (this.#governor?.isDropped(c) ?? false)
     try {
-      await this.#tracking.setNeeds({ face: enabled.some((f) => f.needsFace), blendshapes: enabled.some((f) => f.needsBlendshapes) })
+      await this.#tracking.setNeeds({
+        face,
+        blendshapes: face && !dropped('blendshapes'),
+        maxFaces: dropped('extraFaces') ? this.#reducedFaces : this.maxFaces,
+        analysisScale: dropped('resolution') ? REDUCED_ANALYSIS_SCALE : 1,
+      })
     } catch (error) {
       this.#error(error)
     }
+  }
+
+  /**
+   * One step of the device governor (spec §16), live sources only: consults it with the tracking rate measured since
+   * its last change, and applies its decision.
+   */
+  #govern(now: number): void {
+    const g = this.#governor
+    if (!g) return
+    const tracking = this.#tracking
+    if (!tracking.active || this.#droppable.size === 0) {
+      // No face filter, or tracking not running yet: nothing to govern, everything back on.
+      if (g.state !== 'ok' || this.#performance.state !== 'ok') this.#resetGovernor()
+      this.#governedAt = Number.NaN
+      return
+    }
+    if (tracking.measuring) {
+      // The tracker compares its backends (spec §16.4): rates are mixed; the measure starts once it is done.
+      this.#governedAt = Number.NaN
+      return
+    }
+    const last = this.#governedAt
+    if (now - last < GOVERNOR_PERIOD_MS) return
+    this.#governedAt = now
+    // The first step, or a pause of frames (hidden tab): the measure restarts from now.
+    if (Number.isNaN(last) || now - last > GOVERNOR_PAUSE_MS) {
+      g.restart(now)
+      tracking.restartRate(now)
+      return
+    }
+    const rate = tracking.rateHz
+    const change = g.update(now, rate, this.#droppable, tracking.pipelineMs)
+    if (!change) return
+    if (change.kind === 'drop' && change.capability === 'extraFaces') this.#reducedFaces = Math.max(1, tracking.faces.count)
+    tracking.restartRate(now)
+    this.#applyGovernor(rate)
+  }
+
+  /** Applies the governor's state: suspended filters, tracker configuration, `performance` event on a change. */
+  #applyGovernor(rate: number): void {
+    const g = this.#governor
+    const hidden = g?.hidden ?? false
+    if (this.#stack.some((f) => f.needsFace && f.suspended !== hidden)) this.#stackChanged()
+    void this.#updateTracking()
+    const state = g?.state ?? 'ok'
+    const dropped = g ? [...g.dropped] : []
+    const previous = this.#performance
+    if (state === previous.state && dropped.join() === previous.dropped.join()) return
+    this.#performance = { state, dropped, trackingHz: rate }
+    if (this.#events.has('performance')) this.#events.emit('performance', { state, dropped: [...dropped], trackingHz: rate })
+  }
+
+  /** Everything back on and shown (new source, no face filter); the governor starts over. */
+  #resetGovernor(): void {
+    const g = this.#governor
+    if (!g) return
+    const rate = this.#tracking.rateHz
+    g.reset(performance.now())
+    this.#governedAt = Number.NaN
+    this.#applyGovernor(rate)
   }
 
   async #createRenderPass(impl: RenderPassImpl): Promise<void> {
@@ -1262,6 +1458,13 @@ export { memorySource, urlSource }
 function passStage(stage: Stage): 'background' | 'face' | 'warp' | 'color' {
   if (stage === 'background' || stage === 'face' || stage === 'warp' || stage === 'color') return stage
   throw new OuafError('unknown-layer-type', `A pass layer cannot be in stage "${stage}".`)
+}
+
+/** The tracker computed blendshapes for this result: MediaPipe leaves them at 0 when they are off. */
+function hasBlendshapes(faces: Readonly<FaceFrame>): boolean {
+  const b = faces.blendshapes
+  for (let i = 0; i < BLENDSHAPES_STRIDE; i++) if (b[i] !== 0) return true
+  return false
 }
 
 function isVideoSource(input: unknown): input is VideoSource {
