@@ -17,7 +17,7 @@ async function colorsAt(page: Page, points: ReadonlyArray<readonly [number, numb
   const png = await page.locator('#canvas').screenshot()
   return page.evaluate(
     async ([bytes, pts]) => {
-      const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+      const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
       const c = new OffscreenCanvas(bitmap.width, bitmap.height)
       const ctx = c.getContext('2d')!
       ctx.drawImage(bitmap, 0, 0)
@@ -35,7 +35,7 @@ async function colorsAt(page: Page, points: ReadonlyArray<readonly [number, numb
         return sum.map((v) => Math.round(v / 9)) as [number, number, number]
       })
     },
-    [[...png], points] as const,
+    [png.toString('base64'), points] as const,
   )
 }
 
@@ -124,7 +124,7 @@ test('face stickers follow the tracked face', async ({ page }) => {
   const magenta = async () => {
     const png = await page.locator('#canvas').screenshot()
     return page.evaluate(async (bytes) => {
-      const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+      const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
       const c = new OffscreenCanvas(bitmap.width, bitmap.height)
       const ctx = c.getContext('2d')!
       ctx.drawImage(bitmap, 0, 0)
@@ -132,7 +132,7 @@ test('face stickers follow the tracked face', async ({ page }) => {
       let n = 0
       for (let i = 0; i < d.length; i += 4) if (d[i]! > 200 && d[i + 1]! < 80 && d[i + 2]! > 200) n++
       return n
-    }, [...png])
+    }, png.toString('base64'))
   }
   await expect.poll(magenta, POLL).toBeGreaterThan(50)
 })
