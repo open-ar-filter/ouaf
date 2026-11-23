@@ -35,6 +35,7 @@ import { fetchPackage, isPackageUrl, packageSource } from './package.ts'
 import { builtinPlugins } from './builtin.ts'
 import { Compositor, type StagePasses } from './compositor.ts'
 import { Emitter } from './emitter.ts'
+import { messagePayload } from './messages.ts'
 import { Outputs, type OutputStreamOptions, type RecordOptions, type Recording, type SnapshotOptions } from './outputs.ts'
 import { GpuContextLostError, IncompatibleSourceError, OuafError, disposedError } from './errors.ts'
 import { FilterInstance, bindingParams, createHandle, loadFilter, scriptSeed, type FilterHandle, type FilterLoadEnv } from './filter.ts'
@@ -120,6 +121,7 @@ export interface SourceEndEvent {
   time: number
 }
 
+/** `engine.on('stats')`: emitted about once per second while frames are rendered (none while no source plays). */
 export interface EngineStats {
   /** Rendered frames per second over the last second. */
   fps: number
@@ -131,6 +133,7 @@ export interface EngineStats {
   frameMs: number
   /** Tracker backend in use, when tracking runs. */
   tracker: string | undefined
+  /** Internal resolution (px) the engine renders at. */
   width: number
   height: number
 }
@@ -155,14 +158,27 @@ export interface FilterEvent {
   data: unknown
 }
 
+/**
+ * Events of `engine.on(name, listener)`. Listeners are called synchronously, in subscription order; a throwing listener
+ * does not stop the others (its error is reported as a `warning`, or with `console.error` for a `warning` listener).
+ * `dispose()` removes every listener.
+ */
 export type EngineEvents = {
+  /** Rendering and tracking rates, about once per second while frames are rendered. */
   stats: EngineStats
+  /** Something the engine worked around (a filter's script was slow, a resource fell back…). */
   warning: EngineWarning
   /** Asynchronous failures (tracking, a frame that threw). Synchronous API errors are thrown instead. */
   error: Error
   performance: PerformanceEvent
   sourceEnd: SourceEndEvent
-} & { [K in `filter:${string}`]: FilterEvent }
+} & {
+  /**
+   * `f.emit(name, data)` from the script of any filter of the stack (spec §12.4), with the filter's handle. The same
+   * message reaches `handle.on('filter:<name>', (data) => …)` of that filter.
+   */
+  [K in `filter:${string}`]: FilterEvent
+}
 
 /**
  * A filter to load:
@@ -191,7 +207,8 @@ export type SourceInput = VideoSource | HTMLVideoElement | FrameImage | OfflineV
 
 /** What drives the frames of the current source. Async loops stop when `Engine.#feed` is no longer theirs. */
 type Feed =
-  | { readonly kind: 'video'; readonly source: VideoSource; readonly scheduler: FrameScheduler }
+  /** `owned`: the engine created the source (a source plugin) and disposes it when it stops. */
+  | { readonly kind: 'video'; readonly source: VideoSource; readonly scheduler: FrameScheduler; readonly owned: boolean }
   | { readonly kind: 'canvas'; readonly canvas: HTMLCanvasElement | OffscreenCanvas; raf: number }
   | { readonly kind: 'still'; readonly image: FrameImage; raf: number }
   | { readonly kind: 'offline'; readonly source: OfflineVideoSource }
@@ -206,7 +223,12 @@ export class Engine {
   /** Validation registry, including the vocabulary of installed plugins (for editors and the CLI). */
   readonly registry: SpecRegistry
 
-  #events = new Emitter<EngineEvents>((error) => this.#warn(`An event listener threw: ${String(error)}`))
+  // A throwing listener becomes a `warning`, except a throwing `warning` listener: reporting it as a warning would
+  // call it again, without end.
+  #events = new Emitter<EngineEvents>((error, event) => {
+    if (event === 'warning') console.error('[ouaf] A warning listener threw:', error)
+    else this.#warn(`An event listener threw: ${String(error)}`)
+  })
   #compositor: Compositor
   #outputs = new Outputs()
   #anchors: FaceAnchors
@@ -341,10 +363,16 @@ export class Engine {
     return new Map([...this.#plugins].map(([name, p]) => [name, p.version]))
   }
 
+  /**
+   * Subscribes to an engine event (see `EngineEvents`): `stats`, `warning`, `error`, `performance`, `sourceEnd`,
+   * `filter:<name>`. Returns a function that unsubscribes. After `dispose()` it does nothing (no event fires any more).
+   */
   on<K extends keyof EngineEvents & string>(event: K, listener: (payload: EngineEvents[K]) => void): () => void {
+    if (this.#disposed) return () => {}
     return this.#events.on(event, listener)
   }
 
+  /** Unsubscribes a listener given to `on`. */
   off<K extends keyof EngineEvents & string>(event: K, listener: (payload: EngineEvents[K]) => void): void {
     this.#events.off(event, listener)
   }
@@ -402,9 +430,11 @@ export class Engine {
 
   /**
    * Sets the image source (see `SourceInput`). The engine renders and tracks every new frame of it. A source passed
-   * by the host stays the host's: the engine does not dispose it, and a still image or canvas must stay readable
-   * while it is the source. Throws `IncompatibleSourceError`: unsupported input, disposed source, the engine's own
-   * canvas, an image without pixels, a tainted (cross-origin) image or canvas.
+   * by the host stays the host's: the engine does not dispose it (not even in `dispose()`: stop a `CameraSource`
+   * yourself), and a still image or canvas must stay readable while it is the source. A source that a source plugin
+   * creates is the engine's: it is disposed when it stops being the source. Throws `IncompatibleSourceError`:
+   * unsupported input, disposed source, the engine's own canvas, an image without pixels, a tainted (cross-origin)
+   * image or canvas.
    */
   async setSource(input: SourceInput, options: SourceOptions = {}): Promise<void> {
     this.#assertAlive()
@@ -430,6 +460,7 @@ export class Engine {
       return
     }
     let source: VideoSource | undefined
+    let owned = false
     if (isVideoSource(input)) source = input
     else if (typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement) source = videoElementSource(input)
     else {
@@ -440,10 +471,15 @@ export class Engine {
         )
       }
       source = await impl.create(input)
+      owned = true
+      if (this.#disposed) {
+        source.dispose()
+        throw disposedError('The engine')
+      }
     }
     if (source.disposed) throw new IncompatibleSourceError('The source has been disposed.')
     const scheduler = new FrameScheduler(source.video, (frame) => this.#onVideoFrame(frame), { onError: (e) => this.#error(e) })
-    this.#begin({ kind: 'video', source, scheduler }, 'live', source.video, source.mirrored)
+    this.#begin({ kind: 'video', source, scheduler, owned }, 'live', source.video, source.mirrored)
     this.#live = typeof MediaStream !== 'undefined' && source.video.srcObject instanceof MediaStream
     scheduler.start()
   }
@@ -554,29 +590,51 @@ export class Engine {
   }
 
   /**
-   * Sends a message to the scripts of every filter of the stack, received as the `message:<name>` event (spec §13).
-   * `data` must be structured-cloneable.
+   * Sends a message to the scripts of every filter of the stack (disabled ones included), received as the
+   * `message:<name>` event (spec §13) by the scripts that list it in `script.on`; `handle.send` targets one filter.
+   * `name`: a letter, then letters, digits, `_` or `-`. `data` must be structured-cloneable: it is copied now, so
+   * changing it afterwards changes nothing. Delivered with the next frame sent to each script, after the events
+   * queued before it. Throws `OuafError('invalid-message')` (bad name, data that cannot be cloned) or
+   * `OuafError('disposed')`.
    */
   send(name: string, data?: unknown): void {
     this.#assertAlive()
-    checkMessageName(name)
-    for (const filter of this.#stack) filter.host?.queue({ name: `message:${name}`, payload: { data } })
+    const payload = messagePayload(name, data)
+    for (const filter of this.#stack) filter.host?.queue({ name: `message:${name}`, payload })
   }
 
-  /** Stops everything and frees the GPU context, the tracker and every filter. Idempotent. */
+  /**
+   * Stops everything and frees what the engine holds: the source feed (and a source a plugin created; a source the
+   * host passed stays the host's), every filter (layers, assets, GPU resources, script sandbox and Worker), the
+   * render passes, the face tracker, the outputs (recordings stop, output streams end, pending snapshots reject), the
+   * GPU context of the canvas (lost for good: use a new canvas for a new engine) and every listener. Pending `addFilter`, `setFilters`, `setSource` and `pushFrame` calls reject with
+   * `OuafError('disposed')`, as does every later call but `dispose` itself, which is idempotent.
+   */
   dispose(): void {
     if (this.#disposed) return
     this.#disposed = true
     this.#stopFeed()
     for (const f of this.#stack) this.#disposeFilter(f)
     this.#stack = []
+    this.#handles.clear()
     for (const p of this.#renderPasses) p.dispose()
+    this.#renderPasses = []
+    this.#objects.length = 0
+    for (const key of ['background', 'face', 'warp', 'color'] as const) this.#passes[key].length = 0
     this.#tracking.dispose()
     this.#outputs.dispose()
-    const canvas = this.#compositor.renderer.domElement as EventTarget
+    this.#scratch = undefined
+    const renderer = this.#compositor.renderer
+    const canvas = renderer.domElement as EventTarget
     canvas.removeEventListener('webglcontextlost', this.#onContextLost as EventListener)
     canvas.removeEventListener('webglcontextrestored', this.#onContextRestored)
     this.#compositor.dispose()
+    // Browsers keep a canvas's context (and its GPU memory) alive while the canvas lives, and cap live contexts.
+    try {
+      renderer.forceContextLoss()
+    } catch {
+      // Already lost, or no WEBGL_lose_context: nothing more to free.
+    }
     this.#events.clear()
   }
 
@@ -590,6 +648,10 @@ export class Engine {
     this.#live = false
     this.#lastNow = -1
     this.#lastTime = Number.NaN
+    // A new stats window: the first `stats` of this source does not average in the previous one.
+    this.#statsStart = 0
+    this.#statsFrames = 0
+    this.#statsMs = 0
     this.#resetFaces()
     for (const f of this.#stack) f.reseed(this.#filterSeed(f.manifest.id))
     this.#compositor.setSource(image, mirrored)
@@ -599,8 +661,10 @@ export class Engine {
     const feed = this.#feed
     this.#feed = undefined
     if (!feed) return
-    if (feed.kind === 'video') feed.scheduler.dispose()
-    else if (feed.kind === 'canvas' || feed.kind === 'still') cancelAnimationFrame(feed.raf)
+    if (feed.kind === 'video') {
+      feed.scheduler.dispose()
+      if (feed.owned) feed.source.dispose()
+    } else if (feed.kind === 'canvas' || feed.kind === 'still') cancelAnimationFrame(feed.raf)
     else if (feed.kind === 'offline') feed.source.restart() // frees the decoder; the next run starts from frame 0
   }
 
@@ -1023,8 +1087,9 @@ export class Engine {
         void this.#updateTracking()
       },
       send: (f, name, data) => {
-        checkMessageName(name)
-        f.host?.queue({ name: `message:${name}`, payload: { data } })
+        // A removed filter (the engine disposed included) ignores it, like a filter without a script.
+        const payload = messagePayload(name, data)
+        f.host?.queue({ name: `message:${name}`, payload })
       },
     })
   }
@@ -1184,10 +1249,6 @@ export function createEngine(options: EngineOptions): Engine {
 }
 
 export { memorySource, urlSource }
-
-function checkMessageName(name: string): void {
-  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) throw new OuafError('invalid-param', `Invalid message name "${name}".`)
-}
 
 function passStage(stage: Stage): 'background' | 'face' | 'warp' | 'color' {
   if (stage === 'background' || stage === 'face' || stage === 'warp' || stage === 'color') return stage

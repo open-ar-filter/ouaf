@@ -1,0 +1,30 @@
+# Ouaf
+
+> Ouaf (Open Universal AR Filter) is an open-source engine for real-time AR filters on the web (face filters first)
+> and an open filter format. A filter is a folder with a `manifest.json` (declarative layers: text, sticker, model,
+> warp, color, shader, canvas) and optionally a sandboxed script written as `filter.ts`; `ouaf validate` and
+> `ouaf pack` check it and report each problem with a JSON pointer and a fix.
+
+To write a filter, read the authoring guide first: it is self-contained and lists what works today. Its section 17
+gives the create → validate → preview loop for agents. The format is a draft (1.0.0-draft.1); the tools run from a
+clone of the repository. Use only vocabulary from these documents: unknown properties are errors.
+
+## Docs
+
+- [Authoring guide](https://raw.githubusercontent.com/open-ar-filter/ouaf/main/AUTHORING.md): package layout, manifest, anchors, the seven layer types, assets, params and presets, bindings, events, scripts (`defineFilter`, the `f` API), shaders, limits, validation errors, complete examples
+- [Format specification](https://raw.githubusercontent.com/open-ar-filter/ouaf/main/docs/spec/ouaf-v1.md): normative behaviour, referenced as §n by the guide
+- [Manifest JSON Schema](https://raw.githubusercontent.com/open-ar-filter/ouaf/main/docs/spec/ouaf-v1.schema.json): exact structure, bounds and defaults of `manifest.json`
+- [Script API types](https://raw.githubusercontent.com/open-ar-filter/ouaf/main/packages/spec/src/script.ts): TypeScript types of `defineFilter`, `f`, `frame` and event payloads
+
+## Examples
+
+- [Filters](https://github.com/open-ar-filter/ouaf/tree/main/filters): demo filters, one folder per filter
+- [Test fixtures](https://github.com/open-ar-filter/ouaf/tree/main/filters/fixtures): one small filter per layer type (ignore the `playground:*` test layer types)
+- [A filter.ts source](https://raw.githubusercontent.com/open-ar-filter/ouaf/main/packages/cli/test/fixtures/authoring/filter.ts): the input of `ouaf pack`
+
+## Optional
+
+- [Privacy](https://raw.githubusercontent.com/open-ar-filter/ouaf/main/docs/privacy.md): what leaves the device, the script sandbox
+- [Engine architecture](https://raw.githubusercontent.com/open-ar-filter/ouaf/main/docs/decisions/engine-architecture.md): how the reference engine runs filters, its provisional parts
+- [Test clips](https://raw.githubusercontent.com/open-ar-filter/ouaf/main/test-media/README.md): the licensed videos to preview filters with (`?source=<clip>`)
+- [Contributing to the engine](https://raw.githubusercontent.com/open-ar-filter/ouaf/main/AGENTS.md): rules for changing the engine itself, not for writing filters

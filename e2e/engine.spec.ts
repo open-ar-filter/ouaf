@@ -27,7 +27,7 @@ function check<T>(sample: T, test: (s: T) => boolean): boolean {
 async function sample(page: Page): Promise<{ r: number; g: number; b: number; green: number }> {
   const png = await page.locator('#canvas').screenshot()
   return page.evaluate(async (bytes) => {
-    const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
     const c = new OffscreenCanvas(bitmap.width, bitmap.height)
     const ctx = c.getContext('2d')!
     ctx.drawImage(bitmap, 0, 0)
@@ -44,7 +44,7 @@ async function sample(page: Page): Promise<{ r: number; g: number; b: number; gr
     }
     const n = d.length / 4
     return { r: r / n, g: g / n, b: b / n, green }
-  }, [...png])
+  }, png.toString('base64'))
 }
 
 test('a filter folder is tracked, drawn and driven by its params', async ({ page }) => {
