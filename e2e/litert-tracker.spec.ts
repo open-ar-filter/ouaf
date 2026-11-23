@@ -61,7 +61,8 @@ test('the governor drops the extra faces of LiteRT.js (it can shed them)', async
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 8 })
   await page.goto('/engine.html?source=pesquet-closeup&autostart&backend=litert&maxFaces=4&adapt=1&filter=/filters/fixtures/dot-tint/')
   await expect.poll(() => page.evaluate(() => window.ouaf?.performance.map((e) => e.dropped.join(',')) ?? []), { timeout: 90_000, intervals: [500, 1000] }).toContain('blendshapes,extraFaces')
-  expect((await stats(page)).faces).toBe(1)
+  // One face tracked (a stats sample may catch it lost for a moment under this throttling).
+  await expect.poll(async () => (await stats(page)).faces, POLL).toBe(1)
 })
 
 test('nothing is fetched from another origin by the LiteRT.js tracker (docs/privacy.md)', async ({ page, baseURL }) => {
