@@ -20,7 +20,7 @@ import {
 import { Group } from 'three'
 
 const STYLE = `
-.ouaf-perf { position: sticky; top: 0; z-index: 1; margin: 12px 0; padding: 8px; max-width: 640px; box-sizing: border-box;
+.ouaf-perf { margin: 12px 0; padding: 8px; max-width: 640px; box-sizing: border-box;
   background: Canvas; color: CanvasText; border: 1px solid GrayText; border-radius: 6px;
   font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
 .ouaf-perf-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px 8px; }

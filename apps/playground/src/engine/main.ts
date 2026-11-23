@@ -65,7 +65,7 @@ if (BACKEND === 'measure') {
   }
 }
 const perf = createPerfPanel(throttle, { signals: SIGNALS })
-startButton.after(perf.element)
+log.after(perf.element)
 
 const engine = createEngine({
   canvas,
