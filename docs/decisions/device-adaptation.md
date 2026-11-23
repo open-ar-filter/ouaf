@@ -184,7 +184,8 @@ value `{ backend, measuredMs, userAgent, at }`; ignored when the browser's user 
 Headless Chromium with a software GPU (SwiftShader), desktop: GPU 65–80 ms, CPU 20–23 ms per frame → CPU. The
 Redmi Note 11S measured by hand in #83 (MediaPipe: GPU ≈ 134 ms, CPU ≈ 67 ms) should also pick the CPU among
 MediaPipe's delegates, and LiteRT.js in a worker (≈ 55–70 ms per result in #83's W8 runs) overall. Desktop (#165,
-`pesquet-talk`): LiteRT 32–48, GPU 44–52, CPU 17–20 ms → MediaPipe CPU.
+`pesquet-talk`): LiteRT 32–48, GPU 44–52, CPU 17–20 ms → MediaPipe CPU. Redmi Note 11S (#165, camera): LiteRT 55.0,
+GPU 101.0, CPU 66.3 ms → LiteRT.js.
 
 ## Frame budget (#34)
 

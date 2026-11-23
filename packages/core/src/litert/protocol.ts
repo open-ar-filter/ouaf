@@ -31,6 +31,8 @@ export interface FrameMessage {
   blendshapes: boolean
   /** Forget the tracked face first (still image, new run of a file source). */
   reset: boolean
+  /** The result must be this frame's (file source): no async readback for it. */
+  exact?: boolean
   /** Free result buffer (`RESULT_FLOATS` floats, transferred), sent back in the `result` message. */
   buffer: ArrayBuffer
   /** When it was posted: `performance.timeOrigin + performance.now()` of the page (ms). */

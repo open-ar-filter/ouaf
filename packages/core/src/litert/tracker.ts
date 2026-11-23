@@ -34,8 +34,8 @@ export interface LiteRtTrackerOptions {
   /** Crops on WebGL2 (`gpu`, default, with a 2D-canvas fallback) or on a 2D canvas (`canvas`, to test the fallback). */
   crop?: Crop
   /**
-   * WebGL2 crops: `sync` (default) or `async` readback (the crop is read back while the landmark model runs on the
-   * previous frame: results one frame late, see `PipelineOptions.readback`).
+   * WebGL2 crops: `async` (default) readback, the crop read back while the landmark model runs on the previous
+   * frame (results one frame late, see `PipelineOptions.readback`), or `sync`.
    */
   readback?: Readback
   /** How frames reach the worker: `videoframe` (default, `ImageBitmap` where missing) or `bitmap`. */
@@ -130,7 +130,7 @@ export async function openLiteRtTracker(config: TrackerConfig, env: TrackerEnv, 
         }
       }
       const assetsBaseUrl = new URL(env.assetsBaseUrl, typeof location === 'undefined' ? undefined : location.href).href
-      worker.postMessage({ type: 'init', assetsBaseUrl, crop: options.crop ?? 'gpu', readback: options.readback ?? 'sync' } satisfies ToWorker)
+      worker.postMessage({ type: 'init', assetsBaseUrl, crop: options.crop ?? 'gpu', readback: options.readback ?? 'async' } satisfies ToWorker)
     })
   } catch (err) {
     worker.terminate()
@@ -153,6 +153,8 @@ interface Flight {
   readonly height: number
   /** `performance.now()` when the capture started, and `wallNow()` when it was posted. */
   readonly capturedAt: number
+  /** A file source's frame: its own result, no async readback. */
+  readonly exact: boolean
   captureMs: number
   sentAt: number
 }
@@ -259,7 +261,7 @@ export class LiteRtFrameTracker implements FrameTracker {
     this.#config = config
   }
 
-  track(input: TrackerInput, _timestampMs: number, mediaTime: number, out: FaceFrame): void | Promise<void> {
+  track(input: TrackerInput, _timestampMs: number, mediaTime: number, out: FaceFrame, exact = false): void | Promise<void> {
     out.count = 0
     out.mediaTime = mediaTime
     out.width = trackerInputWidth(input)
@@ -269,7 +271,7 @@ export class LiteRtFrameTracker implements FrameTracker {
     if (this.#claim) throw new Error('A LiteRT.js face tracking call is already in flight.')
     // The newest frame offered from this source: its result, or its run in progress.
     const ready = this.#ready
-    if (ready && ready.flight.id === this.#latest && ready.flight.input === input) {
+    if (!exact && ready && ready.flight.id === this.#latest && ready.flight.input === input) {
       this.#ready = undefined
       this.#write(ready.flight, ready.msg, out)
       this.#free.push(ready.msg.buffer)
@@ -278,9 +280,9 @@ export class LiteRtFrameTracker implements FrameTracker {
       return
     }
     const latest = this.#flights.get(this.#latest)
-    if (latest && latest.input === input) return this.#claimFlight(latest.id, out)
+    if (!exact && latest && latest.input === input) return this.#claimFlight(latest.id, out)
     if (out.width === 0 || out.height === 0) return
-    const id = this.#send(input, mediaTime, out.width, out.height)
+    const id = this.#send(input, mediaTime, out.width, out.height, exact)
     return id === undefined ? undefined : this.#claimFlight(id, out)
   }
 
@@ -298,7 +300,7 @@ export class LiteRtFrameTracker implements FrameTracker {
   trackImage(input: TrackerInput, mediaTime: number, out: FaceFrame): void | Promise<void> {
     // A still image: from the detector, nothing carried over.
     this.reset()
-    return this.track(input, 0, mediaTime, out)
+    return this.track(input, 0, mediaTime, out, true)
   }
 
   reset(): void {
@@ -351,10 +353,10 @@ export class LiteRtFrameTracker implements FrameTracker {
   }
 
   /** Captures and posts a frame; returns its id, undefined when it could not be captured. */
-  #send(input: TrackerInput, mediaTime: number, width: number, height: number): number | undefined {
+  #send(input: TrackerInput, mediaTime: number, width: number, height: number, exact = false): number | undefined {
     const capturedAt = performance.now()
     const id = ++this.#nextId
-    const flight: Flight = { id, input, mediaTime, width, height, capturedAt, captureMs: 0, sentAt: Number.NaN }
+    const flight: Flight = { id, input, mediaTime, width, height, capturedAt, exact, captureMs: 0, sentAt: Number.NaN }
     this.#flights.set(id, flight)
     this.#latest = id
     this.#recent.set(id, { mediaTime, width, height })
@@ -399,6 +401,7 @@ export class LiteRtFrameTracker implements FrameTracker {
       height: flight.height,
       blendshapes: this.#config.blendshapes,
       reset,
+      ...(flight.exact ? { exact: true } : {}),
       buffer,
       sentAt: flight.sentAt,
     }

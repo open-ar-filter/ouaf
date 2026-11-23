@@ -75,15 +75,15 @@ const BACKEND = params.get('backend') ?? undefined
 /**
  * LiteRT.js tracker options, to test its fallbacks: `?crop=canvas` (2D-canvas crops), `?transfer=bitmap` (`ImageBitmap`),
  * `?queue=0` (one frame at a time: no frame queued in the worker while it runs), `?frames=element` (camera frames
- * captured from the `<video>`, not read from the track in the worker), `?readback=async` (WebGL2 crops read back while
- * the landmark model runs on the previous frame: results one frame late).
+ * captured from the `<video>`, not read from the track in the worker), `?readback=sync` (each WebGL2 crop read back
+ * before its landmark model runs; default: while the model runs on the previous frame, results one frame late).
  */
 const LITERT: LiteRtTrackerOptions = {
   ...(params.get('crop') === 'canvas' ? { crop: 'canvas' } : {}),
   ...(params.get('transfer') === 'bitmap' ? { transfer: 'bitmap' } : {}),
   ...(params.get('queue') === '0' ? { queue: false } : {}),
   ...(params.get('frames') === 'element' ? { frames: 'element' } : {}),
-  ...(params.get('readback') === 'async' ? { readback: 'async' } : {}),
+  ...(params.get('readback') === 'sync' ? { readback: 'sync' } : {}),
 }
 if (BACKEND === 'measure') {
   try {

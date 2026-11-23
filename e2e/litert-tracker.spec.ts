@@ -16,9 +16,9 @@ async function open(page: Page, query: string): Promise<void> {
 
 const stats = (page: Page) => page.evaluate(() => window.ouaf!.stats!)
 
-test('forced LiteRT.js: tracks the clip in a worker, WebGL2 crops, VideoFrame transfer', async ({ page }) => {
+test('forced LiteRT.js: tracks the clip in a worker, WebGL2 crops read back async, VideoFrame transfer', async ({ page }) => {
   await open(page, 'source=pesquet-closeup&autostart&backend=litert&filter=/filters/fixtures/dot-tint/')
-  await expect.poll(async () => (await stats(page)).tracker, POLL).toBe('LiteRT.js wasm in a worker, WebGL2 crops, VideoFrame (forced)')
+  await expect.poll(async () => (await stats(page)).tracker, POLL).toBe('LiteRT.js wasm in a worker, WebGL2 crops read back async, VideoFrame (forced)')
   // Tracking keeps up with the clip on a desktop, with ≈ nothing on the main thread.
   await page.waitForTimeout(3000)
   const s = await stats(page)
@@ -35,14 +35,13 @@ test('LiteRT.js fallbacks: 2D-canvas crops and ImageBitmap transfer', async ({ p
   expect((await stats(page)).faces).toBe(1)
 })
 
-test('async readback: tracks the clip, one frame late', async ({ page }) => {
-  await open(page, 'source=pesquet-closeup&autostart&backend=litert&readback=async&filter=/filters/fixtures/dot-tint/')
-  await expect.poll(async () => (await stats(page)).tracker, POLL).toBe('LiteRT.js wasm in a worker, WebGL2 crops read back async, VideoFrame (forced)')
+test('sync readback (?readback=sync): each crop read back before its landmark model', async ({ page }) => {
+  await open(page, 'source=pesquet-closeup&autostart&backend=litert&readback=sync&filter=/filters/fixtures/dot-tint/')
+  await expect.poll(async () => (await stats(page)).tracker, POLL).toBe('LiteRT.js wasm in a worker, WebGL2 crops, VideoFrame (forced)')
   await page.waitForTimeout(2000)
   const s = await stats(page)
   expect(s.faces).toBe(1)
   expect(s.trackingHz).toBeGreaterThan(10)
-  expect(s.trackerTimings?.readMs).toBeLessThan(s.trackerTimings!.landmarksMs!)
   expect(await page.evaluate(() => window.ouaf!.warnings)).toEqual([])
 })
 
@@ -77,17 +76,28 @@ test('the governor drops only what LiteRT.js can shed: blendshapes, never the an
 })
 
 /**
- * Same results as MediaPipe (VIDEO mode, CPU) on every third frame of four clips, decoded frame-exactly: on the
- * frames where both find the face, landmarks within a few % of the face size (the spike measured 0.6–2.5 % mean on
- * frontal frames), blendshapes within a few hundredths, the transformation matrix (fitted to our landmarks by
- * `estimateFacePose`, MediaPipe's own geometry pipeline) within a few degrees and centimetres; and both find a face
- * on the same frames, apart from a few head turns.
+ * Same results as MediaPipe (VIDEO mode, CPU) on frames of four clips, decoded frame-exactly, each of our results
+ * compared with MediaPipe's of the frame it describes: on the frames where both find the face, landmarks within a few %
+ * of the face size (the spike measured 0.6–2.5 % mean on frontal frames), blendshapes within a few hundredths, the
+ * transformation matrix (fitted to our landmarks by `estimateFacePose`, MediaPipe's own geometry pipeline) within a
+ * few degrees and centimetres; and both find a face on mostly the same frames.
+ *
+ * Two variants, same limits. Sync readback on every third frame: our ROI comes from the previous result, as
+ * MediaPipe's. Async readback (the default) on every second frame (15 Hz, about the phone's rate): frame N's ROI comes
+ * from frame N − 2's landmarks (extrapolated), one frame older. With every third frame instead (a 200 ms old ROI),
+ * fast head turns lose the face more often (same frames as MediaPipe 78–82 % on `pesquet-talk` and `pesquet-walk`).
  */
-test('landmarks, blendshapes and matrix match MediaPipe on the test clips', async ({ page }) => {
+const LIMITS = { agree: 0.85, median: 2, p90: 4, blendshapes: 0.04, rotationDeg: 3, translationCm: 1.5 }
+const VARIANTS = [
+  { name: 'sync readback, every 3rd frame', readback: 'sync', step: 3, limits: LIMITS },
+  { name: 'async readback, every 2nd frame', readback: 'async', step: 2, limits: LIMITS },
+] as const
+for (const variant of VARIANTS) {
+test(`landmarks, blendshapes and matrix match MediaPipe on the test clips: ${variant.name}`, async ({ page }) => {
   test.setTimeout(240_000)
   await page.goto('/engine.html')
   await page.waitForFunction(() => !!window.ouaf)
-  const results = await page.evaluate(async () => {
+  const results = await page.evaluate(async ({ readback, step }) => {
     const core = window.ouaf!.core
     const warnings: string[] = []
     const env = { assetsBaseUrl: new URL('./', document.baseURI).href, warn: (m: string) => void warnings.push(m) }
@@ -95,28 +105,33 @@ test('landmarks, blendshapes and matrix match MediaPipe on the test clips', asyn
     const quantile = (values: number[], p: number) => [...values].sort((x, y) => x - y)[Math.min(values.length - 1, Math.floor(p * values.length))] ?? Number.NaN
     const out: Record<string, { frames: number; agree: number; both: number; landmarks: number[]; blendshapes: number; rotationDeg: number; translationCm: number }> = {}
     for (const clip of ['pesquet-talk', 'pesquet-closeup', 'pesquet-turn', 'pesquet-walk']) {
-      const ours = await core.createLiteRtFaceTracker().create(config, env)
+      const ours = await core.createLiteRtFaceTracker({ readback }).create(config, env)
       const mediaPipe = await core.mediaPipeFaceTracker.create(config, { ...env, backend: 'CPU' })
       const a = core.createFaceFrame(1)
-      const b = core.createFaceFrame(1)
       const source = await core.OfflineVideoSource.open(`/test-media/${clip}.mp4`, { rate: Infinity })
       const landmarks: number[] = []
       const blendshapes: number[] = []
       const rotations: number[] = []
       const translations: number[] = []
+      // MediaPipe's results by media time: ours may describe an earlier frame (async readback, one frame late).
+      const theirs = new Map<number, ReturnType<typeof core.createFaceFrame>>()
       let frames = 0
       let agree = 0
       for (let k = 0; ; k++) {
         const frame = await source.read()
         if (!frame) break
         try {
-          if (k % 3) continue
+          if (k % step) continue
           const ts = frame.time * 1000 + 1
+          const mp = core.createFaceFrame(1)
+          await mediaPipe.track(frame.image, ts, frame.time, mp)
+          theirs.set(frame.time, mp)
           await ours.track(frame.image, ts, frame.time, a)
-          await mediaPipe.track(frame.image, ts, frame.time, b)
         } finally {
           frame.close()
         }
+        const b = theirs.get(a.mediaTime)
+        if (!b) continue
         frames++
         if ((a.count > 0) === (b.count > 0)) agree++
         if (!a.count || !b.count) continue
@@ -168,17 +183,19 @@ test('landmarks, blendshapes and matrix match MediaPipe on the test clips', asyn
       }
     }
     return { out, warnings }
-  })
+  }, { readback: variant.readback, step: variant.step })
   for (const [clip, r] of Object.entries(results.out)) console.log(clip, JSON.stringify(r))
   expect(results.warnings).toEqual([])
+  const t = variant.limits
   for (const [clip, r] of Object.entries(results.out)) {
     expect(r.both, clip).toBeGreaterThan(15)
-    expect(r.agree / r.frames, clip).toBeGreaterThan(0.85)
+    expect(r.agree / r.frames, clip).toBeGreaterThan(t.agree)
     // Landmark distance, % of the face size: median and 90th percentile.
-    expect(r.landmarks[0], clip).toBeLessThan(2)
-    expect(r.landmarks[1], clip).toBeLessThan(4)
-    expect(r.blendshapes, clip).toBeLessThan(0.04)
-    expect(r.rotationDeg, clip).toBeLessThan(3)
-    expect(r.translationCm, clip).toBeLessThan(1.5)
+    expect(r.landmarks[0], clip).toBeLessThan(t.median)
+    expect(r.landmarks[1], clip).toBeLessThan(t.p90)
+    expect(r.blendshapes, clip).toBeLessThan(t.blendshapes)
+    expect(r.rotationDeg, clip).toBeLessThan(t.rotationDeg)
+    expect(r.translationCm, clip).toBeLessThan(t.translationCm)
   }
 })
+}

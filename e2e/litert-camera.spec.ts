@@ -20,7 +20,7 @@ for (const [query, frames] of [
     await page.click('#start')
     await expect
       .poll(() => page.evaluate(() => window.ouaf!.stats?.tracker ?? ''), { timeout: 60_000, intervals: [250, 500, 1000] })
-      .toBe(`LiteRT.js wasm in a worker, WebGL2 crops, ${frames} (forced)`)
+      .toBe(`LiteRT.js wasm in a worker, WebGL2 crops read back async, ${frames} (forced)`)
     await expect.poll(() => page.evaluate(() => window.ouaf!.stats?.trackingHz ?? 0), { timeout: 30_000 }).toBeGreaterThan(5)
     expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
     expect(await page.evaluate(() => window.ouaf!.warnings)).toEqual([])

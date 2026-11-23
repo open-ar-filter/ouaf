@@ -217,14 +217,14 @@ export class ChoosingFrameTracker implements FrameTracker {
     })()
   }
 
-  track(input: TrackerInput, timestampMs: number, mediaTime: number, out: FaceFrame): void | Promise<void> {
+  track(input: TrackerInput, timestampMs: number, mediaTime: number, out: FaceFrame, exact?: boolean): void | Promise<void> {
     const bench = this.#bench
     const r = bench ? bench.running.get(bench.run.next)! : this.#current
     this.#last = r
     const start = bench ? performance.now() : 0
     let pending: void | Promise<void>
     try {
-      pending = r.tracker.track(input, timestampMs, mediaTime, out)
+      pending = r.tracker.track(input, timestampMs, mediaTime, out, exact)
     } catch (error) {
       return this.#onFailure(r, error, out)
     }

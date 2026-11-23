@@ -158,7 +158,7 @@ test('adaptation can be turned off', async ({ page }) => {
 
 test('the tracker backend is measured on the first live frames, cached on the device, or forced', async ({ page }) => {
   const tracker = () => page.evaluate(() => window.ouaf!.stats?.tracker ?? '')
-  const label = (backend: string) => (backend === 'LiteRT' ? 'LiteRT.js wasm in a worker, WebGL2 crops, VideoFrame' : `MediaPipe ${backend}, main thread`)
+  const label = (backend: string) => (backend === 'LiteRT' ? 'LiteRT.js wasm in a worker, WebGL2 crops read back async, VideoFrame' : `MediaPipe ${backend}, main thread`)
   await open(page, 'filter=/filters/fixtures/dot-tint/')
   // LiteRT.js in a worker against MediaPipe's GPU and CPU delegates (#165).
   await expect.poll(tracker, POLL).toMatch(/ \(measured: (LiteRT|GPU|CPU) [\d.]+ ms, (LiteRT|GPU|CPU) [\d.]+ ms, (LiteRT|GPU|CPU) [\d.]+ ms\)$/)
