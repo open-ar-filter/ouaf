@@ -779,8 +779,11 @@ what it **measures** while the filter runs, within limits the filter declares.
 - The **tracking rate** is the number of tracking results completed per second, measured over a sliding window of a
   few seconds. It can be lower than the rendering frame rate: an engine MAY render every camera frame and update
   tracking less often.
-- **Floor: 15 Hz.** Below it, anchored content visibly lags behind the face. A filter that uses face tracking is not
-  displayed while the rate stays below the floor (16.3).
+- **Floor: 12 Hz.** Below it, anchored content visibly lags behind the face, even with the smoothing and prediction
+  an engine applies between results. A filter that uses face tracking is not displayed while the rate stays below the
+  floor (16.3). The floor is a *tracking* rate: rendering may keep the camera's frame rate meanwhile (a rendering floor
+  such as 15 frames per second is another measure). Informative: on a mid-range phone (Redmi Note 11S), 16–18 Hz of
+  tracking with prediction between results was judged to follow the face well.
 - Filters without face tracking (e.g. a color grade on the whole image) are not subject to the floor.
 
 ### 16.2 Optional capabilities
@@ -803,9 +806,12 @@ To keep the tracking rate above the floor, an engine MAY drop the following capa
 
 ### 16.3 Below the floor
 
-- **At startup**, the engine judges the rate over the first 3 s, after dropping the optional capabilities it needs to.
-- **While running**, the filter is hidden once the rate has stayed below **15 Hz for 3 s**, and shown again once the
-  rate is back above **18 Hz**. The gap between the two thresholds prevents flicker.
+- **At startup**, the engine judges the rate over the first 3 s, after dropping the optional capabilities it needs to,
+  without counting the tracker's warm-up (its first, slower results).
+- **While running**, the filter is hidden once the rate has stayed below **12 Hz for 3 s**, and shown again once the
+  rate is back above **14 Hz**. The gap between the two thresholds prevents flicker. The rate that counts is the one
+  with the filter shown and the faces tracked: hiding the filter frees the device, and a tracker is faster without a
+  face to analyse, so neither is a recovery by itself.
 - While a filter is hidden, the engine renders the **raw camera image**, without any part of the filter. The filter is
   suspended: no layers are drawn, no events are delivered and its script is not called. Tracking keeps running, to
   measure when the filter can be shown again.

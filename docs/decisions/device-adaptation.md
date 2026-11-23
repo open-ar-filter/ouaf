@@ -5,6 +5,15 @@ how the reference engine does it and the numbers chosen. Thresholds are in `DEFA
 (`packages/core/src/engine/governor.ts`), the geometric mapping in `GEOMETRY_CALIBRATION`
 (`packages/core/src/expressions/geometry.ts`).
 
+## Thresholds
+
+The first version used a 15 Hz floor (shown again above 18 Hz, drop below 16, restore at 20). With our LiteRT.js
+tracker in a worker (#166), the Redmi Note 11S tracks at 16–18 Hz and the user judged that "the glasses follow well"
+at that rate: smoothing and prediction between results (#13) fill the gaps. 15 Hz left no margin, so the floor is now
+12 Hz, shown again above 14 Hz, drop below 13 Hz, restore at ≥ 17 Hz predicted (same delays and probes). Snap's
+"15 FPS floor" is a rendering frame rate, not a tracking rate: rendering stays at the camera's rate here whatever the
+tracking rate.
+
 ## Tracking rate
 
 `TrackingHub.rateHz`: completed results per second over a 3 s sliding window, apart from the rendering frame rate
@@ -21,10 +30,12 @@ enabled and tracking runs; file sources (image, offline video, `pushFrame`) are 
 | Rule | Value | Why |
 |---|---|---|
 | Settle after each change | 1 s | MediaPipe reconfigures asynchronously; the rate window needs a few results |
-| Drop the next optional capability | settled rate < 16 Hz | 1 Hz of margin above the floor, so that the filter is not hidden when a drop is enough |
-| Hide the face filters | < 15 Hz for 3 s, nothing left to drop | spec §16.3 |
-| Show them again | predicted rate *with the filters shown* > 18 Hz for 1 s | spec §16.3; doubled after each quick re-hide |
-| Restore the last capability dropped | predicted rate ≥ 20 Hz for 5 s | 4 Hz above the drop level; doubled when it had to be dropped again within 10 s |
+| Drop the next optional capability | settled rate < 13 Hz | 1 Hz of margin above the floor, so that the filter is not hidden when a drop is enough |
+| Hide the face filters | < 12 Hz for 3 s, nothing left to drop | spec §16.3 |
+| Show them again | predicted rate *with the filters shown* > 14 Hz for 1 s | spec §16.3; doubled after each quick re-hide |
+| Restore the last capability dropped | predicted rate ≥ 17 Hz for 5 s | 4 Hz above the drop level; doubled when it had to be dropped again within 10 s |
+| Tracker warm-up | first 1 s after the governor starts | its first results are slower (7.4 Hz for a worker tracker's first results on the Redmi) |
+| Faces | showing and restoring judge only the results with the faces of the drop or hide (rate from their intervals, their pipeline time); none in the window: no decision, timers kept | without a face MediaPipe runs only its detector (Redmi: 11 → 23 Hz); the test clips lose the face at cuts and profiles, so a time-based gate blocked recovery |
 | Probe | 30 s, doubling to 10 min | when the measured rate is high but the prediction says no |
 | Pause | > 1.5 s between frames | a background tab: the measure restarts |
 
@@ -43,9 +54,11 @@ measured 1 s after the hide, while the rate was still climbing. Now the governor
 (`hiddenBaselineMs`), the rate and pipeline time once hidden; after that the shown rate is predicted as the rate just
 before hiding, scaled by how much faster tracking got since then (rate or pipeline time, whichever says more). In the
 Redmi case that stays at 13.2 Hz: only the probes (30 s, then 60 s, 120 s… up to 10 min, each showing the filter for
-3 s at most) try again. A real gain (another load ends) still shows the filters within seconds. Reproduced by
+3 s at most) try again. The same holds for results with fewer faces than when the filter was hidden (or a
+capability dropped): seen on the Redmi with MediaPipe forced (hidden at 13.1 Hz, shown again 8 s later at 23.1 Hz
+with no face in view, MediaPipe running only its detector). Such a rate still counts towards dropping. A real gain (another load ends) still shows the filters within seconds. Reproduced by
 `DeviceGovernor` unit tests and by `e2e/device-adaptation.spec.ts` (fixture `busy`: a layer that blocks the main
-thread 55 ms per frame). The doubling after a failed show did apply on the phone (the delay went from 1 s to 2 s), but
+thread 85 ms per frame). The doubling after a failed show did apply on the phone (the delay went from 1 s to 2 s), but
 a doubled 1 s delay cannot prevent a flicker that the prediction lets through.
 
 The root cause on that phone is the main-thread MediaPipe tracker (8–12 Hz there). The decision of #83 / #6 (our
