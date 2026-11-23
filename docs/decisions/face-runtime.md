@@ -5,7 +5,7 @@ Note 11S, Redmi Note 14 Pro 5G) ran the W runs of the
 [protocol](phase0-measurement-protocol.md#83--face-models-on-another-runtime): our own pipeline on LiteRT.js, **in a
 worker, single-threaded, crops on the GPU**, tracks at ≈ 15–18 Hz while the page keeps rendering at 29 fps, against
 ≈ 8–10 Hz for MediaPipe tasks-vision. An iPhone and a high-end Android phone still have to confirm it (#95).
-**In the engine** since #165, one face for now: see [In the engine](#in-the-engine-165).
+**In the engine** since #165, one face or several: see [In the engine](#in-the-engine-165).
 
 ## In the engine (#165)
 
@@ -66,7 +66,14 @@ GPU and CPU delegates by measuring them ([`device-adaptation.md`](device-adaptat
   replaces `importScripts` during the load by an indirect `eval` of it; `Module.locateFile` (Emscripten's own hook)
   points at the `.wasm`. No pthreads, so no `Worker` wrapper. A classic worker would need no shim, but bundlers
   (Vite in dev) only serve module workers with imports.
-- **One face**: with `maxFaces` > 1 only MediaPipe is a candidate (multi-face is the next step of #165).
+- **Several faces** (`maxFaces` > 1): one tracked ROI per face, each with its own crop, landmark run and
+  blendshapes run (one pixel buffer per face with the async readback). The detector runs while fewer faces than
+  `maxFaces` are tracked; its faces that overlap a tracked one (IoU of the ROI squares > 0.5, MediaPipe's
+  `AssociationNormRectCalculator` threshold) are dropped, and of two tracked faces that come onto the same one, the
+  older stays. One difference with MediaPipe: there, a detection replaces the tracked ROI it overlaps, so while fewer
+  faces than `maxFaces` are tracked every face is cropped from the detector's box, frame after frame; here a tracked
+  face keeps the ROI from its own landmarks, which is steadier (below). The governor can drop the extra faces
+  (`FrameTracker.sheds`): each face costs a landmark run.
 - Blendshapes are skipped while the engine does not want them (governor, spec §16.2; checked by a browser test: the
   model's time falls to 0); the analysis resolution is ignored (crops come from the full frame on the GPU), so the
   tracker tells the governor not to drop it (`FrameTracker.sheds`).
@@ -87,6 +94,13 @@ Same results as MediaPipe (`e2e/litert-tracker.spec.ts`, every third frame of fo
 landmark distance 0.6–1.2 % of the face size (90th percentile 1.0–2.5 %), blendshapes 0.01–0.02 mean |Δ|, the matrix
 within 1.1–1.8° and 0.5–0.9 cm (median), and both find a face on 90–100 % of the same frames. `estimateFacePose` on
 MediaPipe's own landmarks gives MediaPipe's matrix exactly (≤ 0.01 cm).
+
+Several faces (same test, every second frame, async readback, `maxFaces` = the clip's face count): same face count as
+MediaPipe on 94–100 % of the frames, median landmark distance 0.5–0.9 % of the face size (90th percentile 0.8–1.6 %)
+on `two-faces-stacked`, `three-faces-grid` and `four-faces-grid`. With `maxFaces` 4 on the two- and three-face clips
+(the detector runs on every frame, see above), MediaPipe loses a face on up to 20 of 93 frames and its landmarks move
+by 2–4 % of the face size from ours on the faces it crops from its detections; ours finds every face on every frame
+there, and never one more.
 
 ## Question
 

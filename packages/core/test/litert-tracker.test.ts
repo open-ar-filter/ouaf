@@ -66,21 +66,28 @@ async function open(options: { crop?: 'gpu' | 'canvas'; warnings?: string[] } = 
   return { tracker, worker, warnings }
 }
 
-/** The worker's answer to a frame: the landmarks of a synthetic face, normalized, and blendshape scores. */
-function answer(frame: FrameMessage, options: { found?: boolean; blendshapes?: boolean; error?: string } = {}) {
-  const face = createFaceFrame(1)
+/**
+ * The worker's answer to a frame: the landmarks of synthetic faces (`faces`, default 1; face `i` moved by `i` × 10 cm
+ * to the right), normalized, and blendshape scores (`i + k / 100` for face `i`, score `k`).
+ */
+function answer(frame: FrameMessage, options: { found?: boolean; faces?: number; blendshapes?: boolean; error?: string } = {}) {
+  const count = options.found === false ? 0 : (options.faces ?? 1)
+  const face = createFaceFrame(Math.max(1, count))
   face.width = frame.width
   face.height = frame.height
-  writeSyntheticFace(face, 0, { yaw: 10, t: [2, -1, -50] })
-  const data = new Float32Array(frame.buffer, 0, RESULT_FLOATS)
-  data.set(face.landmarks.subarray(0, LANDMARKS_STRIDE), 0)
-  for (let i = 0; i < BLENDSHAPES_STRIDE; i++) data[LANDMARKS_STRIDE + i] = i / 100
+  const data = new Float32Array(frame.buffer)
+  for (let f = 0; f < count; f++) {
+    writeSyntheticFace(face, f, { yaw: 10, t: [2 + 10 * f, -1, -50] })
+    data.set(face.landmarks.subarray(f * LANDMARKS_STRIDE, (f + 1) * LANDMARKS_STRIDE), f * RESULT_FLOATS)
+    for (let i = 0; i < BLENDSHAPES_STRIDE; i++) data[f * RESULT_FLOATS + LANDMARKS_STRIDE + i] = f + i / 100
+  }
+  face.count = count
   return {
     type: 'result' as const,
     id: frame.id,
     frame: frame.id,
     buffer: frame.buffer,
-    found: options.found ?? true,
+    count,
     hasBlendshapes: options.blendshapes ?? frame.blendshapes,
     timings: { detectMs: Number.NaN, uploadMs: 2, cropMs: 3, readMs: 2.5, convertMs: 0.4, landmarksMs: 7, blendshapesMs: 1 },
     warnings: [],
@@ -103,7 +110,8 @@ describe('LiteRtFrameTracker (page side of the worker)', () => {
     const done = tracker.track(video, 1, 0.5, out)
     expect(done).toBeInstanceOf(Promise)
     const [frame] = worker.frames
-    expect(frame).toMatchObject({ id: 1, width: 720, height: 1280, blendshapes: true, reset: false })
+    expect(frame).toMatchObject({ id: 1, width: 720, height: 1280, blendshapes: true, maxFaces: 1, reset: false })
+    expect(frame!.buffer.byteLength).toBe(RESULT_FLOATS * 4)
     expect(frame!.frame).toBeInstanceOf(FakeVideoFrame)
     expect((frame!.frame as unknown as FakeVideoFrame).init).toEqual({ timestamp: 500_000 })
     expect(worker.posted.at(-1)!.transfer).toEqual([frame!.frame, frame!.buffer])
@@ -314,6 +322,50 @@ describe('LiteRtFrameTracker (page side of the worker)', () => {
     worker.reply(answer(worker.frames[2]!))
     await exact
     expect(out.mediaTime).toBe(0.3)
+  })
+
+  it('tracks several faces: buffers sized for maxFaces, each face with its landmarks, blendshapes and matrix', async () => {
+    const { tracker, worker } = await open()
+    expect(tracker.sheds).toEqual(['blendshapes', 'extraFaces'])
+    tracker.configure({ ...CONFIG, maxFaces: 3 })
+    const video = { videoWidth: 640, videoHeight: 480 } as HTMLVideoElement
+    const out = createFaceFrame(3)
+    const done = tracker.track(video, 1, 0.1, out)
+    const frame = worker.frames[0]!
+    expect(frame.maxFaces).toBe(3)
+    expect(frame.buffer.byteLength).toBe(3 * RESULT_FLOATS * 4)
+    const reply = answer(frame, { faces: 2 })
+    worker.reply(reply)
+    await done
+    expect(out.count).toBe(2)
+    expect(out.landmarks.subarray(0, 2 * LANDMARKS_STRIDE)).toEqual(reply.face.landmarks.subarray(0, 2 * LANDMARKS_STRIDE))
+    expect(out.blendshapes[3]).toBeCloseTo(0.03, 6)
+    expect(out.blendshapes[BLENDSHAPES_STRIDE + 3]).toBeCloseTo(1.03, 6)
+    for (let f = 0; f < 2; f++) {
+      const matrix = new Float32Array(16)
+      estimateFacePose(reply.face, f, matrix, 0)
+      expect(out.matrices.subarray(f * 16, f * 16 + 16)).toEqual(matrix)
+    }
+    // The second face is 10 cm to the right of the first.
+    expect(out.matrices[16 + 12]! - out.matrices[12]!).toBeCloseTo(10, 0)
+
+    // Back to one face (the governor dropped the extra faces): the larger buffer is reused, one face asked.
+    tracker.configure(CONFIG)
+    const next = tracker.track(video, 2, 0.2, out)
+    expect(worker.frames[1]!.maxFaces).toBe(1)
+    worker.reply(answer(worker.frames[1]!))
+    await next
+    expect(out.count).toBe(1)
+  })
+
+  it('writes no more faces than the FaceFrame holds', async () => {
+    const { tracker, worker } = await open()
+    tracker.configure({ ...CONFIG, maxFaces: 2 })
+    const out = createFaceFrame(1)
+    const done = tracker.track({ videoWidth: 640, videoHeight: 480 } as HTMLVideoElement, 1, 0.1, out)
+    worker.reply(answer(worker.frames[0]!, { faces: 2 }))
+    await done
+    expect(out.count).toBe(1)
   })
 
   it('reports a failed run once as a warning; a dead worker fails the call and every later one', async () => {

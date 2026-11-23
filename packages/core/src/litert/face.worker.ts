@@ -11,6 +11,7 @@
  */
 import { supportsFeature } from '@litertjs/core'
 import { createPipeline, createPipelineResult, type Pipeline } from './pipeline.ts'
+import { BLENDSHAPES_STRIDE, LANDMARKS_STRIDE } from '../face.ts'
 import { RESULT_FLOATS, type FrameMessage, type FromWorker, type InitMessage, type StreamMessage, type ToWorker } from './protocol.ts'
 
 /** The dedicated worker global scope, typed loosely (the project compiles against the DOM lib only). */
@@ -191,7 +192,7 @@ function drop(msg: FrameMessage): void {
       type: 'result',
       id: msg.id,
       buffer: msg.buffer,
-      found: false,
+      count: 0,
       hasBlendshapes: false,
       frame: msg.id,
       dropped: true,
@@ -210,7 +211,9 @@ async function run(msg: FrameMessage, receivedAt: number): Promise<void> {
   running = true
   const startedAt = wallNow()
   const idleMs = startedAt - Math.max(lastPostedAt, receivedAt)
-  const out = new Float32Array(msg.buffer, 0, RESULT_FLOATS)
+  const out = new Float32Array(msg.buffer)
+  // As many faces as the buffer holds.
+  const maxFaces = Math.min(msg.maxFaces, Math.floor(out.length / RESULT_FLOATS))
   let error: string | undefined
   let unusable: string | undefined
   const frame = msg.frame ?? (await nextStreamFrame())
@@ -220,14 +223,14 @@ async function run(msg: FrameMessage, receivedAt: number): Promise<void> {
     if (!msg.frame) unusable = streamMismatch(frame as VideoFrame, msg.width, msg.height)
     if (unusable) {
       closeStream()
-      result.found = false
+      result.count = 0
       result.hasBlendshapes = false
     } else {
       if (msg.reset) pipeline.reset()
-      await pipeline.run(frame, msg.width, msg.height, msg.blendshapes, result, msg.id, msg.exact ?? false)
+      await pipeline.run(frame, msg.width, msg.height, { blendshapes: msg.blendshapes, maxFaces, frame: msg.id, exact: msg.exact ?? false }, result)
     }
   } catch (err) {
-    result.found = false
+    result.count = 0
     result.hasBlendshapes = false
     result.frame = msg.id
     error = errorText(err)
@@ -235,9 +238,10 @@ async function run(msg: FrameMessage, receivedAt: number): Promise<void> {
     frame?.close()
   }
   if (unusable) result.frame = msg.id
-  if (result.found) {
-    out.set(result.landmarks, 0)
-    out.set(result.blendshapes, result.landmarks.length)
+  const count = Math.min(result.count, maxFaces)
+  for (let i = 0; i < count; i++) {
+    out.set(result.landmarks.subarray(i * LANDMARKS_STRIDE, (i + 1) * LANDMARKS_STRIDE), i * RESULT_FLOATS)
+    out.set(result.blendshapes.subarray(i * BLENDSHAPES_STRIDE, (i + 1) * BLENDSHAPES_STRIDE), i * RESULT_FLOATS + LANDMARKS_STRIDE)
   }
   lastPostedAt = wallNow()
   post(
@@ -246,7 +250,7 @@ async function run(msg: FrameMessage, receivedAt: number): Promise<void> {
       id: msg.id,
       frame: result.frame,
       buffer: msg.buffer,
-      found: result.found,
+      count,
       hasBlendshapes: result.hasBlendshapes,
       timings: { ...(pipeline?.timings ?? { detectMs: NaN, uploadMs: NaN, cropMs: NaN, readMs: NaN, convertMs: NaN, landmarksMs: NaN, blendshapesMs: NaN }) },
       warnings: pending.splice(0),

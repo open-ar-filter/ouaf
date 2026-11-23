@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 /**
  * The LiteRT.js face tracker in a worker (#165, docs/decisions/face-runtime.md) on `/engine.html`: forced with
  * `?backend=litert`, its fallbacks (`?crop=canvas`, `?transfer=bitmap`), and its landmarks, blendshapes and matrix
- * against MediaPipe's on frames of the test clips.
+ * against MediaPipe's on frames of the test clips, with one face and with several.
  */
 
 const POLL = { timeout: 60_000, intervals: [250, 500, 1000] }
@@ -46,9 +46,11 @@ test('sync readback (?readback=sync): each crop read back before its landmark mo
   expect(await page.evaluate(() => window.ouaf!.warnings)).toEqual([])
 })
 
-test('with maxFaces > 1, MediaPipe tracks (LiteRT.js tracks one face)', async ({ page }) => {
-  await open(page, 'source=two-faces-stacked&autostart&maxFaces=2&filter=/filters/fixtures/dot-tint/')
-  await expect.poll(async () => (await stats(page)).tracker, POLL).toMatch(/^MediaPipe GPU, main thread/)
+test('several faces: LiteRT.js tracks the four faces of the grid with maxFaces=4', async ({ page }) => {
+  await open(page, 'source=four-faces-grid&autostart&backend=litert&maxFaces=4&filter=/filters/fixtures/dot-tint/')
+  await expect.poll(async () => (await stats(page)).tracker, POLL).toMatch(/^LiteRT\.js wasm in a worker/)
+  await expect.poll(async () => (await stats(page)).faces, POLL).toBe(4)
+  expect(await page.evaluate(() => window.ouaf!.warnings)).toEqual([])
 })
 
 test('nothing is fetched from another origin by the LiteRT.js tracker (docs/privacy.md)', async ({ page, baseURL }) => {
@@ -200,3 +202,112 @@ test(`landmarks, blendshapes and matrix match MediaPipe on the test clips: ${var
   }
 })
 }
+
+/**
+ * Several faces, against MediaPipe (VIDEO mode, CPU) on every second frame of the multi-face clips, async readback.
+ *
+ * With `maxFaces` the clip's face count: both find as many faces on most frames, and each of MediaPipe's faces has one
+ * of ours on it (nearest nose tip), within about 1 % of the face size. Not with a larger `maxFaces`: while fewer faces
+ * than that are tracked, both run the detector on every frame, and MediaPipe then crops the faces it finds again from
+ * its detections, ours from their previous landmarks (`pipeline.ts`), which is steadier: on `three-faces-grid` with
+ * `maxFaces` 4, MediaPipe loses a face on 20 of 93 frames and its landmarks move by 2–4 % of the face size from ours.
+ * So with `maxFaces` 4, only the counts are checked: every face is found, and never more.
+ */
+const MULTI_FACE_CLIPS = { 'two-faces-stacked': 2, 'three-faces-grid': 3, 'four-faces-grid': 4 } as const
+test('several faces match MediaPipe on the multi-face clips', async ({ page }) => {
+  test.setTimeout(240_000)
+  await page.goto('/engine.html')
+  await page.waitForFunction(() => !!window.ouaf)
+  const results = await page.evaluate(async (clips) => {
+    const core = window.ouaf!.core
+    const warnings: string[] = []
+    const env = { assetsBaseUrl: new URL('./', document.baseURI).href, warn: (m: string) => void warnings.push(m) }
+    const quantile = (values: number[], p: number) => [...values].sort((x, y) => x - y)[Math.min(values.length - 1, Math.floor(p * values.length))] ?? Number.NaN
+    const L = 478 * 3
+    const out: Record<string, { frames: number; sameCount: number; matched: number; landmarks: number[]; counts4: number[] }> = {}
+    for (const [clip, faces] of Object.entries(clips)) {
+      const config = { maxFaces: faces, blendshapes: true, analysisScale: 1 }
+      const ours = await core.createLiteRtFaceTracker().create(config, env)
+      const four = await core.createLiteRtFaceTracker().create({ ...config, maxFaces: 4 }, env)
+      const mediaPipe = await core.mediaPipeFaceTracker.create(config, { ...env, backend: 'CPU' })
+      const a = core.createFaceFrame(faces)
+      const c = core.createFaceFrame(4)
+      const source = await core.OfflineVideoSource.open(`/test-media/${clip}.mp4`, { rate: Infinity })
+      // MediaPipe's results by media time: ours describe the frame before (async readback).
+      const theirs = new Map<number, ReturnType<typeof core.createFaceFrame>>()
+      const landmarks: number[] = []
+      const counts4: number[] = []
+      let frames = 0
+      let sameCount = 0
+      let matched = 0
+      for (let k = 0; ; k++) {
+        const frame = await source.read()
+        if (!frame) break
+        try {
+          if (k % 2) continue
+          const ts = frame.time * 1000 + 1
+          const mp = core.createFaceFrame(faces)
+          await mediaPipe.track(frame.image, ts, frame.time, mp)
+          theirs.set(frame.time, mp)
+          await ours.track(frame.image, ts, frame.time, a)
+          await four.track(frame.image, ts, frame.time, c)
+          counts4.push(c.count)
+        } finally {
+          frame.close()
+        }
+        const b = theirs.get(a.mediaTime)
+        if (!b) continue
+        frames++
+        if (a.count === b.count) sameCount++
+        const w = a.width
+        const h = a.height
+        for (let j = 0; j < b.count; j++) {
+          // Ours nearest to MediaPipe's face j, by the nose tip (landmark 1).
+          let best = -1
+          let bestDistance = Infinity
+          for (let i = 0; i < a.count; i++) {
+            const d = Math.hypot((a.landmarks[i * L + 3]! - b.landmarks[j * L + 3]!) * w, (a.landmarks[i * L + 4]! - b.landmarks[j * L + 4]!) * h)
+            if (d < bestDistance) [best, bestDistance] = [i, d]
+          }
+          // Face size: the long side of MediaPipe's landmark box, in pixels.
+          let x0 = Infinity
+          let x1 = -Infinity
+          let y0 = Infinity
+          let y1 = -Infinity
+          for (let p = 0; p < 478; p++) {
+            const x = b.landmarks[j * L + p * 3]! * w
+            const y = b.landmarks[j * L + p * 3 + 1]! * h
+            x0 = Math.min(x0, x)
+            x1 = Math.max(x1, x)
+            y0 = Math.min(y0, y)
+            y1 = Math.max(y1, y)
+          }
+          const size = Math.max(x1 - x0, y1 - y0)
+          if (best < 0 || bestDistance > size / 4) continue // none of ours on this face
+          matched++
+          let sum = 0
+          for (let p = 0; p < 478; p++) sum += Math.hypot((a.landmarks[best * L + p * 3]! - b.landmarks[j * L + p * 3]!) * w, (a.landmarks[best * L + p * 3 + 1]! - b.landmarks[j * L + p * 3 + 1]!) * h)
+          landmarks.push((100 * sum) / 478 / size)
+        }
+      }
+      source.dispose()
+      ours.dispose()
+      four.dispose()
+      mediaPipe.dispose()
+      out[clip] = { frames, sameCount, matched, landmarks: [quantile(landmarks, 0.5), quantile(landmarks, 0.9)], counts4: [quantile(counts4, 0.1), Math.max(...counts4)] }
+    }
+    return { out, warnings }
+  }, MULTI_FACE_CLIPS)
+  for (const [clip, r] of Object.entries(results.out)) console.log(clip, JSON.stringify(r))
+  expect(results.warnings).toEqual([])
+  for (const [clip, faces] of Object.entries(MULTI_FACE_CLIPS)) {
+    const r = results.out[clip]!
+    expect(r.sameCount / r.frames, clip).toBeGreaterThan(0.9)
+    expect(r.matched, clip).toBeGreaterThan(0.9 * faces * r.frames)
+    // Landmark distance, % of the face size: median and 90th percentile.
+    expect(r.landmarks[0], clip).toBeLessThan(1.5)
+    expect(r.landmarks[1], clip).toBeLessThan(2.5)
+    // maxFaces 4: all the faces on 90 % of the frames, never more.
+    expect(r.counts4, clip).toEqual([faces, faces])
+  }
+})

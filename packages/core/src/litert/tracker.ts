@@ -10,11 +10,11 @@
  * the page and the page to answer with a frame, a round trip of ≈ 25 ms on a busy main thread. The next `track` on the
  * same source then takes that frame's result (`FaceFrame.mediaTime` says which frame it is), or its run in progress.
  *
- * One face (`maxFaces` > 1: MediaPipe, until multi-face lands, #165). Landmarks and blendshapes in the `FaceFrame`
- * layout of the MediaPipe tracker; the facial transformation matrix is fitted to the landmarks on the main thread
- * (`estimateFacePose`, MediaPipe's geometry pipeline). Blendshapes are skipped while the engine does not want them
- * (`TrackerConfig.blendshapes`). The analysis resolution is ignored: the crops are taken from the full frame on the
- * GPU, whose cost does not depend on its size.
+ * Up to `TrackerConfig.maxFaces` faces, one crop and landmark run each (the detector runs while fewer are tracked,
+ * `pipeline.ts`). Landmarks and blendshapes in the `FaceFrame` layout of the MediaPipe tracker; the facial
+ * transformation matrices are fitted to the landmarks on the main thread (`estimateFacePose`, MediaPipe's geometry
+ * pipeline). Blendshapes are skipped while the engine does not want them (`TrackerConfig.blendshapes`). The analysis
+ * resolution is ignored: the crops are taken from the full frame on the GPU, whose cost does not depend on its size.
  *
  * Files, under `assetsBaseUrl`: `litert/wasm/litert_wasm_internal.{js,wasm}` (or the `_compat_` build where relaxed
  * SIMD is missing) from `@litertjs/core/wasm`, and `models/face_detector.tflite`, `models/face_landmarks_detector.tflite`,
@@ -88,7 +88,7 @@ export type LiteRtTimings = {
   totalMs: number
 }
 
-const SHEDS: readonly Capability[] = ['blendshapes']
+const SHEDS: readonly Capability[] = ['blendshapes', 'extraFaces']
 /** Frames posted to the worker and not back yet: the one running and one waiting. */
 const MAX_FLIGHTS = 2
 
@@ -137,7 +137,6 @@ export async function openLiteRtTracker(config: TrackerConfig, env: TrackerEnv, 
     throw err
   }
   for (const w of ready.warnings) env.warn(w)
-  if (config.maxFaces > 1) env.warn(`The LiteRT.js face tracker tracks one face (${config.maxFaces} asked).`)
   const tracker = new LiteRtFrameTracker(worker, ready.crop, transfer, config, env, options.queue ?? true, options.frames ?? 'track')
   tracker.readback = ready.readback
   return tracker
@@ -200,8 +199,8 @@ export class LiteRtFrameTracker implements FrameTracker {
   readonly #env: TrackerEnv
   readonly #queue: boolean
   #config: TrackerConfig
-  /** Free result buffers, transferred back and forth. */
-  readonly #free: ArrayBuffer[] = [new ArrayBuffer(RESULT_FLOATS * 4), new ArrayBuffer(RESULT_FLOATS * 4)]
+  /** Free result buffers, transferred back and forth (`#buffer`). */
+  readonly #free: ArrayBuffer[] = []
   readonly #flights = new Map<number, Flight>()
   /** The newest frame posted (0: none since the last reset): the one a call takes. */
   #latest = 0
@@ -247,7 +246,10 @@ export class LiteRtFrameTracker implements FrameTracker {
     return true
   }
 
-  /** Only blendshapes make it faster when dropped: one face, and crops from the full frame whatever its resolution. */
+  /**
+   * Blendshapes and the extra faces make it faster when dropped (a model run per face each); the analysis resolution
+   * does not: the crops are taken from the full frame whatever its resolution.
+   */
   get sheds(): readonly Capability[] {
     return SHEDS
   }
@@ -388,7 +390,8 @@ export class LiteRtFrameTracker implements FrameTracker {
       frame?.close()
       return
     }
-    const buffer = this.#free.pop() ?? new ArrayBuffer(RESULT_FLOATS * 4)
+    const maxFaces = this.#config.maxFaces
+    const buffer = this.#buffer(maxFaces)
     const reset = this.#reset
     this.#reset = false
     flight.captureMs = performance.now() - flight.capturedAt
@@ -400,6 +403,7 @@ export class LiteRtFrameTracker implements FrameTracker {
       width: flight.width,
       height: flight.height,
       blendshapes: this.#config.blendshapes,
+      maxFaces,
       reset,
       ...(flight.exact ? { exact: true } : {}),
       buffer,
@@ -489,13 +493,27 @@ export class LiteRtFrameTracker implements FrameTracker {
     out.mediaTime = frame.mediaTime
     out.width = frame.width
     out.height = frame.height
-    if (!msg.found) return
-    const data = new Float32Array(msg.buffer, 0, RESULT_FLOATS)
-    out.landmarks.set(data.subarray(0, LANDMARKS_STRIDE), 0)
-    if (msg.hasBlendshapes) out.blendshapes.set(data.subarray(LANDMARKS_STRIDE, LANDMARKS_STRIDE + BLENDSHAPES_STRIDE), 0)
-    else out.blendshapes.fill(0, 0, BLENDSHAPES_STRIDE)
-    if (!estimateFacePose(out, 0, out.matrices, 0)) out.matrices.fill(0, 0, MATRIX_STRIDE)
-    out.count = 1
+    const count = Math.min(msg.count, out.maxFaces, Math.floor(msg.buffer.byteLength / 4 / RESULT_FLOATS))
+    if (count <= 0) return
+    const data = new Float32Array(msg.buffer, 0, count * RESULT_FLOATS)
+    for (let i = 0; i < count; i++) {
+      const at = i * RESULT_FLOATS
+      out.landmarks.set(data.subarray(at, at + LANDMARKS_STRIDE), i * LANDMARKS_STRIDE)
+      if (msg.hasBlendshapes) out.blendshapes.set(data.subarray(at + LANDMARKS_STRIDE, at + RESULT_FLOATS), i * BLENDSHAPES_STRIDE)
+      else out.blendshapes.fill(0, i * BLENDSHAPES_STRIDE, (i + 1) * BLENDSHAPES_STRIDE)
+    }
+    out.count = count
+    for (let i = 0; i < count; i++) if (!estimateFacePose(out, i, out.matrices, i * MATRIX_STRIDE)) out.matrices.fill(0, i * MATRIX_STRIDE, (i + 1) * MATRIX_STRIDE)
+  }
+
+  /** A free result buffer for `maxFaces` faces: from the pool, or a new one (the pool's too small ones are let go). */
+  #buffer(maxFaces: number): ArrayBuffer {
+    const bytes = maxFaces * RESULT_FLOATS * 4
+    for (;;) {
+      const b = this.#free.pop()
+      if (!b) return new ArrayBuffer(bytes)
+      if (b.byteLength >= bytes) return b
+    }
   }
 
   /** Adds this result's steps to the moving averages (the first result sets them). */
