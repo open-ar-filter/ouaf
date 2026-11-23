@@ -4,7 +4,8 @@
  * One quad per selected face (`faces`), or a single one for `anchor: "screen"`. Each quad shows the layer's asset, or
  * with `{ pick }` the asset chosen for its face, kept while the face keeps its stable id: `(id − 1) mod n` with
  * `by: "face"`, a random draw when the face appears with `by: "random"`; a screen sticker picks for its first
- * selected face (id 0 while there is none). `size` is the
+ * selected face (id 0 while there is none). A `src` bound to a param (spec §8.1), or set by the script, gives the
+ * asset instead (`compileContent`): none hides the quad. `size` is the
  * height in anchor units, the width follows the asset's aspect ratio; `scale` multiplies it (per axis with `[x, y, z]`).
  * Bindable properties (`visible`, `opacity`, `size`, `scale`, `offset`, `rotation`) are evaluated per face; `rate`
  * once per layer, for the first selected face.
@@ -24,6 +25,7 @@ import type { TStickerLayer } from '@ouaf/spec'
 import { Euler, Group, Matrix4, Mesh, PlaneGeometry, Quaternion, Vector3 } from 'three'
 import type { AnchorFollow } from '../../anchors.ts'
 import { NO_FACE, compileBinding, compileNumberBinding, type CompiledBinding, type NumberBinding } from '../../bindings/index.ts'
+import { compileContent, type ContentBinding } from '../../engine/content.ts'
 import { OuafError } from '../../engine/errors.ts'
 import type { FrameContext, LayerContext, LayerDecl, LayerTypeImpl, ObjectLayer } from '../../engine/layer-type.ts'
 import { compileScale } from '../scale.ts'
@@ -46,10 +48,14 @@ const RATE = 2
 
 type Vec3 = readonly [number, number, number]
 
-/** The asset references of a sticker declaration: `src`, or every entry of `{ pick }`. */
+/**
+ * The asset references of a sticker declaration: `src`, or every entry of `{ pick }`. A `src` bound to a parameter
+ * has none of its own (the engine preloads the `map` values, `contentRefs`).
+ */
 export function stickerRefs(decl: LayerDecl): string[] {
   const src = (decl as unknown as TStickerLayer).src
-  return typeof src === 'string' ? [src] : [...src.pick]
+  if (typeof src === 'string') return [src]
+  return 'pick' in src ? [...src.pick] : []
 }
 
 export interface StickerOptions {
@@ -68,6 +74,8 @@ class VideoPlayback {
   readonly video: HTMLVideoElement
   readonly #loop: boolean
   readonly #warn: (message: string) => void
+  /** Some quad of the layer shows the video this frame. */
+  shown = false
   #hiddenSince = -1
   #playFailed = false
   #onPlayError = (error: unknown) => {
@@ -126,6 +134,8 @@ interface Instance {
   readonly mesh: Mesh<PlaneGeometry, StickerMaterial>
   /** Face id the asset was picked for (−1: not picked yet). */
   faceId: number
+  /** The asset picked for that face among the declaration's (`undefined` when `src` is bound to a parameter). */
+  picked: StickerAsset | undefined
 }
 
 export function createSticker(decl: LayerDecl, ctx: LayerContext, options: StickerOptions = {}): ObjectLayer {
@@ -139,7 +149,11 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
       if (!isStickerAsset(value)) throw new OuafError('asset', `Filter "${ctx.filterId}": asset "${ref}" is not an image, spritesheet or video, so a sticker cannot show it.`)
       return value
     })
-  const by: PickMode = !options.assets && typeof d.src === 'object' && d.src.by === 'random' ? 'random' : 'face'
+  // `src` bound to a parameter, or set by the script (spec §8, §12.4).
+  const content: ContentBinding<StickerAsset> | undefined = options.assets
+    ? undefined
+    : compileContent(d.src, { name: 'src', path: path('src'), accepts: isStickerAsset, what: 'an image, spritesheet or video' }, ctx)
+  const by: PickMode = !options.assets && typeof d.src === 'object' && 'pick' in d.src && d.src.by === 'random' ? 'random' : 'face'
   const random = options.random ?? ctx.random
 
   const anchor = d.anchor ?? 'head'
@@ -167,25 +181,33 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
   const instances: Instance[] = []
   for (let i = 0; i < count; i++) {
     const material = new StickerMaterial(blend)
-    material.setAsset(assets[0]!)
+    if (assets[0]) material.setAsset(assets[0])
     const mesh = new Mesh(geometry, material)
     mesh.matrixAutoUpdate = false
     mesh.frustumCulled = false
     mesh.visible = false
     root.add(mesh)
-    instances.push({ mesh, faceId: -1 })
+    instances.push({ mesh, faceId: -1, picked: undefined })
   }
 
-  // Videos this layer drives (the first layer to claim a video asset owns its playback).
+  // Videos this layer drives: the first layer to claim a video asset owns its playback. The declaration's videos are
+  // claimed now; one chosen by a parameter or the script when the layer first shows it.
   const players: VideoPlayback[] = []
-  for (const asset of new Set(assets)) {
-    if (asset.kind !== 'video' || !asset.video) continue
+  const playback = new Map<StickerAsset, VideoPlayback | null>()
+  const claim = (asset: StickerAsset): VideoPlayback | null => {
+    if (asset.kind !== 'video' || !asset.video) return null
+    let player = playback.get(asset)
+    if (player !== undefined) return player
+    player = null
     if (asset.owner === undefined) {
       asset.owner = root
-      players.push(new VideoPlayback(asset, asset.video, loop, ctx.warn))
+      player = new VideoPlayback(asset, asset.video, loop, ctx.warn)
+      players.push(player)
     }
+    playback.set(asset, player)
+    return player
   }
-  const shownVideos = new Uint8Array(players.length)
+  for (const asset of assets) claim(asset)
 
   // Per-frame scratch, allocated once.
   const slots = new Int32Array(Math.max(1, ctx.maxFaces))
@@ -209,7 +231,19 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
   const pickFor = (inst: Instance, faceId: number) => {
     if (inst.faceId === faceId) return
     inst.faceId = faceId
-    inst.mesh.material.setAsset(assets[pickIndex(by, faceId, assets.length, by === 'random' && assets.length > 1 ? random() : 0)]!)
+    if (assets.length > 0) inst.picked = assets[pickIndex(by, faceId, assets.length, by === 'random' && assets.length > 1 ? random() : 0)]!
+  }
+
+  /**
+   * Points `inst` at what it shows for face slot `face`: the script's or the parameter's asset, else its pick. False
+   * when there is none (an asset parameter without a file, a value `map` does not list).
+   */
+  const choose = (inst: Instance, face: number): boolean => {
+    const chosen = content?.evaluate(face)
+    const asset = chosen === undefined ? inst.picked : chosen
+    if (!asset) return false
+    inst.mesh.material.setAsset(asset)
+    return true
   }
 
   /** Places `inst` for face slot `face` (NO_FACE for the screen); false when it is not shown this frame. */
@@ -277,25 +311,26 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
       else play[CLOCK]! += clockStep(play[LAST_TIME]!, frame.time) * r
       play[LAST_TIME] = frame.time
 
-      shownVideos.fill(0)
+      for (let p = 0; p < players.length; p++) players[p]!.shown = false
       for (let i = 0; i < instances.length; i++) {
         const inst = instances[i]!
         let shown = false
         if (screen) {
           pickFor(inst, lead === NO_FACE ? 0 : anchors.id(lead))
-          shown = place(inst, lead, frame)
+          shown = choose(inst, lead) && place(inst, lead, frame)
         } else if (i < selected) {
           const face = slots[i]!
           pickFor(inst, ids[face]!)
-          shown = place(inst, face, frame)
+          shown = choose(inst, face) && place(inst, face, frame)
         }
         inst.mesh.visible = shown
-        if (shown && players.length > 0) {
-          const asset = inst.mesh.material.asset
-          for (let p = 0; p < players.length; p++) if (players[p]!.asset === asset) shownVideos[p] = 1
+        const asset = inst.mesh.material.asset
+        if (shown && asset?.kind === 'video') {
+          const player = claim(asset)
+          if (player) player.shown = true
         }
       }
-      for (let p = 0; p < players.length; p++) players[p]!.sync(play, shownVideos[p] === 1, frame)
+      for (let p = 0; p < players.length; p++) players[p]!.sync(play, players[p]!.shown, frame)
       hadFace = selected > 0
     },
     dispose() {

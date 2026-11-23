@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { TParams, TPresets } from '@ouaf/spec'
-import { ParamError, ParamStore, writeColor, type ParamChange, type ReloadHooks, type ReloadRequest } from '../src/index.ts'
+import { ParamError, ParamStore, writeColor, type AssetFile, type AssetParamHooks, type ParamChange, type ReloadHooks, type ReloadRequest } from '../src/index.ts'
 
 const PARAMS: TParams = {
   size: { type: 'number', default: 1, min: 0.5, max: 2, step: 0.1, transition: 100 },
@@ -667,5 +667,128 @@ describe('ParamStore: apply "reload"', () => {
     s.beginFrame(0)
     expect(s.get('model')).toBe('b')
     expect(s.reloadState).toBe('idle')
+  })
+})
+
+describe('ParamStore: files of asset parameters a layer shows (spec §9, §15)', () => {
+  /** Hooks whose loads the test resolves (`finish`) or rejects (`fail`) by hand. */
+  function assetEngine() {
+    const loads: Array<{ name: string; file: AssetFile; signal: AbortSignal; resolve(v: string): void; reject(e: unknown): void }> = []
+    const swaps: Array<[string, string | null]> = []
+    const discarded: string[] = []
+    const errors: unknown[] = []
+    const hooks: AssetParamHooks<string> = {
+      handles: (name) => name === 'logo',
+      load: (name, file, signal) => new Promise((resolve, reject) => loads.push({ name, file, signal, resolve, reject })),
+      swap: (name, loaded) => void swaps.push([name, loaded]),
+      discard: (loaded) => void discarded.push(loaded),
+    }
+    const s = new ParamStore(PARAMS, { assets: hooks as AssetParamHooks, onError: (e) => void errors.push(e) })
+    let t = 0
+    return { s, loads, swaps, discarded, errors, frame: () => s.beginFrame((t += 16)) }
+  }
+  const png = (n = 10) => new Blob([new Uint8Array(n)], { type: 'image/png' })
+
+  it('loads the file in the background and swaps it in at a frame start', async () => {
+    const e = assetEngine()
+    const changes: ParamChange[] = []
+    e.s.onChange((c) => changes.push(c))
+    const file = png()
+    e.s.set('logo', file)
+    expect(e.loads).toHaveLength(0) // batched: the load starts with the next frame
+    e.frame()
+    expect(e.loads.map((l) => [l.name, l.file])).toEqual([['logo', file]])
+    expect(e.s.assetsPending).toBe(true)
+    e.frame()
+    expect(e.s.get('logo')).toBe(null) // still none while loading
+    e.loads[0]!.resolve('loaded-1')
+    await e.s.assetsSettled()
+    expect(e.swaps).toEqual([])
+    e.frame()
+    expect(e.swaps).toEqual([['logo', 'loaded-1']])
+    expect(e.s.get('logo')).toBe(file)
+    expect(changes).toEqual([{ name: 'logo', value: file, previous: null }])
+    expect(e.s.assetsPending).toBe(false)
+    // Removing the file needs nothing loaded: it applies at the next frame.
+    e.s.set('logo', null)
+    e.frame()
+    expect(e.swaps).toEqual([['logo', 'loaded-1'], ['logo', null]])
+    expect(e.s.get('logo')).toBe(null)
+  })
+
+  it('keeps the previous file when a load fails, and reports the error', async () => {
+    const e = assetEngine()
+    const good = png()
+    e.s.set('logo', good)
+    e.frame()
+    e.loads[0]!.resolve('good')
+    await e.s.assetsSettled()
+    e.frame()
+    e.s.set('logo', png(20))
+    e.frame()
+    const error = new Error('refused')
+    e.loads[1]!.reject(error)
+    await e.s.assetsSettled()
+    e.frame()
+    expect(e.errors).toEqual([error])
+    expect(e.s.get('logo')).toBe(good)
+    expect(e.swaps).toEqual([['logo', 'good']])
+    // The same file can be set again (it is loaded again).
+    e.s.set('logo', good)
+    e.frame()
+    expect(e.loads).toHaveLength(2) // `good` is the file in use: nothing to load
+  })
+
+  it('supersedes a running load: aborts it, discards its late result, loads the latest file', async () => {
+    const e = assetEngine()
+    const a = png(1)
+    const b = png(2)
+    e.s.set('logo', a)
+    e.frame()
+    e.s.set('logo', b)
+    e.frame()
+    expect(e.loads[0]!.signal.aborted).toBe(true)
+    e.loads[0]!.resolve('a')
+    e.loads[1]!.resolve('b')
+    await e.s.assetsSettled()
+    e.frame()
+    expect(e.discarded).toEqual(['a'])
+    expect(e.swaps).toEqual([['logo', 'b']])
+    expect(e.s.get('logo')).toBe(b)
+  })
+
+  it('discards a loaded file not swapped in yet when it is superseded or the store disposed', async () => {
+    const e = assetEngine()
+    e.s.set('logo', png(1))
+    e.frame()
+    e.loads[0]!.resolve('a')
+    await e.s.assetsSettled()
+    e.s.set('logo', null) // before the frame that would swap `a` in
+    e.frame()
+    expect(e.discarded).toEqual(['a'])
+    expect(e.swaps).toEqual([])
+    e.s.set('logo', png(2))
+    e.frame()
+    e.loads[1]!.resolve('b')
+    await e.s.assetsSettled()
+    e.s.dispose()
+    expect(e.discarded).toEqual(['a', 'b'])
+  })
+
+  it('commits files of asset parameters no layer shows without loading them', () => {
+    const e = assetEngine()
+    const photo = new Blob(['x'], { type: 'image/jpeg' })
+    e.s.set('photo', photo)
+    e.frame()
+    expect(e.loads).toHaveLength(0)
+    expect(e.s.get('photo')).toBe(photo)
+  })
+
+  it('accepts a file without a declared type (judged on its content when loaded), never one above the package limit', () => {
+    const s = store()
+    expect(code(() => s.set('logo', new Blob(['x'])))).toBeUndefined()
+    const huge = { type: 'image/png', size: 50_000_001 }
+    const unbounded = store({ logo: { type: 'asset', accept: ['image/png'] } })
+    expect(code(() => unbounded.set('logo', huge))).toBe('too-large')
   })
 })

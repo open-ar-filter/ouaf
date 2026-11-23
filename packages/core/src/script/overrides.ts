@@ -77,16 +77,23 @@ export class PropertyOverride {
   #all: Entry | undefined
   readonly #faces = new Map<FaceKey, Entry>()
   readonly #clock: ScriptClock
+  readonly #check: ((value: string) => string | undefined) | undefined
 
-  constructor(name: string, types: readonly ValueType[], clock: ScriptClock) {
+  constructor(name: string, types: readonly ValueType[], clock: ScriptClock, check?: (value: string) => string | undefined) {
     this.name = name
     this.types = types
     this.#clock = clock
+    this.#check = check
   }
 
   /** The type a value fits, or `undefined`. A string fits a color property only when it is a color. */
   typeOf(value: unknown): ValueType | undefined {
     return this.types.find((t) => fits(value, t))
+  }
+
+  /** Why a value of the right type is refused (a content property's name that is not an asset it shows), if it is. */
+  problem(value: unknown): string | undefined {
+    return this.#check && typeof value === 'string' ? this.#check(value) : undefined
   }
 
   /** Whether the property can be animated (numbers, colors, vectors). */
@@ -227,6 +234,17 @@ export class ScriptOverrides {
         let prop = props.get(name)
         if (!prop) props.set(name, (prop = new PropertyOverride(name, types, this.clock)))
         return new OverridableBinding(binding, prop, this) as unknown as typeof binding
+      },
+      content: (name, check) => {
+        const prop = new PropertyOverride(name, ['string'], this.clock, check)
+        props.set(name, prop)
+        return {
+          get: (face) => {
+            if (prop.empty) return undefined
+            const entry = prop.entryFor(this.idOf(face))
+            return entry?.kind === 'set' ? (entry.value as string) : undefined
+          },
+        }
       },
     }
   }

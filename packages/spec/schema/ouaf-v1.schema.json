@@ -141,6 +141,21 @@
       "x-bindable": true,
       "x-hint": "Fixed value, { \"param\": \"name\" } or { \"bind\": \"face.…\" }."
     },
+    "AssetBinding": {
+      "type": "object",
+      "required": ["param"],
+      "properties": {
+        "param": { "$ref": "#/$defs/Name" },
+        "map": {
+          "type": "object",
+          "patternProperties": { "^.*$": { "$ref": "#/$defs/AssetRef" } },
+          "minProperties": 1,
+          "description": "Parameter value → asset reference, e.g. { \"gold\": \"crown-gold\", \"flowers\": \"crown-flowers\" }."
+        }
+      },
+      "additionalProperties": false,
+      "description": "The file of an asset parameter ({ \"param\": \"logo\" }), or the asset a select parameter picks ({ \"param\": \"style\", \"map\": { \"gold\": \"crown-gold\" } })."
+    },
     "AssetEmoji": {
       "type": "object",
       "required": ["emoji"],
@@ -331,11 +346,18 @@
         "visible": { "$ref": "#/$defs/LayerBase.visible" },
         "opacity": { "$ref": "#/$defs/LayerBase.opacity" },
         "lut": {
-          "type": "string",
-          "pattern": "^(builtin:[a-z0-9][a-z0-9/_-]*|assets/(?!.*\\.\\.)[A-Za-z0-9._/-]+|[A-Za-z][A-Za-z0-9_-]{0,63})$",
-          "description": ".cube color lookup table (or \"builtin:lut/…\").",
-          "x-ref": "asset",
-          "x-hint": "Declare the file in \"assets\" and reference it by name, e.g. \"hat\". http(s) URLs are forbidden."
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(builtin:[a-z0-9][a-z0-9/_-]*|assets/(?!.*\\.\\.)[A-Za-z0-9._/-]+|[A-Za-z][A-Za-z0-9_-]{0,63})$",
+              "x-ref": "asset",
+              "x-hint": "Declare the file in \"assets\" and reference it by name, e.g. \"hat\". http(s) URLs are forbidden."
+            },
+            { "$ref": "#/$defs/AssetBinding" }
+          ],
+          "description": ".cube color lookup table (or \"builtin:lut/…\"), or bound to a parameter.",
+          "x-content": "lut",
+          "x-hint": "An asset reference, or { \"param\": \"<asset param>\" }, or { \"param\": \"<select param>\", \"map\": { \"<value>\": \"<asset>\" } }."
         },
         "intensity": {
           "anyOf": [
@@ -578,8 +600,15 @@
         "overlay": { "$ref": "#/$defs/Anchored.overlay" },
         "excludeFromCapture": { "$ref": "#/$defs/Anchored.excludeFromCapture" },
         "src": {
-          "anyOf": [{ "$ref": "#/$defs/AssetRef" }, { "$ref": "#/$defs/AssetPick" }, { "$ref": "#/$defs/Shape" }],
-          "description": "glTF/GLB model, random pick, or procedural primitive."
+          "anyOf": [
+            { "$ref": "#/$defs/AssetRef" },
+            { "$ref": "#/$defs/AssetPick" },
+            { "$ref": "#/$defs/Shape" },
+            { "$ref": "#/$defs/AssetBinding" }
+          ],
+          "description": "glTF/GLB model, pick, procedural primitive, or bound to a parameter.",
+          "x-content": "model",
+          "x-hint": "An asset reference, or { \"param\": \"<asset param>\" }, or { \"param\": \"<select param>\", \"map\": { \"<value>\": \"<asset>\" } }."
         },
         "fit": {
           "type": "object",
@@ -897,8 +926,10 @@
         "overlay": { "$ref": "#/$defs/Anchored.overlay" },
         "excludeFromCapture": { "$ref": "#/$defs/Anchored.excludeFromCapture" },
         "src": {
-          "anyOf": [{ "$ref": "#/$defs/AssetRef" }, { "$ref": "#/$defs/AssetPick" }],
-          "description": "Image, spritesheet or video."
+          "anyOf": [{ "$ref": "#/$defs/AssetRef" }, { "$ref": "#/$defs/AssetPick" }, { "$ref": "#/$defs/AssetBinding" }],
+          "description": "Image, spritesheet or video, a pick, or bound to a parameter.",
+          "x-content": "image",
+          "x-hint": "An asset reference, or { \"param\": \"<asset param>\" }, or { \"param\": \"<select param>\", \"map\": { \"<value>\": \"<asset>\" } }."
         },
         "size": {
           "anyOf": [
@@ -988,12 +1019,19 @@
           "x-hint": "Fixed value, { \"param\": \"name\" } or { \"bind\": \"face.…\" }."
         },
         "font": {
-          "type": "string",
-          "pattern": "^(builtin:[a-z0-9][a-z0-9/_-]*|assets/(?!.*\\.\\.)[A-Za-z0-9._/-]+|[A-Za-z][A-Za-z0-9_-]{0,63})$",
-          "description": "Font: WOFF2 asset or \"builtin:font/…\".",
-          "x-ref": "asset",
-          "x-hint": "Declare the file in \"assets\" and reference it by name, e.g. \"hat\". http(s) URLs are forbidden.",
-          "default": "builtin:font/sans-bold"
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(builtin:[a-z0-9][a-z0-9/_-]*|assets/(?!.*\\.\\.)[A-Za-z0-9._/-]+|[A-Za-z][A-Za-z0-9_-]{0,63})$",
+              "x-ref": "asset",
+              "x-hint": "Declare the file in \"assets\" and reference it by name, e.g. \"hat\". http(s) URLs are forbidden."
+            },
+            { "$ref": "#/$defs/AssetBinding" }
+          ],
+          "description": "Font: font asset or \"builtin:font/…\", or bound to a parameter.",
+          "default": "builtin:font/sans-bold",
+          "x-content": "font",
+          "x-hint": "An asset reference, or { \"param\": \"<asset param>\" }, or { \"param\": \"<select param>\", \"map\": { \"<value>\": \"<asset>\" } }."
         },
         "color": {
           "anyOf": [

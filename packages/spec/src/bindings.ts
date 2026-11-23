@@ -4,11 +4,31 @@
  * Deliberately tiny language: param, bind + map, bind + range/to. Anything richer belongs in the script.
  */
 import { Type, type Static, type TSchema } from 'typebox'
-import { Name } from './common.ts'
+import { AssetRef, Name } from './common.ts'
 
 export const ParamBinding = Type.Object(
   { param: Name },
   { additionalProperties: false, description: 'Value of the named parameter, e.g. { "param": "color" }.' },
+)
+
+/**
+ * A content property (`src`, `font`, `lut`) bound to a parameter (spec §8, §9): the file of an `asset` parameter,
+ * or, with `map`, one of the filter's own assets chosen by a `select` or `string` parameter.
+ */
+export const AssetBinding = Type.Object(
+  {
+    param: Name,
+    map: Type.Optional(
+      Type.Record(Type.String({ minLength: 1 }), AssetRef, {
+        minProperties: 1,
+        description: 'Parameter value → asset reference, e.g. { "gold": "crown-gold", "flowers": "crown-flowers" }.',
+      }),
+    ),
+  },
+  {
+    additionalProperties: false,
+    description: 'The file of an asset parameter ({ "param": "logo" }), or the asset a select parameter picks ({ "param": "style", "map": { "gold": "crown-gold" } }).',
+  },
 )
 
 export const DataBinding = Type.Object(
@@ -43,6 +63,7 @@ export function Bindable<T extends TSchema>(schema: T) {
 }
 
 export type TParamBinding = Static<typeof ParamBinding>
+export type TAssetBinding = Static<typeof AssetBinding>
 export type TDataBinding = Static<typeof DataBinding>
 export type TBinding = Static<typeof Binding>
 

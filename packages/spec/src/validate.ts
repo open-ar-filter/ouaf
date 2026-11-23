@@ -7,7 +7,8 @@ import { Value } from 'typebox/value'
 import { ManifestEnvelope, type TManifest } from './manifest.ts'
 import { ParamTypes, type ParamTypeName } from './params.ts'
 import { createRegistry, findEvent, type DataPathDef, type SpecRegistry } from './registry.ts'
-import { assetKind, type TAssetEntry } from './assets.ts'
+import { assetKind, kindFromPath, type TAssetEntry, type TAssetKind } from './assets.ts'
+import { CONTENT_KINDS, CONTENT_PARAM_TYPES, contentMediaTypes, contentProperties, isAssetBinding, type ContentKind } from './content.ts'
 import type { TShaderLayer } from './layers.ts'
 import { shaderNameProblem, shaderUses } from './shader.ts'
 import { mapKeyValue } from './bindings.ts'
@@ -383,10 +384,95 @@ function checkMapKeys(ctx: Ctx, bind: string, type: DataPathDef['type'], map: Js
   }
 }
 
+const pointerKey = (key: string) => key.replace(/~/g, '~0').replace(/\//g, '~1')
+
+/** Kind of the asset a reference names (spec §10.1), when it can be told. */
+function refKind(ctx: Ctx, ref: string): TAssetKind | undefined {
+  if (ref.startsWith('builtin:')) return ctx.reg.builtins.get(ref.slice('builtin:'.length))?.kind
+  if (ref.startsWith('assets/')) return kindFromPath(ref)
+  const entry = ((ctx.manifest.assets ?? {}) as Record<string, TAssetEntry | undefined>)[ref]
+  return entry === undefined ? undefined : assetKind(entry)
+}
+
+/** What a content property gets for a value without an asset, in messages. */
+const NO_ASSET: Record<ContentKind, string> = {
+  image: 'the layer is hidden',
+  model: 'the layer is hidden',
+  font: 'the text uses the default font',
+  lut: 'no LUT applies',
+}
+
+/**
+ * A content property bound to a parameter (spec §8, §9): an `asset` parameter whose `accept` types the property can
+ * show, or a `select` / `string` parameter whose `map` gives an asset of the right kind for its values.
+ */
+function checkContentBinding(ctx: Ctx, b: { param: string; map?: Record<string, string> }, kind: ContentKind, path: string) {
+  const params = ctx.manifest.params ?? {}
+  const def = params[b.param]
+  if (!def) {
+    err(ctx, 'unknown-param', `${path}/param`, `Unknown parameter "${b.param}". ${didYouMean(b.param, Object.keys(params))}`.trim(), 'Declare it in "params".')
+    return
+  }
+  const label = CONTENT_KINDS[kind].label
+  if (!CONTENT_PARAM_TYPES.includes(def.type as ParamTypeName)) {
+    err(ctx, 'param-type-mismatch', `${path}/param`,
+      `Parameter "${b.param}" has type "${def.type}": an asset property follows an "asset" parameter (a file from the host) or a "select" or "string" parameter with "map".`,
+      `E.g. "${b.param}": { "type": "asset", "accept": ${JSON.stringify(contentMediaTypes(kind).slice(0, 2))} }.`)
+    return
+  }
+  if (def.type === 'asset') {
+    if (b.map !== undefined) {
+      err(ctx, 'binding-map-unexpected', `${path}/map`, `"${b.param}" is an asset parameter: its file is shown as it is, "map" does not apply.`,
+        'Remove "map"; to choose among the filter\'s own assets, bind a "select" parameter with "map".')
+    }
+    const allowed = contentMediaTypes(kind)
+    def.accept.forEach((type, i) => {
+      if (allowed.includes(type)) return
+      err(ctx, 'asset-accept', `/params/${pointerKey(b.param)}/accept/${i}`,
+        `Parameter "${b.param}" accepts "${type}", but it is bound to ${path}, which shows ${label}.`,
+        `Media types accepted for ${label}: ${listOf(allowed)}.`)
+    })
+    return
+  }
+  if (b.map === undefined) {
+    err(ctx, 'binding-map-required', path, `"${b.param}" is a ${def.type} parameter: add "map" from its values to asset references.`,
+      `E.g. { "param": "${b.param}", "map": { "<value>": "<asset name>" } }.`)
+    return
+  }
+  for (const [key, ref] of Object.entries(b.map)) {
+    const at = `${path}/map/${pointerKey(key)}`
+    const before = ctx.errors.length
+    checkAssetRef(ctx, ref, at)
+    if (ctx.errors.length !== before) continue
+    const k = refKind(ctx, ref)
+    if (k !== undefined && !CONTENT_KINDS[kind].kinds.includes(k)) {
+      err(ctx, 'asset-kind', at, `"${ref}" is a ${k} asset: this property shows ${CONTENT_KINDS[kind].assets}.`,
+        `Map "${key}" to ${CONTENT_KINDS[kind].assets}.`)
+    }
+  }
+  if (def.type === 'select' && !('from' in def.options)) {
+    const options = Object.keys(def.options)
+    for (const option of options) {
+      if (Object.hasOwn(b.map, option)) continue
+      warn(ctx, 'binding-map-missing', `${path}/map`, `Option "${option}" of "${b.param}" has no entry in "map": when it is chosen, ${NO_ASSET[kind]}.`,
+        `Add "${option}": "<asset name>" to "map".`)
+    }
+    for (const key of Object.keys(b.map)) {
+      if (options.includes(key)) continue
+      warn(ctx, 'binding-map-key', `${path}/map/${pointerKey(key)}`, `"map" key "${key}" is not an option of "${b.param}": it never matches.`,
+        `${didYouMean(key, options)}Options: ${listOf(options)}.`)
+    }
+  }
+}
+
 /** Walks a value along its schema for semantic checks (anchors, assets, bindings). */
 function walk(ctx: Ctx, value: unknown, schema: TSchema, path: string): void {
   const s = schema as TSchema & Record<string, unknown>
   if (value === undefined) return
+  if (s['x-content'] && isAssetBinding(value)) {
+    checkContentBinding(ctx, value, s['x-content'] as ContentKind, path)
+    return
+  }
   if (s['x-bindable'] && isBinding(value)) {
     checkBinding(ctx, value, (s.anyOf as TSchema[])[0]!, path)
     return
@@ -598,11 +684,20 @@ function checkRequiresAndAssets(ctx: Ctx) {
       'Remove "blendshapes" from "requires": expression events work without it.')
   }
   const assets = (ctx.manifest.assets ?? {}) as Record<string, TAssetEntry>
+  // A script can also give a layer's content property any declared asset it shows (`set({ src })`, spec §12.4).
+  const scriptKinds = new Set<string | undefined>(SCRIPT_READABLE_KINDS)
+  if (script) {
+    for (const layer of ctx.manifest.layers) {
+      const def = ctx.reg.layers.get(layer.type)
+      for (const [, kind] of def ? contentProperties(def.schema) : []) for (const k of CONTENT_KINDS[kind].kinds) scriptKinds.add(k)
+    }
+  }
   for (const [name, entry] of Object.entries(assets)) {
     const kind = assetKind(entry)
-    // Assets used only by the script (sounds, canvas images) cannot be detected here. The other kinds cannot be read
-    // by a script: `data` and `lottie` are reserved for later versions (spec §10.2), used only by plugin layers.
-    if (!ctx.usedAssets.has(name) && (!ctx.manifest.script || !SCRIPT_READABLE_KINDS.has(kind))) {
+    // Assets used only by the script (sounds, canvas images, values it sets) cannot be detected here. The other kinds
+    // cannot be read by a script: `data` and `lottie` are reserved for later versions (spec §10.2), used only by
+    // plugin layers.
+    if (!ctx.usedAssets.has(name) && (!script || !scriptKinds.has(kind))) {
       warn(ctx, 'unused-asset', `/assets/${name}`, `Asset "${name}" is not referenced by any layer: it makes the package heavier.`,
         kind === 'data' ? 'A script does not read data assets: import the JSON in filter.js, ouaf pack bundles it into script.js (spec §10.2).' : undefined)
     }

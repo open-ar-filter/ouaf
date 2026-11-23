@@ -109,6 +109,17 @@ export interface BindingEnv {
 export interface PropertyOverrides {
   /** Wraps the compiled value of property `name` (accepting `types`); the wrapper reports `perFace`. */
   wrap<T extends CompiledBinding<unknown>>(name: string, types: readonly ValueType[], binding: T): T
+  /**
+   * Registers content property `name` (`src`, `font`, `lut`, `animation`, spec §12.4), which a script sets to a name:
+   * `check` tells why a name is refused (`undefined` when it is accepted).
+   */
+  content?(name: string, check: (value: string) => string | undefined): ContentOverride
+}
+
+/** The names a script gave a content property. */
+export interface ContentOverride {
+  /** The name set for face slot `face` (or every instance), `undefined` when the manifest value applies. */
+  get(face: number): string | undefined
 }
 
 /** The property a value is compiled for. */

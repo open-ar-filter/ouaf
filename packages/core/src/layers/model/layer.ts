@@ -5,7 +5,8 @@
  *   `{ pick }`, each selected face gets one model, kept while the face keeps its stable id (spec §10.1): entry
  *   `(id − 1) mod n` with `by: "face"`, a random draw when the face gets its id with `by: "random"`; a screen model
  *   picks for its first selected face (id 0 while there is none). The rule and its code are the sticker's
- *   (`sticker/select.ts`).
+ *   (`sticker/select.ts`). A `src` bound to a param (spec §8.1), or set by the script, gives the model instead
+ *   (`compileContent`): none hides the copy; a new model restarts the animation.
  * - **Instances**: one copy of the model per selected face (`faces`), or one for `anchor: "screen"`, each with its own
  *   node hierarchy and animation mixer (copies are made once per face slot and model, then reused).
  * - **Transform**: anchor · T(offset) · R(rotation, Euler XYZ, degrees) · S(scale × fit). 1 glTF unit = 1 face unit
@@ -42,6 +43,7 @@ import {
 } from 'three'
 import type { AnchorFollow } from '../../anchors.ts'
 import { NO_FACE, compileBinding, compileNumberBinding, type CompiledBinding, type NumberBinding } from '../../bindings/index.ts'
+import { compileContent, type ContentBinding } from '../../engine/content.ts'
 import { OuafError } from '../../engine/errors.ts'
 import type { FrameContext, LayerContext, LayerDecl, LayerTypeImpl, ObjectLayer } from '../../engine/layer-type.ts'
 import { compileScale } from '../scale.ts'
@@ -63,11 +65,14 @@ type Src = TModelLayer['src']
 
 const isShape = (src: Src): src is TShape => typeof src === 'object' && 'shape' in src
 
-/** The asset references of a model declaration: `src`, every entry of `{ pick }`, none for `{ shape }`. */
+/**
+ * The asset references of a model declaration: `src`, every entry of `{ pick }`, none for `{ shape }` or a `src`
+ * bound to a parameter (the engine preloads the `map` values, `contentRefs`).
+ */
 export function modelRefs(decl: LayerDecl): string[] {
   const src = (decl as unknown as TModelLayer).src
   if (typeof src === 'string') return [src]
-  return isShape(src) ? [] : [...src.pick]
+  return 'pick' in src ? [...src.pick] : []
 }
 
 /**
@@ -106,6 +111,7 @@ export interface ModelLayerInstance extends ObjectLayer {
 
 /** One copy of one model, for one face slot. */
 interface Copy {
+  readonly model: ModelAsset
   readonly root: Object3D
   readonly materials: readonly Material[]
   /** Opacity and transparency of each material as loaded. */
@@ -127,12 +133,16 @@ interface Copy {
 interface Instance {
   /** Positioned every frame; holds the copy of the picked model. */
   readonly holder: Group
-  /** One copy per model, made the first time the face slot shows it. */
-  readonly copies: Array<Copy | undefined>
+  /** One copy per model, made the first time the face slot shows it (kept for the declaration's models). */
+  readonly copies: Map<ModelAsset, Copy>
   readonly occluder: Mesh | undefined
   current: Copy | undefined
   /** Face id the model was picked for (−1: none yet). */
   faceId: number
+  /** The model picked for that face among the declaration's (`undefined` when `src` is bound to a parameter). */
+  picked: ModelAsset | undefined
+  /** The animation last asked for (`null`: none yet, start it), to restart it only when it changes. */
+  anim: string | undefined | null
 }
 
 export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOptions = {}): ModelLayerInstance {
@@ -148,16 +158,20 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
         if (!isModelAsset(value)) throw new OuafError('asset', `Filter "${ctx.filterId}": asset "${ref}" is not a glTF model, so a model layer cannot show it.`)
         return value
       })
+  const permanent = new Set(models)
+  // `src` bound to a parameter, or set by the script (spec §8, §12.4).
+  const content: ContentBinding<ModelAsset> = compileContent(d.src, { name: 'src', path: path('src'), accepts: isModelAsset, what: 'a glTF model' }, ctx)
   const by: PickMode = typeof d.src === 'object' && 'pick' in d.src && d.src.by === 'random' ? 'random' : 'face'
   const random = options.random ?? ctx.random
-  const fits = models.map((m) => {
+  const fitOf = (m: ModelAsset) => {
     const size = m.bounds.isEmpty() ? new Vector3() : m.bounds.getSize(new Vector3())
     return fitScale(d.fit, size.x, size.y)
-  })
+  }
 
   const animationNames = [...new Set(models.flatMap((m) => m.animations.map((a) => a.name)))]
   let animation: string | undefined = d.animation
-  if (animation !== undefined && !animationNames.includes(animation)) {
+  // A model chosen by a parameter is not known yet: its animation is looked up when it is shown.
+  if (animation !== undefined && !content.bound && !animationNames.includes(animation)) {
     ctx.warn(`${path('animation')}: no animation "${animation}" in the model (${animationNames.length > 0 ? `it has ${animationNames.map((n) => `"${n}"`).join(', ')}` : 'it has none'}).`)
     animation = undefined
   }
@@ -194,11 +208,10 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
     root.add(holder)
     const occluder = occluders?.create()
     if (occluder) root.add(occluder)
-    instances.push({ holder, copies: models.map(() => undefined), occluder, current: undefined, faceId: -1 })
+    instances.push({ holder, copies: new Map(), occluder, current: undefined, faceId: -1, picked: undefined, anim: null })
   }
 
-  const makeCopy = (index: number): Copy => {
-    const model = models[index]!
+  const makeCopy = (model: ModelAsset): Copy => {
     const { root: copyRoot, materials } = cloneModel(model)
     for (const m of materials) applyEnvironment(m, envMap)
     let mixer: AnimationMixer | undefined
@@ -213,13 +226,14 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
       }
     }
     return {
+      model,
       root: copyRoot,
       materials,
       baseOpacity: Float32Array.from(materials, (m) => m.opacity),
       baseTransparent: materials.map((m) => m.transparent),
       mixer,
       actions,
-      fit: fits[index]!,
+      fit: fitOf(model),
       alpha: -1,
       action: undefined,
       started: false,
@@ -238,18 +252,56 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
     copy.mixer.update(0)
   }
 
+  const disposeCopy = (copy: Copy) => {
+    copy.mixer?.stopAllAction()
+    copy.mixer?.uncacheRoot(copy.root)
+    for (const m of copy.materials) m.dispose()
+  }
+
+  /** A clip one of the layer's models has (the declaration's, or one shown now). */
+  const knows = (name: string) => animationNames.includes(name) || instances.some((inst) => inst.current?.actions.has(name) === true)
+  // `animation` set by the script (spec §12.4): the name of a clip of the model.
+  const animationOverride = ctx.bindings.overrides?.content?.('animation', (name) => (knows(name) ? undefined : `the model has no animation "${name}"`))
+
   const pickFor = (inst: Instance, faceId: number) => {
     if (inst.faceId === faceId) return
     inst.faceId = faceId
-    const index = pickIndex(by, faceId, models.length, by === 'random' && models.length > 1 ? random() : 0)
-    const copy = (inst.copies[index] ??= makeCopy(index))
-    if (inst.current !== copy) {
-      if (inst.current) inst.holder.remove(inst.current.root)
+    if (models.length > 0) inst.picked = models[pickIndex(by, faceId, models.length, by === 'random' && models.length > 1 ? random() : 0)]!
+    // A new face: its animation starts from the beginning.
+    inst.anim = null
+  }
+
+  /**
+   * Shows on `inst` the model chosen for face slot `face` (the script's or the parameter's, else its pick) and the
+   * animation asked for, restarted when either changes. False when there is no model (an asset parameter without a
+   * file, a value `map` does not list).
+   */
+  const choose = (inst: Instance, face: number): boolean => {
+    const chosen = content.evaluate(face)
+    const model = chosen === undefined ? inst.picked : chosen
+    if (!model) return false
+    let copy = inst.current
+    if (copy?.model !== model) {
+      if (copy) {
+        inst.holder.remove(copy.root)
+        // Copies of the declaration's models are kept; others (a host file, which is disposed once replaced) are not.
+        if (!permanent.has(copy.model)) {
+          disposeCopy(copy)
+          inst.copies.delete(copy.model)
+        }
+      }
+      copy = inst.copies.get(model) ?? makeCopy(model)
+      inst.copies.set(model, copy)
       inst.holder.add(copy.root)
       inst.current = copy
+      inst.anim = null
     }
-    // A new face: its animation starts from the beginning.
-    start(copy, animation)
+    const wanted = animationOverride?.get(face) ?? animation
+    if (wanted !== inst.anim) {
+      inst.anim = wanted
+      start(copy, wanted)
+    }
+    return true
   }
 
   // Per-frame scratch, allocated once.
@@ -347,13 +399,17 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
         let face = NO_FACE
         if (screen) {
           pickFor(inst, lead === NO_FACE ? 0 : anchors.id(lead))
-          advance(inst)
-          shown = place(inst, lead, frame)
+          if (choose(inst, lead)) {
+            advance(inst)
+            shown = place(inst, lead, frame)
+          }
         } else if (i < selected) {
           face = slots[i]!
           pickFor(inst, ids[face]!)
-          advance(inst)
-          shown = place(inst, face, frame)
+          if (choose(inst, face)) {
+            advance(inst)
+            shown = place(inst, face, frame)
+          }
         }
         inst.holder.visible = shown
         const occluder = inst.occluder
@@ -364,22 +420,20 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
       }
     },
     play(name, faceId) {
-      if (!animationNames.includes(name)) return false
-      if (faceId === undefined) animation = name
+      if (!knows(name)) return false
+      if (faceId === undefined) {
+        // The faces that appear later play it too; the instances playing the previous one are not restarted.
+        const previous = animation
+        animation = name
+        for (const inst of instances) if (inst.anim === previous) inst.anim = name
+      }
       for (const inst of instances) {
         if (inst.current && (faceId === undefined || inst.faceId === faceId)) start(inst.current, name)
       }
       return true
     },
     dispose() {
-      for (const inst of instances) {
-        for (const copy of inst.copies) {
-          if (!copy) continue
-          copy.mixer?.stopAllAction()
-          copy.mixer?.uncacheRoot(copy.root)
-          for (const m of copy.materials) m.dispose()
-        }
-      }
+      for (const inst of instances) for (const copy of inst.copies.values()) disposeCopy(copy)
       occluders?.dispose()
       if (shape) disposeScene(shape.scene)
       if (ownsEnvironment) releaseEnvironment(renderer)
