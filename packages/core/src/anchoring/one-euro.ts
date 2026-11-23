@@ -13,10 +13,9 @@ export interface OneEuroParams {
   dCutoff: number
 }
 
-const alpha = (cutoff: number, dt: number) => {
-  const r = 2 * Math.PI * cutoff * dt
-  return r / (r + 1)
-}
+// The smoothing factor of a cutoff, α = r / (r + 1) with r = 2π · cutoff · dt, is written out where it is used
+// rather than returned by a helper: V8 boxes a fractional number returned from a call it does not inline, and
+// `filter` computes one per channel (thousands per tracking result).
 
 export class OneEuroBank {
   readonly size: number
@@ -74,7 +73,8 @@ export class OneEuroBank {
       const dt = time - this.time
       if (dt > 0) {
         const { minCutoff, beta, dCutoff } = this.params
-        const ad = alpha(dCutoff, dt)
+        const rd = 2 * Math.PI * dCutoff * dt
+        const ad = rd / (rd + 1)
         const scales = speedScale.length
         for (let i = 0; i < n; i++) {
           const v = src[srcOffset + i]!
@@ -82,7 +82,8 @@ export class OneEuroBank {
           dx[i] = d
           raw[i] = v
           const cutoff = minCutoff + beta * Math.abs(d * speedScale[i % scales]!)
-          x[i] = x[i]! + alpha(cutoff, dt) * (v - x[i]!)
+          const r = 2 * Math.PI * cutoff * dt
+          x[i] = x[i]! + (r / (r + 1)) * (v - x[i]!)
         }
         this.time = time
       }

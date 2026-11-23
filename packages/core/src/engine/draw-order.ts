@@ -171,6 +171,9 @@ export class DrawOrder {
   /**
    * Transparent sort of the renderer (`setTransparentSort`): three's own (`groupOrder`, `renderOrder`, depth back to
    * front, id), with the sort depth of grouped instances, and their group order on a tie.
+   *
+   * Depths are compared rather than subtracted: `Array.prototype.sort` only reads the sign, and a fractional number
+   * returned to it is boxed, i.e. allocated, on every comparison (it is a builtin: it never inlines the comparator).
    */
   readonly compare = (a: DrawItem, b: DrawItem): number => {
     if (a.groupOrder !== b.groupOrder) return a.groupOrder - b.groupOrder
@@ -179,11 +182,11 @@ export class DrawOrder {
     const eb = entryOf(b.object)
     const za = ea !== undefined ? ea.sortZ : a.z
     const zb = eb !== undefined ? eb.sortZ : b.z
-    if (za !== zb) return zb - za
+    if (za !== zb) return zb > za ? 1 : zb < za ? -1 : 0
     const sa = ea !== undefined ? ea.seq : -1
     const sb = eb !== undefined ? eb.seq : -1
     if (sa !== sb) return sa - sb
-    if (a.z !== b.z) return b.z - a.z
+    if (a.z !== b.z) return b.z > a.z ? 1 : b.z < a.z ? -1 : 0
     return a.id - b.id
   }
 }

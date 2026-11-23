@@ -112,10 +112,13 @@ export class WarpPacker {
   #p: ArrayLike<number> = IDENTITY
   #aspect = 1
   /**
-   * Scratch: screen x, y of the centre (0, 1) and of the direction point (2, 3). Numbers go through a typed array
-   * rather than return values, so V8 never boxes them (no allocation per frame).
+   * Scratch: screen x, y of the centre (0, 1) and of the direction point (2, 3), then the direction point in camera
+   * space (4–6). Numbers go through typed arrays rather than arguments and return values: V8 boxes a fractional number
+   * passed to or returned from a call it does not inline, i.e. allocates on every frame (#159).
    */
-  #s = new Float64Array(4)
+  #s = new Float64Array(7)
+  /** The centre being added, as `#push` packs it: x, y, radius (screen), strength, unit direction x, y (screen). */
+  #c = new Float64Array(6)
 
   constructor(capacity: number) {
     this.capacity = Math.max(1, Math.min(MAX_CENTRES, Math.floor(capacity)))
@@ -150,7 +153,7 @@ export class WarpPacker {
     const x = m[12]!
     const y = m[13]!
     const z = m[14]!
-    if (!this.#project(x, y, z, 0)) return false
+    if (!this.#project(m, 12, 0)) return false
     // Size on screen of one face unit at that depth: the anchor scale (cm per unit) through the vertical focal length.
     const p = this.#p
     const w = p[3]! * x + p[7]! * y + p[11]! * z + p[15]!
@@ -164,10 +167,10 @@ export class WarpPacker {
       // Direction in the anchor frame → camera space (cm), then the screen offset of a point a tenth of a unit along
       // it: the exact on-screen direction, perspective included.
       const e = 0.1 / len
-      const qx = x + (m[0]! * dirX + m[4]! * dirY) * e
-      const qy = y + (m[1]! * dirX + m[5]! * dirY) * e
-      const qz = z + (m[2]! * dirX + m[6]! * dirY) * e
-      if (this.#project(qx, qy, qz, 2)) {
+      s[4] = x + (m[0]! * dirX + m[4]! * dirY) * e
+      s[5] = y + (m[1]! * dirX + m[5]! * dirY) * e
+      s[6] = z + (m[2]! * dirX + m[6]! * dirY) * e
+      if (this.#project(s, 4, 2)) {
         dx = s[2]! - s[0]!
         dy = s[3]! - s[1]!
         const l = Math.sqrt(dx * dx + dy * dy)
@@ -180,7 +183,14 @@ export class WarpPacker {
         }
       }
     }
-    this.#push(s[0]!, s[1]!, r, strength, dx, dy)
+    const c = this.#c
+    c[0] = s[0]!
+    c[1] = s[1]!
+    c[2] = r
+    c[3] = strength
+    c[4] = dx
+    c[5] = dy
+    this.#push()
     return true
   }
 
@@ -195,7 +205,14 @@ export class WarpPacker {
     const dirY = props[3]!
     if (this.count >= this.capacity || !(radius > 0) || strength === 0 || strength !== strength) return false
     const len = Math.sqrt(dirX * dirX + dirY * dirY)
-    this.#push(0, 0, radius, strength, len > 0 ? dirX / len : 0, len > 0 ? dirY / len : 0)
+    const c = this.#c
+    c[0] = 0
+    c[1] = 0
+    c[2] = radius
+    c[3] = strength
+    c[4] = len > 0 ? dirX / len : 0
+    c[5] = len > 0 ? dirY / len : 0
+    this.#push()
     return true
   }
 
@@ -210,8 +227,11 @@ export class WarpPacker {
     out[index] = w > 1e-6 ? (Math.sqrt(m[0]! * m[0]! + m[1]! * m[1]! + m[2]! * m[2]!) * p[5]!) / (2 * w) : 0
   }
 
-  /** Screen position of camera-space point (x, y, z) into the scratch at `i`; false behind the camera. */
-  #project(x: number, y: number, z: number, i: number): boolean {
+  /** Screen position of camera-space point `src[o … o + 2]` into the scratch at `i`; false behind the camera. */
+  #project(src: ArrayLike<number>, o: number, i: number): boolean {
+    const x = src[o]!
+    const y = src[o + 1]!
+    const z = src[o + 2]!
     const p = this.#p
     const w = p[3]! * x + p[7]! * y + p[11]! * z + p[15]!
     if (!(w > 1e-6)) return false
@@ -221,16 +241,19 @@ export class WarpPacker {
     return true
   }
 
-  #push(x: number, y: number, radius: number, strength: number, dx: number, dy: number): void {
+  /** Packs the centre held in `#c`. */
+  #push(): void {
+    const c = this.#c
     const i = this.count++ * CENTRE_STRIDE
     const a = this.a
     const b = this.b
-    a[i] = x
-    a[i + 1] = y
-    a[i + 2] = 1 / radius
+    const strength = c[3]!
+    a[i] = c[0]!
+    a[i + 1] = c[1]!
+    a[i + 2] = 1 / c[2]!
     a[i + 3] = strength < -1 ? -1 : strength > 1 ? 1 : strength
-    b[i] = dx
-    b[i + 1] = dy
+    b[i] = c[4]!
+    b[i + 1] = c[5]!
     b[i + 2] = 0
     b[i + 3] = 0
   }

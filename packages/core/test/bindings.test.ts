@@ -14,12 +14,14 @@ import {
   FaceBindingData,
   isBinding,
   NO_FACE,
+  ParamStore,
   type BindingDataSource,
   type BindingEnv,
   type FaceFrame,
   type NumberBinding,
   type ParamsReader,
 } from '../src/index.ts'
+import { bindingParams } from '../src/engine/filter.ts'
 import { bytesPerCall } from './allocation.ts'
 
 const JAW = blendshapeIndex('jawOpen')
@@ -406,5 +408,16 @@ describe('allocation', () => {
     // A boxed number is 16 bytes, in each of the 3 evaluations per frame of a binding that boxes.
     expect(bytesPerCall(frame, { warmup: 20_000 })).toBeLessThan(1)
     expect(out.every((v) => Number.isFinite(v))).toBe(true)
+  })
+
+  it('reads number parameters from the params store without allocating', () => {
+    // Returned through `ParamsReader.get` (unknown), the number was boxed on every evaluation (#159).
+    const store = new ParamStore({ size: { type: 'number', default: 1.37, min: 0, max: 5 }, on: { type: 'boolean', default: true } })
+    const env: BindingEnv = { data: new FaceBindingData(createFaceFrame(1)), params: bindingParams(store) }
+    const size = compileNumberBinding({ param: 'size' }, { fallback: 1 }, env)
+    const out = new Float32Array(1)
+    expect(bytesPerCall(() => size.write(0, out, 0))).toBeLessThan(1)
+    expect(out[0]).toBeCloseTo(1.37, 6)
+    expect(compileBinding({ param: 'on' }, { type: ['boolean', 'number'], fallback: false }, env).evaluate(0)).toBe(true)
   })
 })

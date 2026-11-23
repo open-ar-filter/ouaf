@@ -11,7 +11,7 @@
  * holds the cover crop. The mask therefore lines up with the video and the objects whatever the fit.
  */
 import { FACE_OVAL } from '../../anchoring/face-mesh.ts'
-import { videoToCamera } from '../../anchoring/face-pose.ts'
+import { videoToCameraInPlace } from '../../anchoring/face-pose.ts'
 import { LANDMARKS_STRIDE, type FaceFrame } from '../../face.ts'
 
 export { FACE_OVAL }
@@ -89,7 +89,10 @@ export function writeFaceMask(
   let cy = 0
   for (let i = 0; i < N; i++) {
     const l = o + FACE_OVAL[i]! * 3
-    videoToCamera(faces, lm[l]!, lm[l + 1]!, -1, ray)
+    ray.x = lm[l]!
+    ray.y = lm[l + 1]!
+    ray.z = -1
+    videoToCameraInPlace(faces, ray)
     const x = mirrored ? -ray.x : ray.x
     const w = p3 * x + p7 * ray.y + p11 * ray.z + p15
     const px = (p0 * x + p4 * ray.y + p8 * ray.z + p12) / w
