@@ -1277,16 +1277,22 @@ function videoElementSource(video: HTMLVideoElement): VideoSource {
 }
 
 function isFilterSpec(item: FilterInput | FilterSpec): item is FilterSpec {
-  return typeof item === 'object' && item !== null && !(item instanceof URL) && !(item instanceof Blob) && !(item instanceof ArrayBuffer) &&
-    !ArrayBuffer.isView(item) && 'src' in item
+  if (typeof item !== 'object' || item === null) return false
+  if (item instanceof URL || item instanceof Blob || item instanceof ArrayBuffer || ArrayBuffer.isView(item)) return false
+  return 'src' in item
 }
 
 /** The `FilterSource` of a `FilterInput`: a folder, a package (URL, blob, bytes) or the source itself. */
 async function filterSource(src: FilterInput, fetchImpl: typeof fetch): Promise<FilterSource> {
-  if (typeof src === 'string' || src instanceof URL) return isPackageUrl(src) ? fetchPackage(src, fetchImpl) : urlSource(src, fetchImpl)
+  if (typeof src === 'string' || src instanceof URL) {
+    return isPackageUrl(src) ? fetchPackage(src, fetchImpl) : urlSource(src, fetchImpl)
+  }
   if (src instanceof Blob || src instanceof ArrayBuffer || src instanceof Uint8Array) return packageSource(src)
-  if (typeof src === 'object' && src !== null && typeof src.manifest === 'function' && typeof src.file === 'function') return src
-  throw new OuafError('filter-load', `Cannot load a filter from ${describeSource(src)}: expected a URL, a .ouaf package (Blob, File, ArrayBuffer, Uint8Array) or a FilterSource.`)
+  if (typeof src === 'object' && src !== null && typeof src.manifest === 'function' && typeof src.file === 'function') {
+    return src
+  }
+  throw new OuafError('filter-load', `Cannot load a filter from ${describeSource(src)}: expected a URL, a .ouaf ` +
+    'package (Blob, File, ArrayBuffer, Uint8Array) or a FilterSource.')
 }
 
 function describeSource(input: unknown): string {

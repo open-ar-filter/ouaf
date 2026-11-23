@@ -34,8 +34,9 @@ test.beforeAll(() => {
 
 /** Serves the packages at `/packed/<fixture>.ouaf` (and `bytes` at `/packed/broken.ouaf`). */
 async function serve(page: Page, broken?: Uint8Array): Promise<void> {
-  await page.route('**/packed/*.ouaf', (route) => {
-    const name = new URL(route.request().url()).pathname.split('/').pop()!.replace(/\.ouaf$/, '')
+  // A predicate, not a glob: a glob would also match the page URL whose query holds `filter=/packed/….ouaf`.
+  await page.route((url) => /^\/packed\/[\w-]+\.ouaf$/.test(url.pathname), (route) => {
+    const name = new URL(route.request().url()).pathname.slice('/packed/'.length).replace(/\.ouaf$/, '')
     const body = name === 'broken' ? broken : packed.get(name as Fixture)
     return body ? route.fulfill({ body: Buffer.from(body), contentType: 'application/zip' }) : route.fulfill({ status: 404, body: 'Not found' })
   })
@@ -49,18 +50,28 @@ async function open(page: Page, query = ''): Promise<void> {
 
 const errors = (page: Page) => page.evaluate(() => window.ouaf!.errors)
 
+/** A filter of a stack: its URL, loaded as is, or fetched and given to the engine as a `File` or bytes. */
+interface Item {
+  url: string
+  as: 'url' | 'file' | 'bytes'
+  params?: Record<string, unknown>
+}
+
 interface Run {
   ids: string[]
-  /** Downscaled RGBA pixels of the rendered frames. */
-  frames: number[][]
   events: Array<[string, unknown]>
+  /** Worst mean absolute difference per channel (0–255) between the frames of this run and of the reference run. */
+  diff: number
+  /** Mean green level of the last frame. */
+  green: number
 }
 
 /**
- * Loads `inputs` as the stack and renders the first frames of the clip with `pushFrame`, reading the canvas after
- * each. With `tint`, the script then gets a `tint` message and a few more frames are rendered once it answered.
+ * Loads each stack of `stacks` in turn and renders the first frames of the clip with `pushFrame`, reading the canvas
+ * after each; the frames stay in the page, which compares them with those of the `ref` stack (the first one). With
+ * `tint`, the script then gets a `tint` message and a few more frames are rendered once it answered.
  */
-async function render(page: Page, stacks: Record<string, Array<{ url: string; as: 'url' | 'file' | 'bytes' }>>, tint: boolean): Promise<Record<string, Run>> {
+async function render(page: Page, stacks: Record<string, Item[]>, tint: boolean): Promise<Record<string, Run>> {
   return page.evaluate(
     async ([clip, stacks, tint]) => {
       const { engine, core } = window.ouaf!
@@ -70,26 +81,41 @@ async function render(page: Page, stacks: Record<string, Array<{ url: string; as
       const source = await core.OfflineVideoSource.open(clip)
       const events: Array<[string, unknown]> = []
       for (const name of ['ready', 'tinted']) engine.on(`filter:${name}`, (e) => events.push([name, e.data]))
-      const push = async (frames: number[][], count: number) => {
+      const push = async (frames: Uint8ClampedArray[], count: number) => {
         for (let i = 0; i < count; i++) {
           const frame = (await source.read())!
           await engine.pushFrame(frame.image, frame.time)
           frame.close()
           ctx.drawImage(engine.canvas, 0, 0, W, H)
-          frames.push([...ctx.getImageData(0, 0, W, H).data])
+          frames.push(ctx.getImageData(0, 0, W, H).data)
         }
       }
+      const worst = (a: Uint8ClampedArray[], b: Uint8ClampedArray[]) => {
+        if (a.length !== b.length) return Infinity
+        let max = 0
+        a.forEach((fa, f) => {
+          const fb = b[f]!
+          let sum = 0
+          for (let i = 0; i < fa.length; i++) sum += Math.abs(fa[i]! - fb[i]!)
+          max = Math.max(max, sum / fa.length)
+        })
+        return max
+      }
       const runs: Record<string, Run> = {}
+      let ref: Uint8ClampedArray[] | undefined
       for (const [key, inputs] of Object.entries(stacks)) {
         source.restart()
         events.length = 0
-        const srcs = await Promise.all(inputs.map(async ({ url, as }) => {
-          if (as === 'url') return url
-          const blob = await (await fetch(url)).blob()
-          return as === 'file' ? new File([blob], url.split('/').pop()!) : new Uint8Array(await blob.arrayBuffer())
+        const srcs = await Promise.all(inputs.map(async ({ url, as, params }) => {
+          let src: string | File | Uint8Array = url
+          if (as !== 'url') {
+            const blob = await (await fetch(url)).blob()
+            src = as === 'file' ? new File([blob], url.split('/').pop()!) : new Uint8Array(await blob.arrayBuffer())
+          }
+          return params ? { src, params } : src
         }))
         const handles = await engine.setFilters(srcs)
-        const frames: number[][] = []
+        const frames: Uint8ClampedArray[] = []
         await push(frames, 12)
         if (tint) {
           handles[0]!.send('tint', '#ff0000')
@@ -98,7 +124,11 @@ async function render(page: Page, stacks: Record<string, Array<{ url: string; as
           await push([], 2) // the layer takes the script's values at the next frame
           await push(frames, 4)
         }
-        runs[key] = { ids: handles.map((h) => h.id), frames, events: events.slice() }
+        ref ??= frames
+        const last = frames.at(-1)!
+        let green = 0
+        for (let i = 1; i < last.length; i += 4) green += last[i]!
+        runs[key] = { ids: handles.map((h) => h.id), events: events.slice(), diff: worst(ref, frames), green: green / (last.length / 4) }
       }
       await engine.setFilters([])
       return runs
@@ -107,26 +137,18 @@ async function render(page: Page, stacks: Record<string, Array<{ url: string; as
   )
 }
 
-/** Worst mean absolute difference per channel (0–255) between the frames of two runs. */
-function worst(a: Run, b: Run): number {
-  expect(b.frames).toHaveLength(a.frames.length)
-  let max = 0
-  a.frames.forEach((fa, f) => {
-    const fb = b.frames[f]!
-    let sum = 0
-    for (let i = 0; i < fa.length; i++) sum += Math.abs(fa[i]! - fb[i]!)
-    max = Math.max(max, sum / fa.length)
-  })
-  return max
-}
-
 test('a packed filter renders the same frames as its folder, from a URL, a File and bytes', async ({ page }) => {
   await open(page)
   const stack = (as: 'url' | 'file' | 'bytes', folder = false) =>
-    (['sticker', 'model'] as const).map((name) => ({ url: folder ? `/filters/fixtures/${name}/` : `/packed/${name}.ouaf`, as }))
+    (['sticker', 'model'] as const).map((name): Item => ({
+      url: folder ? `/filters/fixtures/${name}/` : `/packed/${name}.ouaf`,
+      as,
+      // The flame video plays in real time, not in media time: hidden, so that the frames do not depend on timing.
+      ...(name === 'sticker' ? { params: { flame: false } } : {}),
+    }))
   const runs = await render(page, {
-    none: [],
     folder: stack('url', true),
+    none: [],
     url: stack('url'),
     file: stack('file'),
     bytes: stack('bytes'),
@@ -135,9 +157,10 @@ test('a packed filter renders the same frames as its folder, from a URL, a File 
   const { none, folder, url, file, bytes } = runs as Record<string, Run>
   for (const run of [folder, url, file, bytes]) expect(run!.ids).toEqual(['sticker', 'model'])
   // The filters draw something (stickers, models on the face)…
-  expect(worst(none!, folder!)).toBeGreaterThan(2)
-  // …and the packages draw the same.
-  for (const run of [url, file, bytes]) expect(worst(folder!, run!)).toBeLessThan(0.5)
+  expect(none!.diff).toBeGreaterThan(1)
+  // …and the packages draw the same: within the bound `sources.spec.ts` sets for two runs of the same filter (two
+  // runs of the folder differ by about 0.1 here, as do the packages).
+  for (const run of [url, file, bytes]) expect(run!.diff).toBeLessThan(0.5)
 })
 
 test('a packed script behaves as its folder: same events, same frames before and after a message', async ({ page }) => {
@@ -153,13 +176,10 @@ test('a packed script behaves as its folder: same events, same frames before and
   expect(folder!.events).toEqual([['ready', { random: expect.any(Number) }], ['tinted', 1]])
   for (const run of [url, file]) {
     expect(run!.events).toEqual(folder!.events)
-    expect(worst(folder!, run!)).toBeLessThan(0.5)
+    expect(run!.diff).toBeLessThan(0.5)
   }
   // The tint is in the frames: red, no green or blue.
-  const last = folder!.frames.at(-1)!
-  let g = 0
-  for (let i = 1; i < last.length; i += 4) g += last[i]!
-  expect(g / (last.length / 4)).toBeLessThan(3)
+  expect(folder!.green).toBeLessThan(3)
 })
 
 test('the playground opens a package from ?filter= and from its file picker', async ({ page }) => {
@@ -174,11 +194,12 @@ test('the playground opens a package from ?filter= and from its file picker', as
 })
 
 test('a broken package fails with a typed error and leaves the stack unchanged', async ({ page }) => {
-  // A byte of the stored PNG flipped: the archive opens, the asset fails its CRC check when preloaded.
+  // A byte of an asset's data flipped: the archive opens, the asset fails its CRC check (or does not inflate) when
+  // preloaded.
   const archive = new Uint8Array(packed.get('sticker')!)
   const disc = readZipEntries(archive).find((e) => e.name === 'assets/disc.png')!
-  expect(disc.method).toBe(0)
-  zipEntryData(archive, disc)[100]! ^= 0xff
+  const data = zipEntryData(archive, disc)
+  data[data.length >> 1]! ^= 0xff
   await serve(page, archive)
   await page.goto('/engine.html')
   await page.waitForFunction(() => !!window.ouaf)

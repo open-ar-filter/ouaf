@@ -24,7 +24,8 @@ export interface PackageEntryInfo {
   size: number
 }
 
-export type PackageProblemCode = 'duplicate-entry' | 'unsafe-path' | 'symlink' | 'not-a-file' | 'too-many-entries' | 'package-too-large'
+export type PackageProblemCode =
+  | 'duplicate-entry' | 'unsafe-path' | 'symlink' | 'not-a-file' | 'too-many-entries' | 'package-too-large'
 
 /** A rule of the package broken by an entry (`path`), or by the package as a whole (`path` empty). */
 export interface PackageProblem {
@@ -59,7 +60,8 @@ export function checkPackageEntries<E extends PackageEntryInfo>(entries: readonl
   const seen = new Set<string>()
   const layout: PackageLayout<E> = { files: [], outside: [], problems: [] }
   for (const e of entries) {
-    const problem = (code: PackageProblemCode, message: string, hint: string) => layout.problems.push({ code, path: e.path, message, hint })
+    const problem = (code: PackageProblemCode, message: string, hint: string) =>
+      layout.problems.push({ code, path: e.path, message, hint })
     if (seen.has(e.path)) {
       problem('duplicate-entry', `"${e.path}" appears several times in the archive.`, 'Rebuild the archive.')
       continue
@@ -100,14 +102,17 @@ const SHRINK = 'Compress the assets (KTX2 textures, Draco/meshopt models, shorte
 export function checkPackageSize(size: PackageSize): PackageProblem[] {
   const problems: PackageProblem[] = []
   if (size.entries > PACKAGE_MAX_ENTRIES) {
-    problems.push({ code: 'too-many-entries', path: '', message: `The package holds ${size.entries} files: an engine refuses more than ${PACKAGE_MAX_ENTRIES}.`,
+    problems.push({ code: 'too-many-entries', path: '',
+      message: `The package holds ${size.entries} files: an engine refuses more than ${PACKAGE_MAX_ENTRIES}.`,
       hint: 'Merge small images into a spritesheet, and remove the files the manifest does not use.' })
   }
   if (size.archiveBytes !== undefined && size.archiveBytes > PACKAGE_MAX_BYTES) {
-    problems.push({ code: 'package-too-large', path: '', message: `The package is ${formatBytes(size.archiveBytes)}: an engine may refuse packages above 50 MB (spec §3).`, hint: SHRINK })
+    problems.push({ code: 'package-too-large', path: '', hint: SHRINK,
+      message: `The package is ${formatBytes(size.archiveBytes)}: an engine may refuse packages above 50 MB (spec §3).` })
   } else if (size.bytes > PACKAGE_MAX_BYTES) {
     const unpacked = size.archiveBytes !== undefined ? ' unpacked' : ''
-    problems.push({ code: 'package-too-large', path: '', message: `The package files total ${formatBytes(size.bytes)}${unpacked}: an engine may refuse packages above 50 MB (spec §3).`, hint: SHRINK })
+    problems.push({ code: 'package-too-large', path: '', hint: SHRINK,
+      message: `The package files total ${formatBytes(size.bytes)}${unpacked}: an engine may refuse packages above 50 MB (spec §3).` })
   }
   return problems
 }
@@ -116,7 +121,9 @@ export function checkPackageSize(size: PackageSize): PackageProblem[] {
 export function missingManifestHint(paths: readonly string[]): string {
   const nested = paths.filter((p) => /^[^/]+\/manifest\.json$/.test(p))
   if (nested.length === 1) return `Found "${nested[0]}": zip the content of the folder, not the folder itself.`
-  if (paths.includes('filter.js') || paths.includes('filter.ts')) return 'This is a source folder (filter.js): validate the package that `ouaf pack` builds from it.'
+  if (paths.includes('filter.js') || paths.includes('filter.ts')) {
+    return 'This is a source folder (filter.js): validate the package that `ouaf pack` builds from it.'
+  }
   const near = closest('manifest.json', paths.filter((p) => !p.includes('/')))
   if (near) return `Found "${near}": the name is case-sensitive, rename it to "manifest.json".`
   return 'Add a manifest.json describing the filter (spec §4).'

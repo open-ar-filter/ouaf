@@ -58,7 +58,11 @@ export async function packageSource(input: PackageInput, options: PackageSourceO
 }
 
 /** Downloads a package (the only request a package source makes), refusing it past `PACKAGE_MAX_BYTES`. */
-export async function fetchPackage(url: string | URL, fetchImpl: typeof fetch = fetch, signal?: AbortSignal): Promise<FilterSource> {
+export async function fetchPackage(
+  url: string | URL,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<FilterSource> {
   const target = new URL(String(url), globalThis.location?.href)
   const label = target.href
   let res: Response
@@ -69,7 +73,8 @@ export async function fetchPackage(url: string | URL, fetchImpl: typeof fetch = 
   }
   if (!res.ok) throw new OuafError('filter-load', `Could not fetch ${label}: HTTP ${res.status}.`)
   if (res.headers.get('content-type')?.includes('text/html')) {
-    throw new OuafError('filter-load', `Could not fetch ${label}: the server returned an HTML page (missing file, or a server that does not serve .ouaf files?).`)
+    throw new OuafError('filter-load', `Could not fetch ${label}: the server returned an HTML page (missing file, or a ` +
+      'server that does not serve .ouaf files?).')
   }
   const length = Number(res.headers.get('content-length'))
   if (length > 0) checkArchiveSize(label, length)
@@ -112,7 +117,9 @@ function checkArchiveSize(label: string, bytes: number): void {
 }
 
 function zipError(label: string, error: unknown, path = ''): never {
-  if (error instanceof ZipError) throw new PackageError(label, error.code, path, `${error.message} Rebuild it with \`ouaf pack\`.`)
+  if (error instanceof ZipError) {
+    throw new PackageError(label, error.code, path, `${error.message} Rebuild it with \`ouaf pack\`.`)
+  }
   throw error
 }
 
@@ -129,10 +136,12 @@ function openPackage(zip: Bytes, label: string): FilterSource {
     return type === 'directory' ? [] : [{ path: z.name, type, size: z.size, zip: z }]
   })
   const layout = checkPackageEntries(entries)
-  const problems = [...layout.problems, ...checkPackageSize({ entries: entries.length, bytes: layout.files.reduce((n, e) => n + e.size, 0), archiveBytes: zip.length })]
+  const bytes = layout.files.reduce((n, e) => n + e.size, 0)
+  const problems = [...layout.problems, ...checkPackageSize({ entries: entries.length, bytes, archiveBytes: zip.length })]
   const [first] = problems
   if (first) {
-    const more = problems.length > 1 ? ` (and ${problems.length - 1} other problem${problems.length > 2 ? 's' : ''}: run \`ouaf validate\` on it)` : ''
+    const others = problems.length - 1
+    const more = others > 0 ? ` (and ${others} other problem${others > 1 ? 's' : ''}: run \`ouaf validate\` on it)` : ''
     throw new PackageError(label, first.code, first.path, `${first.message} ${first.hint}${more}`)
   }
   const files = new Map<string, ZipEntry>()
@@ -146,7 +155,8 @@ function openPackage(zip: Bytes, label: string): FilterSource {
     files.set(e.path, e.zip)
   }
   if (!files.has('manifest.json')) {
-    throw new PackageError(label, 'missing-manifest', 'manifest.json', `The package has no manifest.json at its root. ${missingManifestHint(entries.map((e) => e.path))}`)
+    const hint = missingManifestHint(entries.map((e) => e.path))
+    throw new PackageError(label, 'missing-manifest', 'manifest.json', `The package has no manifest.json at its root. ${hint}`)
   }
 
   const read = async (path: string, signal?: AbortSignal): Promise<Blob> => {
@@ -183,7 +193,8 @@ async function inflate(zip: Bytes, entry: ZipEntry, label: string, signal?: Abor
     zipError(label, error, entry.name)
   }
   const corrupt = (what: string, cause?: unknown) =>
-    new PackageError(label, 'zip-invalid', entry.name, `${entry.name}: corrupt zip entry (${what}). Rebuild the package with \`ouaf pack\`.`, cause === undefined ? undefined : { cause })
+    new PackageError(label, 'zip-invalid', entry.name,
+      `${entry.name}: corrupt zip entry (${what}). Rebuild the package with \`ouaf pack\`.`, cause === undefined ? undefined : { cause })
   if (entry.method === ZIP_STORED) {
     if (crc32(data) !== entry.crc) throw corrupt('CRC mismatch')
     return [data]
@@ -260,7 +271,8 @@ function crc32(bytes: Uint8Array): number {
 /** Media type of a package file, as a server would send it: some browsers need it to play a video from a blob URL. */
 const MEDIA_TYPES: Readonly<Record<string, string>> = {
   json: 'application/json', js: 'text/javascript',
-  png: 'image/png', webp: 'image/webp', jpg: 'image/jpeg', jpeg: 'image/jpeg', avif: 'image/avif', svg: 'image/svg+xml', ktx2: 'image/ktx2',
+  png: 'image/png', webp: 'image/webp', jpg: 'image/jpeg', jpeg: 'image/jpeg', avif: 'image/avif', svg: 'image/svg+xml',
+  ktx2: 'image/ktx2',
   mp4: 'video/mp4', webm: 'video/webm',
   glb: 'model/gltf-binary', gltf: 'model/gltf+json',
   ogg: 'audio/ogg', opus: 'audio/ogg', mp3: 'audio/mpeg', wav: 'audio/wav',
