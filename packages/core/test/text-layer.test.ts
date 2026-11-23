@@ -280,6 +280,12 @@ describe('text layer', () => {
     expect(h.meshes.map((m) => m.visible)).toEqual([false, false])
   })
 
+  it('gives the place of each plane on its anchor, for the draw order (spec §7)', () => {
+    const h = harness({ text: 'ab', anchor: 'chin', offset: [0, 1, 0.05] })
+    h.frame(2)
+    expect(h.layer.placements!.map((p) => [p.object, p.anchor, p.face, p.z])).toEqual(h.meshes.map((m, i) => [m, 'chin', i + 1, 0.05]))
+  })
+
   it('scale multiplies the drawn block around the anchor point, uniformly or per axis, without redrawing', () => {
     const axis = (m: Mesh, i: number) => new Vector3().setFromMatrixColumn(m.matrix, i).length()
     const base = harness({ text: 'abcd', align: 'left', size: 0.5 })

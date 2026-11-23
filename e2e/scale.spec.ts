@@ -22,25 +22,32 @@ async function sizes(page: Page): Promise<Sizes> {
     const ctx = c.getContext('2d')!
     ctx.drawImage(bitmap, 0, 0)
     const d = ctx.getImageData(0, 0, c.width, c.height).data
+    // Pure colors only (the layers are flat #00ff00, #ff00ff, #00ffff), and a pixel counts only with a neighbour of the
+    // same layer on its right and below: a stray video pixel of that color must not stretch a bounding box.
+    const W = c.width
+    const H = c.height
+    const kind = new Uint8Array(W * H)
+    for (let p = 0; p < W * H; p++) {
+      const i = p * 4
+      const hi = (v: number) => d[i + v]! > 235
+      const lo = (v: number) => d[i + v]! < 40
+      kind[p] = hi(1) && lo(0) && lo(2) ? 1 : hi(0) && hi(2) && lo(1) ? 2 : hi(1) && hi(2) && lo(0) ? 3 : 0
+    }
     const box = () => ({ x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity })
-    const boxes = { text: box(), sticker: box(), canvas: box() }
-    for (let i = 0; i < d.length; i += 4) {
-      const r = d[i]! > 200
-      const g = d[i + 1]! > 200
-      const b = d[i + 2]! > 200
-      const low = (v: number) => d[i + v]! < 80
-      const layer = g && low(0) && low(2) ? 'text' : r && b && low(1) ? 'sticker' : g && b && low(0) ? 'canvas' : undefined
-      if (!layer) continue
-      const x = (i / 4) % c.width
-      const y = Math.floor(i / 4 / c.width)
-      const k = boxes[layer]
-      k.x0 = Math.min(k.x0, x)
-      k.x1 = Math.max(k.x1, x)
-      k.y0 = Math.min(k.y0, y)
-      k.y1 = Math.max(k.y1, y)
+    const boxes = [box(), box(), box()]
+    for (let y = 0; y < H - 1; y++) {
+      for (let x = 0; x < W - 1; x++) {
+        const k = kind[y * W + x]!
+        if (!k || kind[y * W + x + 1] !== k || kind[(y + 1) * W + x] !== k) continue
+        const b = boxes[k - 1]!
+        b.x0 = Math.min(b.x0, x)
+        b.x1 = Math.max(b.x1, x + 1)
+        b.y0 = Math.min(b.y0, y)
+        b.y1 = Math.max(b.y1, y + 1)
+      }
     }
     const size = (k: ReturnType<typeof box>) => (k.x1 < k.x0 ? { w: 0, h: 0 } : { w: k.x1 - k.x0 + 1, h: k.y1 - k.y0 + 1 })
-    return { text: size(boxes.text), sticker: size(boxes.sticker), canvas: size(boxes.canvas) }
+    return { text: size(boxes[0]!), sticker: size(boxes[1]!), canvas: size(boxes[2]!) }
   }, png.toString('base64'))
 }
 

@@ -239,6 +239,13 @@ describe('model layer', () => {
     layer.dispose()
   })
 
+  it('gives the place of each copy on its anchor, for the draw order of transparent objects (spec §7)', () => {
+    const layer = make({ src: 'box', anchor: 'noseTip', offset: [0, 0, 0.4] }, context({ box: box() }))
+    layer.update(frameAt(0, fakeAnchors([4, 9])))
+    expect(layer.placements!.map((p) => [p.object, p.anchor, p.face, p.z])).toEqual(holders(layer).map((h, i) => [h, 'noseTip', [4, 9][i], 0.4]))
+    layer.dispose()
+  })
+
   it('fit rescales the model to a width or height in anchor units, times scale', async () => {
     const lift = await parseModel(glb('lift.glb'), undefined) // a unit cube
     const layer = make({ src: 'lift', fit: { width: 0.5 }, scale: 2 }, context({ lift }, 1))

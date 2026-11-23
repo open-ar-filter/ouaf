@@ -19,6 +19,8 @@ export interface FrameDataSource {
   readonly camera: Camera
   /** Video → clip mapping of the view, mirroring included (landmarks). */
   readonly videoToClip: Readonly<VideoToClip>
+  /** Displayed width / height (`frame.aspect`, spec §12.4). */
+  readonly aspect: number
 }
 
 /** Builds `frame.faces` for `uses`. `anchorNames`: the face anchors of the registry (spec §5.3). */

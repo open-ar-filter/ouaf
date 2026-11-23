@@ -255,6 +255,17 @@ describe('sticker layer', () => {
     layer.dispose()
   })
 
+  it('gives the place of each quad on its anchor, for the draw order (spec §7)', () => {
+    const decl = { type: 'sticker', src: 'img', anchor: 'mouth', offset: { bind: 'face.index', map: { '0': [0, 0, 0.1], '1': [0, 0, -0.2] } } }
+    const layer = createSticker(decl as unknown as LayerDecl, context({ img: asset('image', 10, 10) }))
+    layer.update(frameAt(0, fakeAnchors([4, 9])))
+    expect(layer.placements!.map((p) => [p.object, p.anchor, p.face, p.z])).toEqual(meshes(layer).map((m, i) => [m, 'mouth', [4, 9][i], [0.1, -0.2][i]]))
+    const screen = createSticker({ type: 'sticker', src: 'img', anchor: 'screen', offset: [0, 0, 0.3] } as LayerDecl, context({ img: asset('image', 10, 10) }))
+    screen.update(frameAt(0, fakeAnchors([4])))
+    expect(screen.placements!.map((p) => [p.anchor, p.face, p.z])).toEqual([['screen', 0, 0.3]])
+    for (const l of [layer, screen]) l.dispose()
+  })
+
   it('scale multiplies the size, uniformly or per axis, bindable; a factor ≤ 0 hides the quad', () => {
     const ctx = context({ wide: asset('image', 200, 100) })
     const uniform = createSticker({ type: 'sticker', src: 'wide', size: 0.5, scale: 2 } as LayerDecl, ctx)

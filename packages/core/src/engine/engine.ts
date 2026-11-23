@@ -55,6 +55,7 @@ import { TrackingHub } from './tracking.ts'
 import { FrameDataBuilder, type FrameDataSource } from '../script/frame-data.ts'
 import { ScriptHost } from '../script/host.ts'
 import { openSandbox } from '../script/sandbox.ts'
+import { scriptFonts } from '../layers/canvas/script-fonts.ts'
 import { scriptImages } from '../layers/canvas/script-images.ts'
 
 /**
@@ -334,6 +335,11 @@ export class Engine {
       camera: this.#compositor.camera,
       get videoToClip() {
         return engine.#compositor.videoToClip
+      },
+      // The rendered image is what is displayed (the host keeps its aspect ratio), cover crop included.
+      get aspect() {
+        const c = engine.#compositor
+        return c.width > 0 && c.height > 0 ? c.width / c.height : 1
       },
     }
     this.#openSandbox = options.openSandbox ?? openSandbox
@@ -1128,6 +1134,7 @@ export class Engine {
         return l && typeof l.width === 'number' && typeof l.height === 'number' ? [{ layer, width: l.width, height: l.height, fps: l.fps ?? 30 }] : []
       }),
       images: () => scriptImages(filter.assets, script.images),
+      fonts: () => scriptFonts(filter.assets, script.fonts),
       drawn: (layer, image) => {
         const instance = filter.layers[layer]?.instance as (LayerInstance & { setImage?: (image: ImageBitmap) => void }) | undefined
         if (typeof instance?.setImage === 'function') instance.setImage(image)
@@ -1186,6 +1193,7 @@ export class Engine {
     }
     for (const filter of enabled) for (const l of filter.layers) add(l.instance, filter)
     for (const p of this.#renderPasses) add(p, undefined)
+    this.#compositor.drawOrder.setLayers(this.#objects)
   }
 
   async #updateTracking(): Promise<void> {

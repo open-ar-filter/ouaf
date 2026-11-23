@@ -660,6 +660,8 @@ function shaderPath(ctx: Ctx, ref: string): string | undefined {
 
 /** Asset kinds a script can use without a layer referencing them (`f.asset`, `f.sound`, spec §12.4); unknown too. */
 const SCRIPT_READABLE_KINDS = new Set<string | undefined>(['image', 'spritesheet', 'video', 'audio', undefined])
+/** Asset kinds a script that draws canvas layers uses as well: fonts, by their asset name (spec §12.6). */
+const CANVAS_READABLE_KINDS = new Set<string | undefined>(['font'])
 
 function checkRequiresAndAssets(ctx: Ctx) {
   const req = ctx.manifest.requires
@@ -684,6 +686,7 @@ function checkRequiresAndAssets(ctx: Ctx) {
       'Remove "blendshapes" from "requires": expression events work without it.')
   }
   const assets = (ctx.manifest.assets ?? {}) as Record<string, TAssetEntry>
+  const draws = (script?.draw?.length ?? 0) > 0
   // A script can also give a layer's content property any declared asset it shows (`set({ src })`, spec §12.4).
   const scriptKinds = new Set<string | undefined>(SCRIPT_READABLE_KINDS)
   if (script) {
@@ -693,11 +696,14 @@ function checkRequiresAndAssets(ctx: Ctx) {
     }
   }
   for (const [name, entry] of Object.entries(assets)) {
+    // A built-in resource under a name of the filter (spec §10.1).
+    if (typeof entry === 'string' && entry.startsWith('builtin:')) checkAssetRef(ctx, entry, `/assets/${name}`)
     const kind = assetKind(entry)
-    // Assets used only by the script (sounds, canvas images, values it sets) cannot be detected here. The other kinds
-    // cannot be read by a script: `data` and `lottie` are reserved for later versions (spec §10.2), used only by
-    // plugin layers.
-    if (!ctx.usedAssets.has(name) && (!script || !scriptKinds.has(kind))) {
+    // Assets used only by the script (sounds, canvas images and fonts, values it sets) cannot be detected here. The
+    // other kinds cannot be read by a script: `data` and `lottie` are reserved for later versions (spec §10.2), used
+    // only by plugin layers.
+    const scriptReadable = scriptKinds.has(kind) || (draws && CANVAS_READABLE_KINDS.has(kind))
+    if (!ctx.usedAssets.has(name) && (!script || !scriptReadable)) {
       warn(ctx, 'unused-asset', `/assets/${name}`, `Asset "${name}" is not referenced by any layer: it makes the package heavier.`,
         kind === 'data' ? 'A script does not read data assets: import the JSON in filter.js, ouaf pack bundles it into script.js (spec §10.2).' : undefined)
     }

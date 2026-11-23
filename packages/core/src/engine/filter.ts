@@ -17,6 +17,7 @@ import type { WebGLRenderer } from 'three'
 import { deriveSeed, SeededRandom } from '../random.ts'
 import { ScriptOverrides } from '../script/overrides.ts'
 import type { ScriptHost } from '../script/host.ts'
+import { scriptFontRefs } from '../layers/canvas/script-fonts.ts'
 import { scriptImageRefs } from '../layers/canvas/script-images.ts'
 
 /** Events of a filter handle. */
@@ -114,12 +115,17 @@ export interface LoadedLayer {
   readonly instance: LayerInstance
 }
 
-/** A filter's script (spec §12): its source, the values it gives the layers, the image assets of `f.asset()`. */
+/**
+ * A filter's script (spec §12): its source, the values it gives the layers, the image assets of `f.asset()` and the
+ * fonts of its canvases.
+ */
 export interface FilterScript {
   readonly code: string
   readonly overrides: ScriptOverrides
   /** Names of the preloaded image assets given to the script (canvas layers, spec §12.6). */
   readonly images: readonly string[]
+  /** Names of the preloaded font assets registered in the script's Worker (canvas layers, spec §12.6). */
+  readonly fonts: readonly string[]
 }
 
 /** What the engine keeps for each filter of the stack. */
@@ -261,8 +267,11 @@ export async function loadFilter(
       throw new OuafError('filter-load', `Filter "${manifest.id}": the manifest declares a script but script.js could not be read.`, { cause })
     }
     // The image assets `f.asset()` gives to the canvas layers' `draw` functions (spec §12.6).
-    const images = env.layerTypes.has('canvas') ? scriptImageRefs(manifest, (kind) => env.loaders.has(kind as LoaderKind)) : []
-    script = { code, overrides: new ScriptOverrides(), images }
+    const canLoad = (kind: string) => env.loaders.has(kind as LoaderKind)
+    const images = env.layerTypes.has('canvas') ? scriptImageRefs(manifest, canLoad) : []
+    // The font assets its canvases draw text with, by asset name (spec §12.6).
+    const fonts = env.layerTypes.has('canvas') ? scriptFontRefs(manifest, canLoad) : []
+    script = { code, overrides: new ScriptOverrides(), images, fonts }
   }
 
   const decls = manifest.layers as unknown as LayerDecl[]
@@ -314,7 +323,7 @@ export async function loadFilter(
   }
   initialErrors = undefined
 
-  const refs: string[] = [...(script?.images ?? [])]
+  const refs: string[] = [...(script?.images ?? []), ...(script?.fonts ?? [])]
   impls.forEach((impl, i) => {
     for (const ref of impl.assets?.(decls[i]!) ?? []) refs.push(ref)
   })

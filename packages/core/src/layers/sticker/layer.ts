@@ -26,8 +26,9 @@ import { Euler, Group, Matrix4, Mesh, PlaneGeometry, Quaternion, Vector3 } from 
 import type { AnchorFollow } from '../../anchors.ts'
 import { NO_FACE, compileBinding, compileNumberBinding, type CompiledBinding, type NumberBinding } from '../../bindings/index.ts'
 import { compileContent, type ContentBinding } from '../../engine/content.ts'
+import { createPlacement } from '../../engine/draw-order.ts'
 import { OuafError } from '../../engine/errors.ts'
-import type { FrameContext, LayerContext, LayerDecl, LayerTypeImpl, ObjectLayer } from '../../engine/layer-type.ts'
+import type { FrameContext, LayerContext, LayerDecl, LayerTypeImpl, ObjectLayer, ObjectPlacement } from '../../engine/layer-type.ts'
 import { compileScale } from '../scale.ts'
 import { isStickerAsset, type StickerAsset } from './assets.ts'
 import { StickerMaterial, type BlendMode } from './material.ts'
@@ -132,6 +133,8 @@ class VideoPlayback {
 /** One quad: the sticker shown for one selected face (or the screen). */
 interface Instance {
   readonly mesh: Mesh<PlaneGeometry, StickerMaterial>
+  /** Its place on the anchor, for the draw order (spec §7). */
+  readonly placement: ObjectPlacement
   /** Face id the asset was picked for (−1: not picked yet). */
   faceId: number
   /** The asset picked for that face among the declaration's (`undefined` when `src` is bound to a parameter). */
@@ -187,7 +190,7 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
     mesh.frustumCulled = false
     mesh.visible = false
     root.add(mesh)
-    instances.push({ mesh, faceId: -1, picked: undefined })
+    instances.push({ mesh, placement: createPlacement(mesh, anchor), faceId: -1, picked: undefined })
   }
 
   // Videos this layer drives: the first layer to claim a video asset owns its playback. The declaration's videos are
@@ -263,6 +266,8 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
     const aspect = asset.height > 0 ? asset.width / asset.height : 1
     const o = offset.evaluate(face)
     const r = rotation.evaluate(face)
+    inst.placement.face = screen ? 0 : frame.anchors.id(face)
+    inst.placement.z = o[2]
     quaternion.setFromEuler(euler.set(r[0] * DEG, r[1] * DEG, r[2] * DEG))
     const m = inst.mesh.matrix
     const sx = height * aspect * num[3]!
@@ -288,6 +293,7 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
     stage: d.overlay ? 'overlay' : 'objects',
     object: root,
     excludeFromCapture: d.overlay === true && d.excludeFromCapture === true,
+    placements: instances.map((inst) => inst.placement),
     update(frame) {
       const anchors = frame.anchors
       const tracked = frame.faces.count

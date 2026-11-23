@@ -187,7 +187,7 @@ where they are when the layer is shown again. When they start is given by each t
 | Property | Default | Description |
 |---|---|---|
 | `anchor` | `head` | Anchor (section 5). |
-| `offset` | `[0,0,0]` | Offset in the anchor frame, *bindable*. |
+| `offset` | `[0,0,0]` | Offset in the anchor frame, *bindable*. Its z also orders the objects on one anchor (section 7). |
 | `rotation` | `[0,0,0]` | Rotation in degrees around the x, y, z axes of the anchor frame, *bindable*. Euler order XYZ: the rotation matrix is Rx · Ry · Rz, so z is applied first, then y, then x. |
 | `scale` | `1` | Size multiplier, a number or `[x, y, z]`, *bindable*; e.g. animated by a script for a "pop" (12.4). It multiplies the layer's size (`size`, `fit`) along the x, y, z axes of the layer (the anchor frame turned by `rotation`): a number scales uniformly, `[1, 1.4, 1]` stretches vertically. `scale` is a visual transform of the drawn layer: a `text` is scaled as drawn, around its anchor point, without being laid out or rasterized again (its wrapping, `maxWidth`, does not change), so it is cheap to animate but can blur when enlarged (above about 1.5×). `size` is the font size: the text is laid out at it, and an engine MAY rasterize it again at a matching resolution. An animated "pop" uses `scale`; a lasting larger text uses `size`. An instance with a factor of 0 or less is not drawn. |
 | `orient` | `face` | `face`: follows the head; `screen`: keeps facing the screen (readable text). |
@@ -275,17 +275,28 @@ background → video → face → warp → objects → color → overlay
 | `video` | Input image |
 | `face` | Face textures, shaders with `stage: "face"` |
 | `warp` | Deformations (applied to everything before) |
-| `objects` | `text`, `sticker`, `model`, `canvas`, depth-sorted |
+| `objects` | `text`, `sticker`, `model`, `canvas`, depth-sorted (below) |
 | `color` | `color` layers and shaders with `stage: "post"`, chained |
 | `overlay` | Layers with `overlay: true` |
 
 A host MAY stack several filters. Within a stage, order is the **stack** order, then the **layer** order.
 
 - Deformations, color grading and voice effects are **chained** in that order.
-- Objects are **merged** and depth-sorted.
+- Objects are **merged** and depth-sorted (below).
 - The background is **exclusive**: the last filter in the stack wins, and the engine SHOULD emit a warning.
 - Tracking (face, etc.) is **shared** by the whole stack: it is computed only once.
 - Filters are isolated from each other: each has its own sandbox and cannot read the others' state.
+
+**Order of objects.** Within the `objects` stage, and within the `overlay` stage, objects are drawn back to front by
+depth: the depth of each one's centre. Objects of the **same face on the same anchor** (the `screen` anchor counts
+as one anchor, whatever the face) are drawn in the order of their `offset` along the anchor frame's z axis instead,
+the lowest first (+z points towards the camera, 5.1): a higher `offset` z is drawn in front, whatever the head's
+rotation and the objects' `orient`. Equal offsets are drawn in stack order, then layer order, across filters. Objects
+of different anchors or faces keep the depth order; an engine places each same-anchor group among them by depth,
+without breaking the group's order. Only the order of drawing changes: an opaque model, and a head occluder
+(`occlusion: "head"`), still hide what is behind them with the depth buffer, whatever their order. A text 0.02 in
+front of its bubble on the same anchor thus stays in front when the head turns, which ordering by the depth of their
+centres does not ensure once they are not centred on each other.
 
 ## 8. Bindings
 
@@ -406,9 +417,13 @@ not tracking data: no `{ bind }`), but each takes, instead of an asset, a parame
   "fire": { "src": "assets/fire.mp4", "alpha": "packed" },
   "walk": { "src": "assets/walk.png", "frames": { "cols": 4, "rows": 2, "fps": 12 } },
   "star": { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'>…</svg>" },
-  "cool": { "emoji": "😎" }
+  "cool": { "emoji": "😎" },
+  "title": "builtin:font/rounded-bold"
 }
 ```
+
+An entry is an `assets/…` path, `{ "src": … }` with options, an inline `svg`, an `emoji`, or a built-in resource
+`builtin:…` (10.3) under a name of the filter: e.g. a built-in font a canvas draws with by that name (12.6).
 
 An asset reference (`src`, `font`, `lut`, `textures`…) is one of:
 
@@ -437,7 +452,7 @@ is the same on every run; `by: "random"` draws an entry when the face gets its i
 | `model` | glTF 2.0 / GLB | Animations, Draco or meshopt compression. |
 | `lut` | `.cube` | |
 | `shader` | `.frag`, `.glsl` | Section 11. |
-| `font` | WOFF2, WOFF, TTF, OTF | |
+| `font` | WOFF2, WOFF, TTF, OTF | `text.font`; by asset name in canvases (12.6). |
 | `audio` | OGG, MP3, WAV, Opus | Sound effects triggered by the script. |
 | `lottie` | `.lottie`, or `.json` with `kind: "lottie"` | Reserved (Lottie plugin). |
 | `data` | JSON | Reserved: no v1 layer or script API reads it (plugin layers may). JSON a script uses is imported in `filter.js` and bundled into `script.js` by `ouaf pack` (3.1). A later version may add an API to read it (`f.data`), compatibly. |
@@ -616,7 +631,8 @@ changes nothing. The 64 KB are measured as for `f.emit` (reference engine: a wal
 bytes a character, numbers at 8, typed arrays and `ArrayBuffer`s at their byte length, keys included).
 
 **`frame` data.** `frame.time` (media time, s), `frame.dt` (s since the previous call to the script, which covers the
-frames it skipped, 12.7), `frame.faces` (list) and, with `uses: ["pairs"]`, `frame.pairs`. Each face has `id`
+frames it skipped, 12.7), `frame.aspect` (the displayed width / height, e.g. 0.5625 for a 9:16 portrait image),
+`frame.faces` (list) and, with `uses: ["pairs"]`, `frame.pairs`. Each face has `id`
 (stable while the face is tracked, 5.4), `index`, `state`, and, depending on `uses`:
 
 | `uses` | Per face |
@@ -628,7 +644,10 @@ frames it skipped, 12.7), `frame.faces` (list) and, with `uses: ["pairs"]`, `fra
 | `pairs` | (on `frame`) `pairs`: one `{ a, b, distance, contact }` per pair of faces (below). |
 
 - **Positions** (`anchors`, `landmarks`) are in **display space, normalized**: from 0 to 1 over the displayed image,
-  origin at the top left, **y down** (as in a canvas), mirroring applied, so they match what the person sees.
+  origin at the top left, **y down** (as in a canvas), mirroring applied, so they match what the person sees. x is
+  over the width and y over the height: `dx * frame.aspect` and `dy` measure an on-screen distance in screen heights
+  (a circle on screen has the same radius in both). There are no pixel sizes: they depend on the device, and a
+  canvas has its own size (12.6).
   `landmarks` `z` is a relative depth at the scale of `x` (smaller is closer to the camera).
 - **Pairs**: `a` and `b` are faces of `frame.faces`; `distance` is the on-screen distance between the two head
   centres, in **face units** (the mean eye distance of the two faces), so it does not depend on how far the people
@@ -659,6 +678,13 @@ pixels, origin at the top left, y down; `frame` is the data of 12.4 (the frame o
 - **Where.** A canvas layer has one image, shown on every face it selects (`faces`) like a sticker: `size` is its height
   in anchor units, the width follows `width / height`. Nothing is shown before the first draw.
 - `f.asset(name)` gives the manifest's image assets (12.4) to draw with `ctx.drawImage`.
+- **Fonts.** The `font` assets declared in the manifest's `assets` (font files, and built-in fonts under a name of
+  the filter, `"title": "builtin:font/rounded-bold"`, 10.1) are available to `ctx.font` under their asset name:
+  `ctx.font = '24px title'`. The engine registers them in the sandbox (reference engine: the Worker's `FontFaceSet`)
+  from the package bytes before `setup`, so they are ready at the first draw; nothing is fetched. A name that is a
+  CSS keyword (`serif`, `monospace`, `inherit`…) is quoted: `'24px "serif"'`. Any other family is the platform's,
+  which differs between devices. Where the platform cannot register fonts in the sandbox, an engine draws with the
+  platform's fonts and SHOULD warn once.
 
 The main cost is uploading the image to the GPU at each draw: keep canvases small, and `fps` low.
 

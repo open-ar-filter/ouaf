@@ -45,7 +45,8 @@ import type { AnchorFollow } from '../../anchors.ts'
 import { NO_FACE, compileBinding, compileNumberBinding, type CompiledBinding, type NumberBinding } from '../../bindings/index.ts'
 import { compileContent, type ContentBinding } from '../../engine/content.ts'
 import { OuafError } from '../../engine/errors.ts'
-import type { FrameContext, LayerContext, LayerDecl, LayerTypeImpl, ObjectLayer } from '../../engine/layer-type.ts'
+import { createPlacement } from '../../engine/draw-order.ts'
+import type { FrameContext, LayerContext, LayerDecl, LayerTypeImpl, ObjectLayer, ObjectPlacement } from '../../engine/layer-type.ts'
 import { compileScale } from '../scale.ts'
 import { apparentSize } from '../sticker/layer.ts'
 import { clockStep } from '../sticker/playback.ts'
@@ -133,6 +134,8 @@ interface Copy {
 interface Instance {
   /** Positioned every frame; holds the copy of the picked model. */
   readonly holder: Group
+  /** Its place on the anchor, for the draw order of transparent objects (spec §7). */
+  readonly placement: ObjectPlacement
   /** One copy per model, made the first time the face slot shows it (kept for the declaration's models). */
   readonly copies: Map<ModelAsset, Copy>
   readonly occluder: Mesh | undefined
@@ -208,7 +211,7 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
     root.add(holder)
     const occluder = occluders?.create()
     if (occluder) root.add(occluder)
-    instances.push({ holder, copies: new Map(), occluder, current: undefined, faceId: -1, picked: undefined, anim: null })
+    instances.push({ holder, placement: createPlacement(holder, anchor), copies: new Map(), occluder, current: undefined, faceId: -1, picked: undefined, anim: null })
   }
 
   const makeCopy = (model: ModelAsset): Copy => {
@@ -348,6 +351,8 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
 
     const o = offset.evaluate(face)
     const r = rotation.evaluate(face)
+    inst.placement.face = screen ? 0 : frame.anchors.id(face)
+    inst.placement.z = o[2]
     quaternion.setFromEuler(euler.set(r[0] * DEG, r[1] * DEG, r[2] * DEG))
     const f = copy.fit
     const m = inst.holder.matrix
@@ -378,6 +383,7 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
     object: root,
     excludeFromCapture: d.overlay === true && d.excludeFromCapture === true,
     animations: animationNames,
+    placements: instances.map((inst) => inst.placement),
     update(frame) {
       const anchors = frame.anchors
       const tracked = frame.faces.count
