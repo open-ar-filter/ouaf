@@ -1,0 +1,21 @@
+{
+  "ouaf": "1",
+  "id": "glasses",
+  "name": "Glasses and the head occluder (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Head occlusion (#155): the glasses demo's shape with colored parts (../make-glasses-assets.ts); the face oval can turn blue.",
+  "requires": { "face": true },
+  "params": {
+    "occluded": { "type": "boolean", "default": true, "label": "Glasses hidden by the head" },
+    "plain": { "type": "boolean", "default": false, "label": "Glasses without occlusion" },
+    "face": { "type": "boolean", "default": false, "label": "Blue face oval" }
+  },
+  "assets": { "glasses": "assets/glasses.glb", "blue": "assets/blue.cube" },
+  "layers": [
+    { "id": "face", "type": "color", "region": "face", "lut": "blue", "visible": { "param": "face" } },
+    { "id": "glasses", "type": "model", "src": "glasses", "anchor": "eyes", "offset": [0, -0.04, 0.12], "occlusion": "head",
+      "visible": { "param": "occluded" } },
+    { "id": "plain", "type": "model", "src": "glasses", "anchor": "eyes", "offset": [0, -0.04, 0.12], "visible": { "param": "plain" } }
+  ]
+}

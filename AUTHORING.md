@@ -179,7 +179,9 @@ of the list, kept while the face is tracked: `by: "face"` (default) cycles throu
 
 `src` (required: a glTF/GLB asset, `{ pick }`, a generated shape, or a param: section 7), `scale`, `fit: { width?, height? }` (rescales
 the bounding box to this size in anchor units), `animation` (glTF clip played from activation), `loop` (default
-true), `occlusion: "head"` (parts behind the head are hidden: hats, glasses temples). 1 glTF unit = 1 face unit.
+true), `occlusion: "head"` (parts behind the head are hidden: hats, glasses temples; the head is the tracked face,
+closed by the back of an average head, and what is less than about 2 cm under the face surface stays visible, so a
+temple modelled at x ≈ ±1 face unit shows up to the ear). 1 glTF unit = 1 face unit.
 Shapes need no file: `{ "shape": "box" | "sphere" | "torus" | "ring" | "cone" | "cylinder" | "plane", "color"?,
 "metalness"?, "roughness"?, "emissive"?, "thickness"? }`, all of size 1 centred on the anchor (`torus`, `ring` and
 `plane` in the xy plane, facing the camera; `cone` and `cylinder` along y; `thickness` for `torus` and `ring`).

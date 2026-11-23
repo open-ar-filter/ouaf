@@ -5,17 +5,19 @@ import { describe, expect, it } from 'vitest'
 import type { AnchorProvider } from '../src/engine/anchor-provider.ts'
 import type { AssetRequest } from '../src/engine/assets.ts'
 import type { FrameContext, LayerContext, LayerDecl } from '../src/engine/layer-type.ts'
-import type { FaceFrame } from '../src/face.ts'
+import { createFaceFrame, type FaceFrame } from '../src/face.ts'
+import { estimateFacePoses } from '../src/anchoring/face-pose.ts'
 import type { BindingDataSource } from '../src/bindings/index.ts'
 import { checkGltf, cloneModel, isModelAsset, modelLoader, parseModel, type ModelAsset } from '../src/layers/model/assets.ts'
 import { createModel, fitScale, modelRefs, type ModelLayerInstance } from '../src/layers/model/layer.ts'
-import { HEAD_CENTER, HEAD_RADII, OCCLUDER_RENDER_ORDER } from '../src/layers/model/occluder.ts'
+import { HEAD_CENTER, HEAD_RADII, OCCLUDER_RENDER_ORDER, OCCLUDER_VERTICES } from '../src/layers/model/occluder.ts'
 import { createShapeAsset, parseHex, shapeGeometry } from '../src/layers/model/shapes.ts'
 import type { TParams } from '@ouaf/spec'
 import { bindingParams } from '../src/engine/filter.ts'
 import { ParamStore } from '../src/params/index.ts'
 import { ScriptOverrides } from '../src/script/overrides.ts'
 import { bytesPerCall } from './allocation.ts'
+import { writeSyntheticFace } from './synthetic-face.ts'
 
 const FIXTURES = resolve(import.meta.dirname, '../../../filters/fixtures/model-screen/assets')
 const glb = (name: string) => readFileSync(resolve(FIXTURES, name))
@@ -197,16 +199,27 @@ function context(assets: Record<string, ModelAsset>, maxFaces = 2, warnings: str
   }
 }
 
-function frameAt(time: number, anchors: AnchorProvider & { count: number }): FrameContext {
-  return { time, now: time * 1000, dt: 33, faces: { count: anchors.count } as FaceFrame, anchors, width: 720, height: 1280, mirrored: false }
+/** Landmarks of the faces of `fakeAnchors` (for the head occluders): slot i at x = 10·i cm, 50 cm away. */
+const trackedFaces = (() => {
+  const faces = createFaceFrame(4)
+  faces.count = 4
+  for (let i = 0; i < 4; i++) writeSyntheticFace(faces, i, { t: [10 * i, 0, -50 - i] })
+  estimateFacePoses(faces)
+  return faces
+})()
+
+function frameAt(time: number, anchors: AnchorProvider & { count: number }, faces: FaceFrame = trackedFaces): FrameContext {
+  faces.count = anchors.count
+  return { time, now: time * 1000, dt: 33, faces, anchors, width: 720, height: 1280, mirrored: false }
 }
 
 const make = (decl: Record<string, unknown>, ctx: LayerContext, random?: () => number) =>
   createModel({ type: 'model', ...decl } as LayerDecl, ctx, { environment: null, ...(random && { random }) })
 
-/** The holders of the layer's instances (one per face slot), and their occluders. */
-const holders = (layer: ModelLayerInstance) => layer.object.children.filter((c) => c.name !== 'head-occluder')
+/** The holders of the layer's instances (one per face slot), and their occluders: fitted, and the ellipsoids. */
+const holders = (layer: ModelLayerInstance) => layer.object.children.filter((c) => !c.name.startsWith('head-occluder'))
 const occluders = (layer: ModelLayerInstance) => layer.object.children.filter((c) => c.name === 'head-occluder') as Mesh[]
+const ellipsoids = (layer: ModelLayerInstance) => layer.object.children.filter((c) => c.name === 'head-occluder-ellipsoid') as Mesh[]
 const positionOf = (m: Matrix4) => round(new Vector3().setFromMatrixPosition(m).toArray())
 const scaleOf = (m: Matrix4) => round(new Vector3().setFromMatrixScale(m).toArray())
 const materialsOf = (o: Object3D) => {
@@ -404,17 +417,37 @@ describe('model layer', () => {
     expect(warnings).toEqual(['layer "hat".animation: no animation "wave" in the model (it has "lift", "spin").'])
   })
 
-  it('occlusion "head": a depth-only head per face, on the head anchor, drawn first', () => {
+  it('occlusion "head": a depth-only head per face, fitted to its landmarks, drawn first', () => {
     const layer = make({ src: 'box', anchor: 'forehead', occlusion: 'head' }, context({ box: box() }))
     const anchors = fakeAnchors([1, 2])
     anchors.count = 1
     layer.update(frameAt(0, anchors))
     const [a, b] = occluders(layer)
-    expect([a!.visible, b!.visible]).toEqual([true, false])
-    const material = a!.material as import('three').MeshBasicMaterial
-    expect([material.colorWrite, material.depthWrite, a!.renderOrder]).toEqual([false, true, OCCLUDER_RENDER_ORDER])
-    expect(positionOf(a!.matrix)).toEqual(round(HEAD_CENTER.map((v, i) => v * 6 + [0, 0, -59][i]!)))
-    expect(scaleOf(a!.matrix)).toEqual(round(HEAD_RADII.map((r) => r * 6)))
+    const [ea, eb] = ellipsoids(layer)
+    expect([a!.visible, b!.visible, ea!.visible, eb!.visible]).toEqual([true, false, false, false])
+    for (const mesh of [a!, ea!]) {
+      const material = mesh.material as import('three').MeshBasicMaterial
+      expect([material.colorWrite, material.depthWrite, mesh.renderOrder]).toEqual([false, true, OCCLUDER_RENDER_ORDER])
+    }
+    // Camera space: the vertices themselves are placed (writeHeadOccluder), uploaded each frame.
+    const position = a!.geometry.getAttribute('position')
+    expect([position.count, a!.matrix.equals(new Matrix4())]).toEqual([OCCLUDER_VERTICES, true])
+    const version = (position as import('three').BufferAttribute).version
+    layer.update(frameAt(0.033, anchors))
+    expect((position as import('three').BufferAttribute).version).toBe(version + 1)
+
+    // Without usable landmarks (here: none), the face gets the ellipsoid of an average head on the head anchor.
+    anchors.count = 2
+    const blank = createFaceFrame(2)
+    layer.update(frameAt(0.066, anchors, blank))
+    expect([a!.visible, b!.visible, ea!.visible, eb!.visible]).toEqual([false, false, true, true])
+    expect(positionOf(ea!.matrix)).toEqual(round(HEAD_CENTER.map((v, i) => v * 6 + [0, 0, -59][i]!)))
+    expect(scaleOf(ea!.matrix)).toEqual(round(HEAD_RADII.map((r) => r * 6)))
+    expect(positionOf(eb!.matrix)).toEqual(round(HEAD_CENTER.map((v, i) => v * 6 + [10, 0, -60][i]!)))
+    // A face that is no longer shown hides both.
+    anchors.count = 0
+    layer.update(frameAt(0.1, anchors))
+    expect([a!.visible, b!.visible, ea!.visible, eb!.visible]).toEqual([false, false, false, false])
     layer.dispose()
 
     const warnings: string[] = []
@@ -523,7 +556,9 @@ describe('model layer: src bound to a param, src and animation set by a script (
   })
 })
 
-describe('model layer: allocation', () => {
+// Long on a slow runner: up to 120 000 frames each (bytesPerCall's warm-up and windows; an animated model never gives a
+// clean window), and every frame now rebuilds a fitted head occluder per face (#155).
+describe('model layer: allocation', { timeout: 60_000 }, () => {
   /** Bytes allocated per frame by `layers`, with 1 to 4 faces in turn. */
   const perFrame = (layers: ModelLayerInstance[]) => {
     const anchors = fakeAnchors([1, 2, 3, 4])

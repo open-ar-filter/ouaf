@@ -18,8 +18,9 @@
  *   every run, spec §12.5), also while the face's copy is hidden by `visible` or `opacity` (spec §6.3), and repeats
  *   with `loop` (default) or holds its last pose. `play(name, faceId?)` starts another clip from its start: the entry
  *   point of the script API (`f.layer(id, face?).play(name)`, #26).
- * - **Occlusion**: `occlusion: "head"` adds a head occluder per face (`occluder.ts`), which hides the parts of the
- *   model behind the head. It writes depth for the whole objects stage, so it hides any object behind the head.
+ * - **Occlusion**: `occlusion: "head"` adds a head occluder per face (`occluder.ts`): the face mesh of the tracked
+ *   landmarks closed by the back of an average head, rebuilt every frame, which hides the parts of the model behind
+ *   the head. It writes depth for the whole objects stage, so it hides any object behind the head.
  * - **Lighting**: image-based, the same for every model (`environment.ts`).
  *
  * Bindable properties (`visible`, `opacity`, `offset`, `rotation`, `scale`) are evaluated per face. `update`
@@ -37,7 +38,6 @@ import {
   Vector3,
   type AnimationAction,
   type Material,
-  type Mesh,
   type Object3D,
   type Texture,
 } from 'three'
@@ -53,7 +53,7 @@ import { clockStep } from '../sticker/playback.ts'
 import { instanceCount, pickIndex, selectFaces, type FacesSelector, type PickMode } from '../sticker/select.ts'
 import { cloneModel, disposeScene, isModelAsset, type ModelAsset } from './assets.ts'
 import { acquireEnvironment, applyEnvironment, releaseEnvironment } from './environment.ts'
-import { HeadOccluders } from './occluder.ts'
+import { HeadOccluders, type HeadOccluder } from './occluder.ts'
 import { createShapeAsset, type TShape } from './shapes.ts'
 
 const DEG = Math.PI / 180
@@ -138,7 +138,7 @@ interface Instance {
   readonly placement: ObjectPlacement
   /** One copy per model, made the first time the face slot shows it (kept for the declaration's models). */
   readonly copies: Map<ModelAsset, Copy>
-  readonly occluder: Mesh | undefined
+  readonly occluder: HeadOccluder | undefined
   current: Copy | undefined
   /** Face id the model was picked for (−1: none yet). */
   faceId: number
@@ -210,7 +210,7 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
     holder.visible = false
     root.add(holder)
     const occluder = occluders?.create()
-    if (occluder) root.add(occluder)
+    if (occluder) root.add(occluder.mesh, occluder.fallback)
     instances.push({ holder, placement: createPlacement(holder, anchor), copies: new Map(), occluder, current: undefined, faceId: -1, picked: undefined, anim: null })
   }
 
@@ -420,8 +420,8 @@ export function createModel(decl: LayerDecl, ctx: LayerContext, options: ModelOp
         inst.holder.visible = shown
         const occluder = inst.occluder
         if (occluder) {
-          occluder.visible = shown && anchors.face(face, 'head', 'rigid', headMatrix)
-          if (occluder.visible) occluders!.place(occluder, headMatrix)
+          if (shown && anchors.face(face, 'head', 'rigid', headMatrix)) occluders!.place(occluder, frame.faces, face, frame.mirrored, headMatrix)
+          else occluders!.hide(occluder)
         }
       }
     },
