@@ -398,7 +398,8 @@ Expression events fire **once** at the start of a gesture, with hysteresis (§13
 
 Tune them in the manifest: `"events": { "smile": { "threshold": 0.6, "minDurationMs": 150 } }` (`threshold` 0–1,
 only for events that have one; `minDurationMs` 0–5000). Face events need `requires.face`. They keep working when the
-engine drops blendshapes. `pairContact` / `pairSeparate` are specified but not emitted yet (section 14).
+engine drops blendshapes. Blinks and winks also use the shape of the eyelids, so a person whose `eyeBlink` score stays
+low still blinks; keep the default blink threshold unless you have measured otherwise. `pairContact` / `pairSeparate` are specified but not emitted yet (section 14).
 
 ## 10. Scripts
 
