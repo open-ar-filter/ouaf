@@ -12,7 +12,7 @@ import {
 } from '../anchors.ts'
 import { MATRIX_STRIDE, type FaceFrame } from '../face.ts'
 import { CANONICAL_FACE } from './canonical-face.ts'
-import { videoToCamera } from './face-pose.ts'
+import { videoToCameraInPlace } from './face-pose.ts'
 
 /** Every v1 face anchor (`screen` is not a face anchor). */
 export type FaceAnchor = LandmarkAnchor | 'head'
@@ -101,7 +101,8 @@ export function computeAnchorMatrix(
   const mode = follow === 'auto' ? ANCHOR_DEFAULT_FOLLOW[anchor] : follow
   if (mode === 'expression' && anchor !== 'head' && oz < 0) {
     liveAnchorPosition(faces, face, anchor, live)
-    videoToCamera(faces, live.x, live.y, oz, live)
+    live.z = oz
+    videoToCameraInPlace(faces, live)
     ox = live.x
     oy = live.y
   }

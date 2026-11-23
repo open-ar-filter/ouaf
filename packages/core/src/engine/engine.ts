@@ -1247,10 +1247,9 @@ export class Engine {
       }),
       images: () => scriptImages(filter.assets, script.images),
       fonts: () => scriptFonts(filter.assets, script.fonts),
-      drawn: (layer, image) => {
-        const instance = filter.layers[layer]?.instance as (LayerInstance & { setImage?: (image: ImageBitmap) => void }) | undefined
-        if (typeof instance?.setImage === 'function') instance.setImage(image)
-        else image.close()
+      drawn: (layer, pixels) => {
+        const instance = filter.layers[layer]?.instance as (LayerInstance & { setImage?: (pixels: Uint8ClampedArray) => void }) | undefined
+        if (typeof instance?.setImage === 'function') instance.setImage(pixels)
       },
       play: (layer, face, animation) => {
         const instance = filter.layers[layer]?.instance as (LayerInstance & { play?: (name: string, faceId?: number) => boolean }) | undefined

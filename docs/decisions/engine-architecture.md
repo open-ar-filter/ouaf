@@ -153,6 +153,14 @@ and changes nothing; an initial file (`addFilter(src, { params })`) that fails r
 resolve a parameter once with `ctx.params.indexOf`, read its animated value each frame with `numberAt`) and `maxFaces`. `frame` (`FrameContext`, valid during the call only) gives `time`, `now`, `dt`, the latest `faces`
 (`FaceFrame`), `anchors`, the render size and `mirrored`. `update` and `render` must not allocate in the steady state.
 
+Fractional numbers are the usual trap (#149, #159): V8 boxes one (a 16-byte heap number) when it passes it to, or
+returns it from, a call it does not inline, which depends on the caller's size and on compilation order; when a
+builtin such as `Array.prototype.sort` calls the function; and when a conditional merges it with the global `NaN` or
+`Infinity` (`ok ? x : NaN`). Per-frame helpers therefore take arrays and offsets and write their results into arrays
+(`projectToUv`, `WarpPacker`, `videoToCameraInPlace`), and merge with `NaN` through two stores. The unit tests measure
+the per-frame paths with V8's default inlining (`bytesPerCall`, in each component's tests) and with only small
+functions inlined (`allocation-inlining.test.ts`), which catches a boxing call whatever V8 decides to inline.
+
 ## Stages and compositing (spec §7)
 
 `Compositor` (`compositor.ts`): `background → video → face → warp → objects → color → overlay`. Pass stages ping-pong
@@ -234,7 +242,14 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 - **Host** (`host.ts`): one frame in flight; answers are applied at the start of the next rendered frame
   (`beginFrame`, before the layers update), frames are sent after rendering (`endFrame`); 1 s watchdog
   (`OuafError('SCRIPT_STOPPED')`), re-armed instead when its timer fires more than 250 ms late (the main thread was
-  busy, so the answer may be queued behind the timer); `f.emit` limits.
+  busy, so the answer may be queued behind the timer); at activation it starts when the runtime says that the script
+  starts (`started`), after the runtime has prepared the canvases and fonts (10 s bound before that); `f.emit`
+  limits.
+- **Canvas images** (#25, #158): the Worker's canvases are CPU-backed (`willReadFrequently`) and read with
+  `getImageData`, premultiplied in the Worker; the pixels are transferred and uploaded as a `DataTexture`. A
+  GPU-backed canvas and `transferToImageBitmap` made each draw wait on the GPU process, busy with the engine's own
+  rendering: about 1 s per draw of the `stress` demo with SwiftShader on 2 cores, which tripped the watchdog. The
+  slow first use of a canvas is paid at `init`, before `started`.
 - **Script values** (`overrides.ts`): in a scripted filter, every bindable property compiled with a `name`
   (`BindableProperty.name`) is wrapped by the bindings compiler (`BindingEnv.overrides`), so `.set()` and
   `.animate()` reach every layer type without code in the layers. Values are per face id or for every instance;
@@ -263,7 +278,7 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 | Host files for a video or spritesheet sticker, or a shader texture | images only; `textures` take assets only | a later version (spec §8.1) |
 | Scripts waiting for the answer with file sources (spec §12.1) | never waits | #32 (offline sources) |
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
-| Head occluder (`model.occlusion: "head"`) | the face landmark mesh, moved back 0.35 face units along the camera rays, closed by the back of an average head (#155); the ellipsoid alone without usable landmarks | ears and hair (segmentation), one occluder per face shared by the layers |
+| Head occluder (`model.occlusion: "head"`) | the face landmark mesh, moved back 0.2 face units along the camera rays, closed by the back of an average head (#155); the ellipsoid alone without usable landmarks | ears and hair (segmentation), one occluder per face shared by the layers |
 | Model animations | three's `AnimationMixer` (boxes a few numbers per animated face and frame) | an allocation-free sampler, if profiles show GC |
 | Frame-exact video export | `record()`: `MediaRecorder`, real time; WebM without duration in its header (not seekable until remuxed) | WebCodecs `VideoEncoder` + an MP4 muxer, driven by file-regime frames (#137) |
 | glTF limits | 32 MB per file, textures not size-checked, no KTX2 textures | the limits of spec Appendix C; KTX2 with #116 |

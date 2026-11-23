@@ -152,6 +152,8 @@ export class FaceBindingData implements BindingDataSource {
   }
 
   #blendshape(face: number, index: number, out: Float64Array, i: number): void {
-    out[i] = this.blendshapes && this.hasFace(face) ? this.faces.blendshapes[face * BLENDSHAPES_STRIDE + index]! : NaN
+    // Two stores, not `… ? score : NaN`: V8 boxes a fractional number merged with the global `NaN` (#159).
+    if (this.blendshapes && this.hasFace(face)) out[i] = this.faces.blendshapes[face * BLENDSHAPES_STRIDE + index]!
+    else out[i] = NaN
   }
 }

@@ -231,7 +231,7 @@ Normative behavior:
 - `model.occlusion: "head"`: the part of the object hidden by the head is not drawn (hat, glasses temples).
   *Informative*: the reference implementation hides it with an invisible surface per face that only writes depth,
   drawn before the objects: the face landmark mesh (forehead, eyes, cheeks, temples, jaw, as tracked, expressions
-  included), moved back by 0.35 face units (≈ 2 cm) along the camera rays, and closed behind by the back of an
+  included), moved back by 0.2 face units (≈ 1.3 cm) along the camera rays, and closed behind by the back of an
   average adult head on the `head` anchor. So the face's outline in the image is exact, while what lies on the face or
   just under its surface stays drawn: stickers, the front of glasses, temples that touch the side of the head. Ears,
   hair and the neck are not part of it. A face without usable landmarks gets an ellipsoid of an average head on the
@@ -704,9 +704,11 @@ The sandbox runs the script off the rendering thread: a slow script makes its ow
   produced in between are not sent to the script (the next `frame.dt` covers them); events are queued and delivered
   in order, never dropped.
 - **Watchdog**: a script that does not answer within **1 s** (`setup` included) MUST be stopped (the reference
-  engine terminates its Worker). The engine emits an `error` event with the code `SCRIPT_STOPPED`; the rest of the
-  filter (layers, bindings, animations already started) keeps working. The script stays stopped until the filter is
-  activated again.
+  engine terminates its Worker). The second is the script's: an engine SHOULD NOT count its own preparation of the
+  sandbox (canvases, fonts) before `script.js` is evaluated, nor the time a host thread too busy to receive the
+  answer adds, so that a slow device does not stop a script that does not loop. The engine emits an `error` event
+  with the code `SCRIPT_STOPPED`; the rest of the filter (layers, bindings, animations already started) keeps
+  working. The script stays stopped until the filter is activated again.
 - An engine SHOULD emit a warning when the script answers more slowly than the rendering frame rate.
 
 ## 13. Events

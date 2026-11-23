@@ -81,35 +81,49 @@ export const U = {
 } as const
 export const UNIFORM_COUNT = 14
 
-const clamp = (v: number, min: number, max: number) => (v < min ? min : v > max ? max : v)
-
-/** Property `name` of `amounts`, clamped to its range (its default when not a number). */
-function amount(amounts: ArrayLike<number>, name: AmountName): number {
-  const d = AMOUNT_DEFS[name]
-  const x = amounts[AMOUNT[name]]!
-  return Number.isFinite(x) ? clamp(x, d.min, d.max) : d.fallback
+// Range and default of each property by `AMOUNT` index, in typed arrays: V8 can box a fractional number merged with a
+// value read from an object field.
+const MIN = new Float64Array(AMOUNT_COUNT)
+const MAX = new Float64Array(AMOUNT_COUNT)
+const FALLBACK = new Float64Array(AMOUNT_COUNT)
+for (const name of Object.keys(AMOUNT) as AmountName[]) {
+  MIN[AMOUNT[name]] = AMOUNT_DEFS[name].min
+  MAX[AMOUNT[name]] = AMOUNT_DEFS[name].max
+  FALLBACK[AMOUNT[name]] = AMOUNT_DEFS[name].fallback
 }
+/** Scratch: the property values clamped to their ranges, by `AMOUNT` index (`writeGradeUniforms` is synchronous). */
+const clamped = new Float64Array(AMOUNT_COUNT)
 
 /**
  * Writes the uniforms for property values `amounts` (indexed by `AMOUNT`; values outside the schema range, e.g. from
  * a `range`/`to` binding, are clamped), tint `tint` (r, g, b, a in 0–1) and media time `time` (s) into `out`.
  */
 export function writeGradeUniforms(amounts: ArrayLike<number>, tint: ArrayLike<number>, time: number, out: Float32Array): Float32Array {
-  const t = amount(amounts, 'temperature')
-  out[U.mix] = amount(amounts, 'opacity')
-  out[U.gamma] = Math.pow(2, -amount(amounts, 'brightness'))
-  out[U.contrast] = 1 + amount(amounts, 'contrast')
-  out[U.saturation] = 1 + amount(amounts, 'saturation')
+  // Clamped into arrays rather than by helpers returning them: V8 boxes (allocates) a fractional number returned
+  // from a call it does not inline.
+  const a = clamped
+  for (let k = 0; k < AMOUNT_COUNT; k++) {
+    const x = amounts[k]!
+    const min = MIN[k]!
+    const max = MAX[k]!
+    if (Number.isFinite(x)) a[k] = x < min ? min : x > max ? max : x
+    else a[k] = FALLBACK[k]!
+  }
+  for (let k = 0; k < 4; k++) {
+    const v = tint[k]!
+    out[U.tintR + k] = v < 0 ? 0 : v > 1 ? 1 : v // tintR, tintG, tintB, tintA
+  }
+  const t = a[AMOUNT.temperature]!
+  out[U.mix] = a[AMOUNT.opacity]!
+  out[U.gamma] = Math.pow(2, -a[AMOUNT.brightness]!)
+  out[U.contrast] = 1 + a[AMOUNT.contrast]!
+  out[U.saturation] = 1 + a[AMOUNT.saturation]!
   out[U.redGain] = 1 + TEMPERATURE_GAIN * t
   out[U.blueGain] = 1 - TEMPERATURE_GAIN * t
-  out[U.vignette] = amount(amounts, 'vignette')
-  out[U.grain] = GRAIN_AMPLITUDE * amount(amounts, 'grain')
-  out[U.tintR] = clamp(tint[0]!, 0, 1)
-  out[U.tintG] = clamp(tint[1]!, 0, 1)
-  out[U.tintB] = clamp(tint[2]!, 0, 1)
-  out[U.tintA] = clamp(tint[3]!, 0, 1)
+  out[U.vignette] = a[AMOUNT.vignette]!
+  out[U.grain] = GRAIN_AMPLITUDE * a[AMOUNT.grain]!
   out[U.seed] = grainSeed(time)
-  out[U.lut] = amount(amounts, 'intensity')
+  out[U.lut] = a[AMOUNT.intensity]!
   return out
 }
 

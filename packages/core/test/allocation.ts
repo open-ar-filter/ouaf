@@ -43,6 +43,21 @@ export interface AllocationOptions {
   windows?: number
 }
 
+/**
+ * Makes V8 inline only small functions from now on: bytecode up to `--max-inlined-bytecode-size-small` (27 bytes; on
+ * Node 25+ up to 75 when a number goes in or out), which it inlines whatever its budget. Whether a larger callee is
+ * inlined depends on the size of its caller and on the order of compilation (#149), and when it is not, a fractional
+ * number passed to it or returned from it is boxed on every call. Measuring in this state catches such a boxing on a
+ * hot path deterministically (#159).
+ *
+ * Applies to the functions V8 optimizes afterwards: call it before the measured code runs, at the top of a test file
+ * of its own (Vitest runs each file in its own process).
+ */
+export function limitInlining(): void {
+  setFlagsFromString('--max-inlined-bytecode-size-cumulative=0')
+  setFlagsFromString('--max-maglev-inlined-bytecode-size-cumulative=0')
+}
+
 function repeat(fn: () => void, n: number): void {
   for (let i = 0; i < n; i++) fn()
 }

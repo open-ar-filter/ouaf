@@ -10,12 +10,17 @@
  *   (Waiting for the answer with file sources needs the offline sources of #32.)
  * - **Watchdog**: no answer within 1 s (`setup` included) stops the script: its sandbox is removed (which terminates
  *   the Worker) and the engine emits `OuafError('SCRIPT_STOPPED')`. Layers, bindings and the animations already
- *   started keep working; the script stays stopped until the filter is activated again.
+ *   started keep working; the script stays stopped until the filter is activated again. The 1 s are the script's:
+ *   - at activation, the runtime first prepares the canvases and fonts (slow under load, and no script code runs):
+ *     the 1 s start when it says that the script starts (`started`), before `script.js` is evaluated; until then
+ *     only a generous bound applies (`STARTUP_MS`);
+ *   - a timer that fires late means this thread was stalled (a long rendering task): the answer may be waiting
+ *     behind it, so the script gets another period. A script stuck in a loop is still stopped by the next timer
+ *     that fires on time, about 1 s later.
  * - **Messages** (`f.emit`): structured-cloneable, at most 64 KB, at most 60 per second; others are dropped with a
  *   warning.
  * - **Canvas layers** (spec §12.6): the script draws them in its Worker; each answer may carry their new images
- *   (`ImageBitmap`s, transferred), handed to the layers with the answer's commands (`drawn`). Images nobody takes are
- *   closed.
+ *   (premultiplied RGBA pixels, transferred), handed to the layers with the answer's commands (`drawn`).
  */
 import { SCRIPT_LIMITS, type ScriptUse } from '@ouaf/spec'
 import { OuafError } from '../engine/errors.ts'
@@ -29,6 +34,12 @@ export { estimateSize } from './size.ts'
 
 /** How late (ms) the watchdog timer may fire before the delay is blamed on this thread rather than on the script. */
 const WATCHDOG_LATE_MS = 250
+
+/**
+ * Bound (ms) on the runtime's own preparation at activation, before it starts the script (`started`): registering
+ * the fonts, setting up the canvases. No script code runs then, so the 1 s watchdog does not apply yet.
+ */
+export const STARTUP_MS = 10_000
 
 /** The engine's end of the channel to a sandbox (a `MessagePort`, or a test double). */
 export interface ScriptPort {
@@ -80,8 +91,11 @@ export interface ScriptHostOptions {
    * copied to the sandbox. Called only when the script draws canvas layers.
    */
   fonts?(): WireFont[]
-  /** A new image of canvas layer `layer` (index): the callee owns it from then on (and closes it). */
-  drawn?(layer: number, image: ImageBitmap): void
+  /**
+   * A new image of canvas layer `layer` (index): premultiplied RGBA pixels, top row first (the sandbox's: their
+   * length is the callee's to check). The callee owns them from then on.
+   */
+  drawn?(layer: number, pixels: Uint8ClampedArray): void
   /** Clock for the watchdog (ms); default `performance.now`. */
   now?(): number
   setTimeout?(fn: () => void, ms: number): unknown
@@ -99,8 +113,11 @@ export class ScriptHost {
   /** Sequence number of the message awaiting an answer, or -1. */
   #inFlight = -1
   #watchdog: unknown
-  /** When the watchdog was armed (`now()`, ms). */
+  /** When the watchdog was armed (`now()`, ms), and for how long. */
   #armedAt = 0
+  #period = 0
+  /** The runtime has prepared the sandbox and runs the script (`started`): `setup` is timed from then on. */
+  #started = false
   /** Answers received since the last frame, applied at the start of the next one. */
   #answers: WireDone[] = []
   #events: WireEvent[] = []
@@ -235,13 +252,13 @@ export class ScriptHost {
     if (this.#state === 'disposed') return
     this.#state = 'disposed'
     this.#shutdown()
-    for (const a of this.#answers) closeImages(a)
     this.#answers = []
   }
 
   #send(seq: number, message: WireInit | WireFrame, images: ImageBitmap[] = []): void {
     this.#inFlight = seq
-    this.#armWatchdog(seq)
+    // `init`: the runtime prepares the sandbox first, then says when the script starts (`started`).
+    this.#armWatchdog(seq, seq === 0 ? STARTUP_MS : SCRIPT_LIMITS.watchdogMs)
     const transfer: Transferable[] = message.t === 'frame' ? message.faces.flatMap((f) => (f.landmarks ? [f.landmarks.buffer as ArrayBuffer] : [])) : images
     try {
       this.#connection!.port.postMessage(message, transfer)
@@ -253,27 +270,30 @@ export class ScriptHost {
   #onMessage(data: unknown): void {
     const m = data as { t?: unknown; seq?: unknown; message?: unknown } | null
     if (!m || typeof m !== 'object') return
-    if (this.#state !== 'running') {
-      if (m.t === 'done') closeImages(m as WireDone)
-      return
-    }
+    if (this.#state !== 'running') return
     if (m.t === 'fatal') {
       this.#stop(String(m.message), 'script')
       return
     }
-    if (m.t !== 'done' || m.seq !== this.#inFlight) {
-      if (m.t === 'done') closeImages(m as WireDone)
+    if (m.t === 'started') {
+      // Once, while `init` is in flight: from now on the script runs, and has the watchdog's 1 s (spec §12.7).
+      if (this.#started || this.#inFlight !== 0) return
+      this.#started = true
+      this.#clearWatchdog()
+      this.#armWatchdog(0, SCRIPT_LIMITS.watchdogMs)
       return
     }
+    if (m.t !== 'done' || m.seq !== this.#inFlight) return
     this.#clearWatchdog()
     this.#inFlight = -1
     this.#answers.push(m as WireDone)
   }
 
-  #armWatchdog(seq: number): void {
+  #armWatchdog(seq: number, ms: number): void {
     const set = this.#o.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms))
     this.#armedAt = this.#now()
-    this.#watchdog = set(() => this.#onTimeout(seq), SCRIPT_LIMITS.watchdogMs)
+    this.#period = ms
+    this.#watchdog = set(() => this.#onTimeout(seq), ms)
   }
 
   #now(): number {
@@ -285,12 +305,12 @@ export class ScriptHost {
     // A late timer means this thread was busy (a long task: rendering, decoding): the script's answer may be waiting
     // behind the timer in the event loop. The script gets another period rather than being stopped for the host's
     // stall; a script stuck in a loop is still stopped by the next timer that fires on time.
-    if (this.#now() - this.#armedAt > SCRIPT_LIMITS.watchdogMs + WATCHDOG_LATE_MS) {
-      this.#armWatchdog(seq)
+    if (this.#now() - this.#armedAt > this.#period + WATCHDOG_LATE_MS) {
+      this.#armWatchdog(seq, this.#period)
       return
     }
-    const what = seq === 0 ? 'setup' : 'a frame'
-    this.#stop(`it did not answer ${what} within ${SCRIPT_LIMITS.watchdogMs} ms (an endless loop?)`)
+    if (seq === 0 && !this.#started) this.#stop(`its sandbox was not ready within ${STARTUP_MS / 1000} s`)
+    else this.#stop(`it did not answer ${seq === 0 ? 'setup' : 'a frame'} within ${SCRIPT_LIMITS.watchdogMs} ms (an endless loop?)`)
   }
 
   #stop(reason: string, code: 'SCRIPT_STOPPED' | 'script' = 'SCRIPT_STOPPED'): void {
@@ -331,12 +351,10 @@ export class ScriptHost {
     for (const c of answer.commands ?? []) this.#command(c)
     for (const [name, data] of answer.emits ?? []) this.#emit(name, data)
     // The answer comes from the sandbox, where the script may have rewritten it: check what it holds.
-    if (!Array.isArray(answer.bitmaps)) return
-    for (const entry of answer.bitmaps as unknown[]) {
-      const [layer, image] = Array.isArray(entry) ? (entry as unknown[]) : []
-      if (!isImage(image)) continue
-      if (this.#o.drawn && typeof layer === 'number' && layer in this.#o.layers) this.#o.drawn(layer, image)
-      else release(image)
+    if (!Array.isArray(answer.images) || !this.#o.drawn) return
+    for (const entry of answer.images as unknown[]) {
+      const [layer, pixels] = Array.isArray(entry) ? (entry as unknown[]) : []
+      if (pixels instanceof Uint8ClampedArray && typeof layer === 'number' && layer in this.#o.layers) this.#o.drawn(layer, pixels)
     }
   }
 
@@ -444,25 +462,6 @@ function flattenProps(props: Record<string, unknown>): Array<[string, unknown]> 
     } else out.push([name, value])
   }
   return out
-}
-
-/** Closes the canvas images of an answer that will not be applied. */
-function closeImages(answer: WireDone): void {
-  if (!Array.isArray(answer.bitmaps)) return
-  for (const entry of answer.bitmaps as unknown[]) {
-    const image = Array.isArray(entry) ? (entry as unknown[])[1] : undefined
-    if (isImage(image)) release(image)
-  }
-}
-
-/** An `ImageBitmap` (where there is no `ImageBitmap`, in the Node tests: any object). */
-function isImage(value: unknown): value is ImageBitmap {
-  if (typeof ImageBitmap !== 'undefined') return value instanceof ImageBitmap
-  return typeof value === 'object' && value !== null
-}
-
-function release(image: ImageBitmap): void {
-  ;(image as Partial<ImageBitmap>).close?.()
 }
 
 function copy(v: OverrideValue): OverrideValue {

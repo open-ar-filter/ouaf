@@ -10,9 +10,18 @@
 import { Matrix4 } from 'three'
 import type { AnchorProvider } from '../../engine/anchor-provider.ts'
 
-/** Writes the `uv` position of camera-space point (x, y, z) into `out[i]`, `out[i + 1]`; false behind the camera. */
-export function projectToUv(projection: ArrayLike<number>, x: number, y: number, z: number, out: Float32Array, i: number): boolean {
+// The helpers below take points and matrices as arrays and write their results into arrays: a fractional number
+// passed to or returned from a call V8 does not inline is boxed, i.e. allocated on every frame (#149, #159).
+
+/**
+ * Writes the `uv` position of camera-space point `point[offset … offset + 2]` (x, y, z) into `out[i]`, `out[i + 1]`;
+ * false behind the camera.
+ */
+export function projectToUv(projection: ArrayLike<number>, point: ArrayLike<number>, offset: number, out: Float32Array, i: number): boolean {
   const p = projection
+  const x = point[offset]!
+  const y = point[offset + 1]!
+  const z = point[offset + 2]!
   const w = p[3]! * x + p[7]! * y + p[11]! * z + p[15]!
   if (!(w > 1e-6)) return false
   out[i] = ((p[0]! * x + p[4]! * y + p[8]! * z + p[12]!) / w) * 0.5 + 0.5
@@ -21,13 +30,14 @@ export function projectToUv(projection: ArrayLike<number>, x: number, y: number,
 }
 
 /**
- * Projected size of one face unit at anchor matrix `m` (column-major, objects camera space), in units of the image
- * height; 0 behind the camera. The same measure as the warp radius (`WarpPacker`).
+ * Writes into `out[i]` the projected size of one face unit at anchor matrix `m` (column-major, objects camera space),
+ * in units of the image height; 0 behind the camera. The same measure as the warp radius (`WarpPacker`).
  */
-export function projectedUnit(projection: ArrayLike<number>, m: ArrayLike<number>): number {
+export function projectedUnit(projection: ArrayLike<number>, m: ArrayLike<number>, out: Float32Array, i: number): void {
   const p = projection
   const w = p[3]! * m[12]! + p[7]! * m[13]! + p[11]! * m[14]! + p[15]!
-  return w > 1e-6 ? (Math.sqrt(m[0]! * m[0]! + m[1]! * m[1]! + m[2]! * m[2]!) * p[5]!) / (2 * w) : 0
+  if (w > 1e-6) out[i] = (Math.sqrt(m[0]! * m[0]! + m[1]! * m[1]! + m[2]! * m[2]!) * p[5]!) / (2 * w)
+  else out[i] = 0
 }
 
 export class ShaderFaceInputs {
@@ -62,10 +72,13 @@ export class ShaderFaceInputs {
     const m = this.#m
     const e = m.elements
     for (let f = 0; f < count; f++) {
-      if (this.#sizes) this.sizes[f] = anchors.face(f, 'head', 'rigid', m) ? projectedUnit(projection, e) : 0
+      if (this.#sizes) {
+        if (anchors.face(f, 'head', 'rigid', m)) projectedUnit(projection, e, this.sizes, f)
+        else this.sizes[f] = 0
+      }
       for (let a = 0; a < this.anchors.length; a++) {
         const out = this.positions[a]!
-        if (!anchors.face(f, this.anchors[a]!, 'auto', m) || !projectToUv(projection, e[12]!, e[13]!, e[14]!, out, f * 2)) {
+        if (!anchors.face(f, this.anchors[a]!, 'auto', m) || !projectToUv(projection, e, 12, out, f * 2)) {
           out[f * 2] = 0
           out[f * 2 + 1] = 0
         }

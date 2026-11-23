@@ -43,6 +43,11 @@ const fit = new Float64Array(13) // rotation (9, column-major), scale, translati
 const quat = new Float64Array(4)
 const nMat = new Float64Array(16)
 const vMat = new Float64Array(16)
+/**
+ * `unproject`'s depth offset and scale: passed through an array, since V8 boxes (allocates) a fractional number passed
+ * to a call it does not inline.
+ */
+const unprojectBy = new Float64Array(2)
 
 /**
  * Writes into `out` (16 floats from `outOffset`) the facial transformation matrix of face `face` of `faces`, and
@@ -83,10 +88,13 @@ export function estimateFacePose(
   if (!solveSimilarity(metric)) return identity(out, outOffset)
   const scale1 = fit[9]!
   // 2nd iteration: unproject with that scale, refine it.
-  unproject(depthOffset, scale1)
+  unprojectBy[0] = depthOffset
+  unprojectBy[1] = scale1
+  unproject()
   if (!solveSimilarity(metric)) return identity(out, outOffset)
   // Final: unproject with the total scale and fit the pose.
-  unproject(depthOffset, scale1 * fit[9]!)
+  unprojectBy[1] = scale1 * fit[9]!
+  unproject()
   if (!solveSimilarity(metric)) return identity(out, outOffset)
 
   const s = fit[9]!
@@ -106,8 +114,10 @@ export function estimateFacePoses(faces: FaceFrame): void {
   for (let f = 0; f < faces.count; f++) estimateFacePose(faces, f, faces.matrices)
 }
 
-/** MoveAndRescaleZ + UnprojectXY + ChangeHandedness, from `projected` into `metric`. */
-function unproject(depthOffset: number, scale: number): void {
+/** MoveAndRescaleZ + UnprojectXY + ChangeHandedness, from `projected` into `metric`, by `unprojectBy`. */
+function unproject(): void {
+  const depthOffset = unprojectBy[0]!
+  const scale = unprojectBy[1]!
   for (let i = 0; i < N; i++) {
     const z = (projected[i * 3 + 2]! - depthOffset + FACE_CAMERA_NEAR) / scale
     metric[i * 3] = (projected[i * 3]! * z) / FACE_CAMERA_NEAR
@@ -262,10 +272,21 @@ export function videoToCamera(
   z: number,
   out: { x: number; y: number; z: number },
 ) {
-  const aspect = faces.width > 0 && faces.height > 0 ? faces.width / faces.height : 1
-  const d = -z * TAN_HALF_FOV
-  out.x = (2 * u - 1) * d * aspect
-  out.y = (1 - 2 * v) * d
+  out.x = u
+  out.y = v
   out.z = z
+  videoToCameraInPlace(faces, out)
   return out
+}
+
+/**
+ * `videoToCamera` in place: `p.x`, `p.y` hold the video-space point and `p.z` the camera depth (< 0), replaced by the
+ * camera-space point. For the per-frame loops: it takes no fractional argument, which V8 would box (allocate) at a
+ * call it does not inline.
+ */
+export function videoToCameraInPlace(faces: Readonly<Pick<FaceFrame, 'width' | 'height'>>, p: { x: number; y: number; z: number }): void {
+  const aspect = faces.width > 0 && faces.height > 0 ? faces.width / faces.height : 1
+  const d = -p.z * TAN_HALF_FOV
+  p.x = (2 * p.x - 1) * d * aspect
+  p.y = (1 - 2 * p.y) * d
 }

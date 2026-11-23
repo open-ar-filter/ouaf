@@ -1,0 +1,9 @@
+{
+  "$comment": "Reference inputs of `ouaf preview` (#30): the frames a filter is rendered on when no --input is given. Each reference is a clip of this folder (file, relative to this file) rendered frame by frame from `from` to `time` (media time, s; the screenshot is the frame at `time`), or an image (file .png/.jpg/.webp, `frames` copies). maxFaces: faces the host tracks. Until the reference face set of #31 exists, they are frames of the licensed test clips (README.md); `ouaf preview --references <file.json>` takes another set in this format.",
+  "references": [
+    { "id": "talk", "file": "pesquet-talk.mp4", "from": 6.1, "time": 6.8, "maxFaces": 1, "description": "One face in close-up, frontal, mouth open" },
+    { "id": "walk", "file": "pesquet-walk.mp4", "from": 5.5, "time": 6.3, "maxFaces": 1, "description": "One face walking towards the camera, head slightly turned" },
+    { "id": "two-faces", "file": "two-faces-stacked.mp4", "from": 0.5, "time": 1.5, "maxFaces": 2, "description": "Two frontal faces, one above the other" },
+    { "id": "no-face", "file": "no-face.mp4", "from": 0, "time": 0.5, "maxFaces": 1, "description": "Underwater footage without a face (negative case)" }
+  ]
+}

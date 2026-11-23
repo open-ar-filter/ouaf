@@ -103,7 +103,12 @@ export class FaceSmoother {
     for (let j = 0; j < count; j++) {
       const bank = this.#banks[this.#slotTrack[j]!]!
       const horizon = Math.min(Math.max(time - bank.time, 0), max)
-      bank.predict(horizon, out.landmarks, j * LANDMARKS_STRIDE)
+      // `bank.predict(horizon, …)` written out: V8 boxes (allocates) a fractional argument of a call it does not inline.
+      const x = bank.value
+      const dx = bank.speed
+      const dst = out.landmarks
+      const o = j * LANDMARKS_STRIDE
+      for (let i = 0; i < bank.size; i++) dst[o + i] = x[i]! + dx[i]! * horizon
       if (out !== smoothed) copyBlendshapes(smoothed, out, j)
       estimateFacePose(out, j, out.matrices)
     }
