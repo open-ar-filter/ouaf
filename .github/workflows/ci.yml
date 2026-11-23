@@ -47,14 +47,14 @@ jobs:
             || (echo "::error::The JSON Schema is out of date: run 'npm run build:schema' and commit the result." && exit 1)
 
   browser:
-    name: Browser tests (Chromium, test clips, shard ${{ matrix.shard }}/3)
+    name: Browser tests (Chromium, test clips, shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    # The tests run one at a time and mostly wait on real-time clip playback: three machines divide the wall time by
-    # about three, while each test still has a machine to itself (timing-sensitive tests are not slowed down).
+    # The tests run one at a time and mostly wait on real-time clip playback: four machines divide the wall time by
+    # about four, while each test still has a machine to itself (timing-sensitive tests are not slowed down).
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
 
@@ -79,7 +79,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Browser tests
-        run: npm run test:browser -- --shard=${{ matrix.shard }}/3
+        run: npm run test:browser -- --shard=${{ matrix.shard }}/4
 
       - name: Upload test results
         if: failure()
