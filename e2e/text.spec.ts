@@ -28,7 +28,7 @@ interface Sample {
 async function sample(page: Page): Promise<Sample> {
   const png = await page.locator('#canvas').screenshot()
   return page.evaluate(async (bytes) => {
-    const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
     const c = new OffscreenCanvas(bitmap.width, bitmap.height)
     const ctx = c.getContext('2d')!
     ctx.drawImage(bitmap, 0, 0)
@@ -52,7 +52,7 @@ async function sample(page: Page): Promise<Sample> {
       }
     }
     return { green, greenY: green ? greenY / green : 0, magenta, magentaY: magenta ? magentaY / magenta : 0 }
-  }, [...png])
+  }, png.toString('base64'))
 }
 
 function check(s: Sample, test: (s: Sample) => boolean): boolean {

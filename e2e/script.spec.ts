@@ -38,7 +38,7 @@ const received = (page: Page, name: string) => page.evaluate((name) => window.re
 async function sample(page: Page): Promise<{ r: number; g: number; b: number; chroma: number }> {
   const png = await page.locator('#canvas').screenshot()
   return page.evaluate(async (bytes) => {
-    const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
     const c = new OffscreenCanvas(bitmap.width, bitmap.height)
     const ctx = c.getContext('2d')!
     ctx.drawImage(bitmap, 0, 0)
@@ -55,7 +55,7 @@ async function sample(page: Page): Promise<{ r: number; g: number; b: number; ch
     }
     const n = d.length / 4
     return { r: r / n, g: g / n, b: b / n, chroma: chroma / n }
-  }, [...png])
+  }, png.toString('base64'))
 }
 
 test('host messages reach the script, whose set and animate drive the layers, and f.emit reaches the host', async ({ page }) => {

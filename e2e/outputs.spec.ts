@@ -47,10 +47,10 @@ type Sampled = { width: number; height: number; colors: RGB[] }
 async function screen(page: Page): Promise<Sampled> {
   const png = await page.locator('#canvas').screenshot()
   return page.evaluate(async (bytes) => {
-    const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
     const sample = (window as unknown as { sampleImage: (i: CanvasImageSource, p: number[][]) => Sampled }).sampleImage
     return sample(bitmap, [[-0.2, 0], [0.2, 0]])
-  }, [...png])
+  }, png.toString('base64'))
 }
 
 async function snapshot(page: Page): Promise<Sampled & { type: string; canvas: [number, number] }> {
