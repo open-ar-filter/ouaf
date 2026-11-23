@@ -69,6 +69,32 @@ test('slow tracking: capabilities dropped in order, then the face filter hidden;
   expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
 })
 
+test('no flicker when hiding the filter is what frees the device: no re-show before the slow probe', async ({ page }) => {
+  // The pattern seen on the Redmi Note 11S (main-thread tracker): drawing the filter (55 ms of main-thread work per
+  // frame here) keeps tracking below 15 Hz; hiding it frees the main thread and tracking climbs above 18 Hz.
+  await open(page, 'adapt=1&filter=/filters/fixtures/busy/')
+  // On the phone the rate climbed over a few seconds after the hide: tracking stays slow (70 ms) for 2.5 s after it.
+  await page.evaluate(() => {
+    const { engine, throttle } = window.ouaf!
+    const off = engine.on('performance', (e) => {
+      if (e.state !== 'unsupported') return
+      off()
+      throttle.ms = 70
+      setTimeout(() => (throttle.ms = 0), 2500)
+    })
+  })
+  await expect.poll(() => events(page), POLL).toContain('unsupported[blendshapes,resolution]')
+  const hz = async () => (await page.evaluate(() => window.ouaf!.engine.performance.trackingHz))
+  // Hidden: the rate climbs above 18 Hz (unless this machine is too slow even then).
+  await page.waitForTimeout(8000)
+  const hidden = await hz()
+  test.skip(hidden <= 18, `this machine tracks at ${hidden.toFixed(1)} Hz even with the filter hidden`)
+  // Seen live: shown again 9 s after the hide, hidden again 6 s later. Now only the probe, 30 s after the hide.
+  await page.waitForTimeout(16_000)
+  expect(await events(page)).toEqual(['degraded[blendshapes]', 'degraded[blendshapes,resolution]', 'unsupported[blendshapes,resolution]'])
+  expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.suspended)).toBe(true)
+})
+
 test('a filter that requires blendshapes never loses them: it is hidden instead', async ({ page }) => {
   await open(page, 'throttle=200&filter=/filters/fixtures/blendshapes-required/')
   await expect.poll(() => events(page), POLL).toContain('unsupported[resolution]')

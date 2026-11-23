@@ -6,6 +6,8 @@
  * - `playground:dot` (object): a flat colored disc at a face anchor (or the screen centre), `size` in anchor units.
  * - `playground:probe` (object, draws nothing): records each frame it sees into `window.ouafProbe` (time, faces, the
  *   first landmark, one draw of the layer's seeded generator), for the source tests (#32).
+ * - `playground:busy` (object, draws nothing): blocks the main thread `ms` per drawn frame, like a heavy filter, for
+ *   the device adaptation tests (#90): drawing it slows a main-thread tracker down, hiding it frees it.
  */
 import type { LayerContext, LayerDecl, ObjectLayer, OuafPlugin, PassLayer } from '@ouaf/core'
 import { FULLSCREEN_VERTEX, compileNumberBinding } from '@ouaf/core'
@@ -177,6 +179,27 @@ function createProbe(_decl: LayerDecl, ctx: LayerContext): ObjectLayer {
   }
 }
 
+const BusySchema = Type.Object(
+  { type: Type.Literal('playground:busy'), id: Type.Optional(Type.String()), ms: Type.Number({ minimum: 0, maximum: 500 }) },
+  { additionalProperties: false },
+)
+
+function createBusy(decl: LayerDecl): ObjectLayer {
+  const ms = Number(decl.ms)
+  return {
+    kind: 'object',
+    stage: 'objects',
+    object: new Group(),
+    update() {
+      const end = performance.now() + ms
+      while (performance.now() < end) {
+        // Busy: the main thread's time, as a heavy filter would take it.
+      }
+    },
+    dispose() {},
+  }
+}
+
 export const playgroundPlugin: OuafPlugin = {
   name: 'playground',
   version: '1.0.0',
@@ -185,11 +208,13 @@ export const playgroundPlugin: OuafPlugin = {
       { type: 'playground:tint', schema: TintSchema, stage: 'color', since: '1.0', anchored: false },
       { type: 'playground:dot', schema: DotSchema, stage: 'objects', since: '1.0', anchored: true },
       { type: 'playground:probe', schema: ProbeSchema, stage: 'objects', since: '1.0', anchored: false },
+      { type: 'playground:busy', schema: BusySchema, stage: 'objects', since: '1.0', anchored: false },
     ],
   },
   setup(api) {
     api.registerLayerType({ type: 'playground:tint', create: createTint })
     api.registerLayerType({ type: 'playground:dot', create: createDot })
     api.registerLayerType({ type: 'playground:probe', create: createProbe })
+    api.registerLayerType({ type: 'playground:busy', create: createBusy })
   },
 }

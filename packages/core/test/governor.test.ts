@@ -118,6 +118,36 @@ describe('DeviceGovernor', () => {
     expect(changes[8]!.t).toBeGreaterThanOrEqual(183)
   })
 
+  it('Redmi Note 11S pattern: hiding frees the main thread (13 → 23.5 Hz), no re-show before the slow probe', () => {
+    // Main-thread tracker: 13.2 Hz with the filter drawn. Once hidden the rate climbs over a few seconds (the window
+    // still holds slow results) to 23.5 Hz. Seen live: hidden, re-shown 9 s later at 23.5 Hz, hidden again 6 s later.
+    let hiddenAt = Number.NaN
+    const device: Device = (_, hidden, t) => {
+      if (!hidden) {
+        hiddenAt = Number.NaN
+        return 13.2
+      }
+      if (Number.isNaN(hiddenAt)) hiddenAt = t
+      return Math.min(23.5, 14 + (t - hiddenAt) * 3)
+    }
+    const { kinds, changes } = run(device, 120, { droppable: () => new Set<Capability>(['blendshapes', 'resolution']) })
+    expect(kinds.slice(0, 3)).toEqual(['drop blendshapes', 'drop resolution', 'hide'])
+    const hide = changes[2]!.t
+    const shows = changes.filter((c) => c.change.kind === 'show').map((c) => c.t)
+    // Only the probe (30 s) shows them again, then each probe waits twice as long.
+    expect(shows[0]!).toBeGreaterThanOrEqual(hide + 30)
+    expect(shows.length).toBeLessThanOrEqual(2)
+  })
+
+  it('shows hidden filters soon when tracking really gets faster after the hide', () => {
+    // Hidden at 10 Hz (12 Hz hidden); at 20 s another load stops: 30 Hz hidden, i.e. 2.5× faster, 25 Hz shown.
+    const device: Device = (_, hidden, t) => (t < 20 ? (hidden ? 12 : 10) : hidden ? 30 : 25)
+    const { kinds, changes } = run(device, 60)
+    expect(kinds.slice(0, 5)).toEqual(['drop blendshapes', 'drop extraFaces', 'drop resolution', 'hide', 'show'])
+    expect(changes[4]!.t).toBeLessThan(23)
+    expect(kinds.at(-1)).toBe('restore blendshapes') // then everything comes back
+  })
+
   it('backs off restoring a capability that had to be dropped again soon after', () => {
     const g = new DeviceGovernor()
     const restores: number[] = []

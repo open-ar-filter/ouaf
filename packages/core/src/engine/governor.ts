@@ -9,10 +9,11 @@
  * - **Drop**: a settled rate below `dropBelowHz` (16 Hz) drops the next optional capability the stack can do without
  *   (blendshapes, then extra faces, then analysis resolution): one per `settleMs` (1 s) while the rate stays low.
  * - **Hide** (spec §16.3): once the rate has stayed below the 15 Hz floor for 3 s and nothing is left to drop.
- * - **Show**: once the rate is back above 18 Hz for `showAfterMs`. "The rate" is the one predicted with the filters
- *   shown: the rate while hidden, scaled by what hiding them gained (measured at the hide), so that hiding the filters
- *   because drawing them is what slows the device down does not make them flicker; the delay also doubles each time
- *   the filters are hidden again soon after being shown.
+ * - **Show**: once the rate predicted with the filters shown is above 18 Hz for `showAfterMs`. Hiding them frees the
+ *   main thread, so the rate while hidden is not that rate: the prediction is the rate measured just before hiding,
+ *   scaled by how much faster tracking got after the first `hiddenBaselineMs` (6 s) hidden. Without such a gain, only
+ *   the slow probes (below) show them again. The delays double each time the filters are hidden again soon after
+ *   being shown.
  * - **Restore**: the last capability dropped comes back first, once the rate predicted with it (what dropping it
  *   gained, as a share of the pipeline time per result, added back to the current period) stays above
  *   `restoreAboveHz` (20 Hz) for `restoreAfterMs` (5 s); the delay doubles for a capability dropped
@@ -50,6 +51,8 @@ export interface GovernorTuning {
   restoreAfterMs: number
   /** Hidden filters are shown again after the rate stays above `resumeHz` this long, doubled on each quick re-hide. */
   showAfterMs: number
+  /** After hiding, what hiding gained is measured this long (ms) before a show can be predicted. */
+  hiddenBaselineMs: number
   /**
    * When the measured rate is high enough but the prediction (from a gain measured once) says no, the show or restore
    * is tried anyway after this long (ms; doubled like the other delays): a gain measured while the load changed
@@ -73,6 +76,7 @@ export const DEFAULT_GOVERNOR_TUNING: Readonly<GovernorTuning> = {
   restoreAboveHz: 20,
   restoreAfterMs: 5000,
   showAfterMs: 1000,
+  hiddenBaselineMs: 6000,
   probeAfterMs: 30_000,
   maxProbeMs: 600_000,
   probationMs: 10_000,
@@ -117,9 +121,12 @@ export class DeviceGovernor {
   #aboveSince = Number.NaN
   #showBackoff = 1
   #shownAt = -Infinity
-  /** Rate just before the filters were hidden, and its ratio to the rate once hidden (≤ 1); NaN until measured. */
+  /** Rate just before the filters were hidden (shown), when they were hidden, and the rate and pipeline time measured
+   * once hidden (`hiddenBaselineMs`): what hiding them gained, which a later rate must beat to predict a show. */
   #rateBeforeHide = Number.NaN
-  #showRatio = Number.NaN
+  #hiddenAt = Number.NaN
+  #hiddenRate = 0
+  #hiddenPipeline = Number.NaN
   #caps: Record<Capability, CapabilityState>
 
   constructor(tuning: Partial<GovernorTuning> = {}) {
@@ -159,7 +166,7 @@ export class DeviceGovernor {
     this.#showBackoff = 1
     this.#shownAt = -Infinity
     this.#rateBeforeHide = Number.NaN
-    this.#showRatio = Number.NaN
+    this.#hiddenAt = Number.NaN
     for (const c of CAPABILITIES) Object.assign(this.#caps[c], { rateBefore: NaN, pipelineBefore: NaN, ratio: NaN, ofPipeline: false, backoff: 1, restoredAt: -Infinity, goodSince: NaN })
     this.#changed(now)
   }
@@ -182,9 +189,7 @@ export class DeviceGovernor {
       this.#fresh = false
       const last = this.#dropped.at(-1)
       const cap = last && this.#caps[last]
-      if (this.#hidden) {
-        if (rateHz > 0 && this.#rateBeforeHide > 0) this.#showRatio = Math.min(1, this.#rateBeforeHide / rateHz)
-      } else if (cap && Number.isNaN(cap.ratio)) {
+      if (!this.#hidden && cap && Number.isNaN(cap.ratio)) {
         cap.ofPipeline = pipelineMs > 0 && cap.pipelineBefore > 0
         if (cap.ofPipeline) cap.ratio = Math.min(1, pipelineMs / cap.pipelineBefore)
         else if (rateHz > 0 && cap.rateBefore > 0) cap.ratio = Math.min(1, cap.rateBefore / rateHz)
@@ -197,8 +202,17 @@ export class DeviceGovernor {
     } else this.#belowSince = Number.NaN
 
     if (this.#hidden) {
-      // The rate while hidden, scaled by what hiding the filters gained when they were hidden (when measured).
-      const shown = rateHz * (Number.isNaN(this.#showRatio) ? 1 : this.#showRatio)
+      // Hiding the filters frees the main thread (rendering, scripts): the rate measured while hidden says nothing
+      // about the rate once shown. First learn what hiding gained (the hidden rate and pipeline time over
+      // `hiddenBaselineMs`); then the rate predicted with the filters shown is the rate before hiding, scaled by how
+      // much faster tracking got since (rate or pipeline time). Otherwise only slow probes try again.
+      if (now - this.#hiddenAt < t.hiddenBaselineMs) {
+        this.#hiddenRate = Math.max(this.#hiddenRate, rateHz)
+        if (pipelineMs > 0) this.#hiddenPipeline = pipelineMs
+      }
+      const learnt = now - this.#hiddenAt >= t.hiddenBaselineMs && this.#hiddenRate > 0
+      const gain = learnt ? Math.max(rateHz / this.#hiddenRate, this.#hiddenPipeline > 0 && pipelineMs > 0 ? this.#hiddenPipeline / pipelineMs : 0) : 0
+      const shown = this.#rateBeforeHide * gain
       const wait =
         shown > t.resumeHz ? Math.min(t.maxDelayMs, t.showAfterMs * this.#showBackoff) : rateHz > t.resumeHz ? Math.min(t.maxProbeMs, t.probeAfterMs * this.#showBackoff) : Number.NaN
       if (!Number.isNaN(wait)) {
@@ -232,6 +246,9 @@ export class DeviceGovernor {
         if (now - this.#shownAt < t.probationMs) this.#showBackoff = Math.min(this.#showBackoff * 2, MAX_BACKOFF)
         this.#hidden = true
         this.#rateBeforeHide = rateHz
+        this.#hiddenAt = now
+        this.#hiddenRate = 0
+        this.#hiddenPipeline = Number.NaN
         this.#changed(now)
         return { kind: 'hide' }
       }
