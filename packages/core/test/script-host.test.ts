@@ -5,7 +5,7 @@ import { FaceBindingData } from '../src/bindings/face-data.ts'
 import { OuafError } from '../src/engine/errors.ts'
 import { createFaceFrame } from '../src/face.ts'
 import { FrameDataBuilder, type FrameDataSource } from '../src/script/frame-data.ts'
-import { ScriptHost, estimateSize, type ScriptHostOptions, type ScriptPort } from '../src/script/host.ts'
+import { STARTUP_MS, ScriptHost, estimateSize, type ScriptHostOptions, type ScriptPort } from '../src/script/host.ts'
 import { ScriptOverrides } from '../src/script/overrides.ts'
 import { ShaderUniforms } from '../src/layers/shader/uniforms.ts'
 import { env, fakeImage, runtime, tick } from './script-helpers.ts'
@@ -158,6 +158,40 @@ describe('script host', () => {
     expect(s.host.state).toBe('stopped')
   })
 
+  it('at activation, counts the 1 s from when the runtime starts the script, after its own preparation', async () => {
+    const timers: Array<[number, () => void]> = []
+    let clock = 0
+    const port: ScriptPort = { postMessage: () => {}, onmessage: null }
+    const s = hostSetup('', {
+      connect: async () => ({ port, terminate: () => {} }),
+      now: () => clock,
+      setTimeout: (fn, ms) => (timers.push([ms, fn]), timers.length),
+      clearTimeout: () => {},
+    })
+    await s.host.start({}, 0)
+    // Canvases and fonts are being prepared: only the startup bound applies.
+    expect(timers.map(([ms]) => ms)).toEqual([STARTUP_MS])
+    clock += 3000
+    port.onmessage!({ data: { t: 'started' } })
+    expect(timers.map(([ms]) => ms)).toEqual([STARTUP_MS, 1000])
+    // Once only: a second (forged) `started` does not re-arm it.
+    port.onmessage!({ data: { t: 'started' } })
+    expect(timers).toHaveLength(2)
+    // script.js or setup loops: stopped when the 1 s timer fires on time.
+    clock += 1000
+    timers[1]![1]()
+    expect(s.errors.map((e) => e.message)).toEqual([expect.stringMatching(/did not answer setup within 1000 ms/)])
+  })
+
+  it('stops a sandbox that never gets ready, after the startup bound', async () => {
+    const timers: Array<[number, () => void]> = []
+    const port: ScriptPort = { postMessage: () => {}, onmessage: null }
+    const s = hostSetup('', { connect: async () => ({ port, terminate: () => {} }), now: () => 0, setTimeout: (fn, ms) => (timers.push([ms, fn]), 1), clearTimeout: () => {} })
+    await s.host.start({}, 0)
+    timers[0]![1]()
+    expect(s.errors.map((e) => [e.code, e.message])).toEqual([['SCRIPT_STOPPED', expect.stringMatching(/its sandbox was not ready within 10 s/)]])
+  })
+
   it('sends a new seed with the next frame only, unfolds uniforms and routes play() to the layer', async () => {
     const played: Array<[number, number | undefined, string]> = []
     const s = hostSetup(`export default { setup(f) { f.layer('label').set({ uniforms: { amount: 0.5 } }); f.layer('label').play('wave') } }`, {
@@ -298,18 +332,19 @@ describe('script host', () => {
 })
 
 describe('script host: canvas images', () => {
-  it('hands over only images, for layers that exist; the rest of a forged answer is ignored', async () => {
+  it('hands over only pixel arrays, for layers that exist; the rest of a forged answer is ignored', async () => {
     const drawn: Array<[number, unknown]> = []
     const port: ScriptPort = { postMessage: () => {}, onmessage: null }
     const s = hostSetup('', { connect: async () => ({ port, terminate: () => {} }), drawn: (layer, image) => void drawn.push([layer, image]) })
     await s.host.start({}, 0)
-    const image = {}
+    const image = new Uint8ClampedArray(4)
     // A script shares its Worker with the runtime, so it can rewrite its answers: the host checks what they hold.
-    port.onmessage!({ data: { t: 'done', seq: 0, commands: [], emits: [], warnings: [], bitmaps: [[0, null], 'x', [5, {}], ['0', {}], [0, image]] } })
+    const forged = [[0, null], 'x', [5, image], ['0', image], [0, {}], [0, new Uint8Array(4)], [0, image]]
+    port.onmessage!({ data: { t: 'done', seq: 0, commands: [], emits: [], warnings: [], images: forged } })
     s.host.beginFrame()
     expect(drawn).toEqual([[0, image]])
     s.host.endFrame(0, s.source)
-    port.onmessage!({ data: { t: 'done', seq: 1, commands: [], emits: [], warnings: [], bitmaps: 'nope' } })
+    port.onmessage!({ data: { t: 'done', seq: 1, commands: [], emits: [], warnings: [], images: 'nope' } })
     s.host.beginFrame()
     expect(drawn).toHaveLength(1)
     expect(s.errors).toEqual([])

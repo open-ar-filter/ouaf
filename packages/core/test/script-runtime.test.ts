@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { workerSource } from '../src/script/runtime.ts'
-import { FakeCanvas, ask, fakeImage, frame, init, runtime } from './script-helpers.ts'
+import type { WireDone } from '../src/script/runtime.ts'
+import { FakeCanvas, STRAIGHT, ask, fakeImage, frame, init, runtime } from './script-helpers.ts'
 
 describe('script runtime', () => {
   it('is self-contained, so it can become the Worker source', () => {
@@ -88,7 +89,7 @@ describe('script runtime', () => {
 describe('script runtime: canvas layers', () => {
   // Layers of `init`: 0 'label', 1 '', 2 'dot'. 'dot' is the canvas here.
   const canvases = (fps: number) => [{ layer: 2, width: 64, height: 32, fps }]
-  const draws = (done: { bitmaps?: Array<[number, unknown]> }) => (done.bitmaps ?? []).map(([layer, image]) => [layer, ...fakeImage(image)])
+  const draws = (done: WireDone) => (done.images ?? []).map(([layer, image]) => [layer, ...fakeImage(image)])
 
   it('draws at the first frame, then at most fps times per second of media time, from a transparent canvas', async () => {
     const conn = runtime()
@@ -96,12 +97,16 @@ describe('script runtime: canvas layers', () => {
       draw: { dot(ctx, f, frame) { ctx.setTransform(2, 0, 0, 2, 0, 0); ctx.fillRect(frame.time, frame.faces.length, 1, 1) } },
     }`
     const first = await ask(conn, init(code, { canvases: canvases(10) }))
-    expect(first.bitmaps).toBeUndefined() // setup draws nothing: draw needs a frame
+    expect(first.images).toBeUndefined() // setup draws nothing: draw needs a frame
     const canvas = FakeCanvas.all.at(-1)!
     expect([canvas.width, canvas.height]).toEqual([64, 32])
+    // CPU-backed, and used once at init (its slow first use is not counted by the watchdog, #158).
+    expect(canvas.options).toEqual({ willReadFrequently: true })
+    expect(canvas.log).toEqual(['clearRect 0,0,1,1', 'getImageData 0,0,1,1'])
+    canvas.log.length = 0
     const at = async (seq: number, time: number) => draws(await ask(conn, frame(seq, { time })))
     expect(await at(1, 1)).toEqual([[2, 1, 64, 32]])
-    expect(canvas.log).toEqual(['save', 'setTransform 1,0,0,1,0,0', 'clearRect 0,0,64,32', 'restore', 'setTransform 2,0,0,2,0,0', 'fillRect 1,0,1,1'])
+    expect(canvas.log).toEqual(['save', 'setTransform 1,0,0,1,0,0', 'clearRect 0,0,64,32', 'restore', 'setTransform 2,0,0,2,0,0', 'fillRect 1,0,1,1', 'getImageData 0,0,64,32'])
     expect(await at(2, 1.05)).toEqual([]) // 10 fps: not before 1.1
     expect(await at(3, 1.1)).toEqual([[2, 2, 64, 32]])
     expect(await at(4, 1.15)).toEqual([])
@@ -156,6 +161,46 @@ describe('script runtime: canvas layers', () => {
     expect(done.warnings).toEqual(['draw.dot resized its canvas to 4000×32; it keeps its declared 64×32 px'])
     expect(FakeCanvas.all.at(-1)!.width).toBe(64)
     expect(draws(await ask(conn, frame(4)))).toEqual([[2, 2, 64, 32]])
+  })
+
+  it('sends premultiplied pixels of the declared size, transferred', async () => {
+    const conn = runtime()
+    await ask(conn, init(`export default { draw: { dot() {} } }`, { canvases: canvases(0) }))
+    const [layer, pixels] = (await ask(conn, frame(1))).images![0]!
+    expect(layer).toBe(2)
+    expect(pixels).toBeInstanceOf(Uint8ClampedArray)
+    expect(pixels.length).toBe(64 * 32 * 4)
+    // Opaque pixels are kept; straight alpha is premultiplied, rounded to the nearest; transparent stays 0.
+    const [r, g, b, a] = STRAIGHT as [number, number, number, number]
+    expect([...pixels.subarray(0, 12)]).toEqual([1, 64, 32, 255, Math.round((r * a) / 255), Math.round((g * a) / 255), Math.round((b * a) / 255), a, 0, 0, 0, 0])
+    expect([...pixels.subarray(4, 8)]).toEqual([100, 50, 26, 128])
+  })
+
+  it('tells the engine when the script starts: after the canvases and fonts are ready, before script.js runs', async () => {
+    const conn = runtime()
+    const seen: string[] = []
+    const answered = new Promise<void>((resolve) => {
+      conn.port.onmessage = (e) => {
+        const m = e.data as { t: string; emits?: Array<[string, unknown]> }
+        seen.push(m.t === 'done' ? `done ${m.emits!.map(([n]) => n).join(',')}` : m.t)
+        if (m.t !== 'started') resolve()
+      }
+    })
+    conn.port.postMessage(init(`export default { setup(f) { f.emit('setup') }, draw: { dot() {} } }`, { canvases: canvases(0) }))
+    await answered
+    expect(FakeCanvas.all.at(-1)!.log).toEqual(['clearRect 0,0,1,1', 'getImageData 0,0,1,1'])
+    expect(seen).toEqual(['started', 'done setup'])
+    // A script.js that cannot be loaded: started, then fatal.
+    const broken = runtime()
+    const order: string[] = []
+    await new Promise<void>((resolve) => {
+      broken.port.onmessage = (e) => {
+        order.push((e.data as { t: string }).t)
+        if ((e.data as { t: string }).t === 'fatal') resolve()
+      }
+      broken.port.postMessage(init(`export default 3`))
+    })
+    expect(order).toEqual(['started', 'fatal'])
   })
 
   it('still sends the canvas images when a message of the script cannot be cloned', async () => {

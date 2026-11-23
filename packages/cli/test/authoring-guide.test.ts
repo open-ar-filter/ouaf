@@ -203,7 +203,8 @@ interface Manifest {
 /** A 2D context that accepts every call and property, as an `OffscreenCanvasRenderingContext2D` would. */
 function anyContext(): unknown {
   const fn = () => undefined
-  return new Proxy({}, { get: (_t, key) => (key === 'canvas' ? undefined : fn), set: () => true })
+  const getImageData = (_x: number, _y: number, w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) })
+  return new Proxy({}, { get: (_t, key) => (key === 'canvas' ? undefined : key === 'getImageData' ? getImageData : fn), set: () => true })
 }
 
 /** `init`, then two frames with one face carrying every event the script handles; returns the answers. */
@@ -212,12 +213,13 @@ async function runScript(manifest: Manifest, load: () => Promise<{ default?: unk
   scriptRuntime({ addEventListener: (_t, l) => void listeners.add(l), removeEventListener: (_t, l) => void listeners.delete(l) }, {
     harden: false,
     load,
-    canvas: (width, height) => ({ width, height, getContext: anyContext, transferToImageBitmap: () => new ArrayBuffer(1) }),
+    canvas: (width, height) => ({ width, height, getContext: anyContext }),
   })
   const channel = new MessageChannel()
   for (const l of [...listeners]) l({ data: { t: 'port' }, ports: [channel.port2] })
   const ask = (message: unknown) => new Promise<WireDone>((resolve) => {
-    channel.port1.onmessage = (e) => resolve(e.data as WireDone)
+    // `started` (init: the script starts) is not an answer.
+    channel.port1.onmessage = (e) => void ((e.data as { t?: unknown }).t !== 'started' && resolve(e.data as WireDone))
     channel.port1.postMessage(message)
   })
   const reg = createRegistry()

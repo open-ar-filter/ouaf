@@ -234,7 +234,14 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 - **Host** (`host.ts`): one frame in flight; answers are applied at the start of the next rendered frame
   (`beginFrame`, before the layers update), frames are sent after rendering (`endFrame`); 1 s watchdog
   (`OuafError('SCRIPT_STOPPED')`), re-armed instead when its timer fires more than 250 ms late (the main thread was
-  busy, so the answer may be queued behind the timer); `f.emit` limits.
+  busy, so the answer may be queued behind the timer); at activation it starts when the runtime says that the script
+  starts (`started`), after the runtime has prepared the canvases and fonts (10 s bound before that); `f.emit`
+  limits.
+- **Canvas images** (#25, #158): the Worker's canvases are CPU-backed (`willReadFrequently`) and read with
+  `getImageData`, premultiplied in the Worker; the pixels are transferred and uploaded as a `DataTexture`. A
+  GPU-backed canvas and `transferToImageBitmap` made each draw wait on the GPU process, busy with the engine's own
+  rendering: about 1 s per draw of the `stress` demo with SwiftShader on 2 cores, which tripped the watchdog. The
+  slow first use of a canvas is paid at `init`, before `started`.
 - **Script values** (`overrides.ts`): in a scripted filter, every bindable property compiled with a `name`
   (`BindableProperty.name`) is wrapped by the bindings compiler (`BindingEnv.overrides`), so `.set()` and
   `.animate()` reach every layer type without code in the layers. Values are per face id or for every instance;
