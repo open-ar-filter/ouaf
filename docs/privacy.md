@@ -99,3 +99,7 @@ The playground (`apps/playground/index.html`) blocks the metrics with
 `connect-src 'self' ws: wss:` (`ws:`/`wss:` for Vite's hot reload), in a `<meta>` tag and, from its dev and preview
 servers, as a header too (for the tracking worker of the `/spikes/worker.html` page, which reports what happens to the
 request in its "MediaPipe metrics" row). A static deployment of the playground must send that header itself.
+
+`ouaf preview` (the CLI's headless renderer) serves its page on a private origin through Playwright's request
+interception, with `connect-src 'self'`, and aborts every request to another origin: the browser it drives never
+reaches the network, and nothing listens on a port.

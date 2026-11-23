@@ -47,6 +47,9 @@ identification.
 - Browser tests: `npm run test:browser` (Playwright, headless Chromium; needs `npm run fetch-models`). They analyse
   each clip step by step (every 0.1 s), so the results do not depend on the machine speed.
   `OUAF_PORT=5199 npm run test:browser` starts the server on another port (when a dev server already runs on 5173).
+- `ouaf preview`: [`references.json`](references.json) lists the reference frames filters are rendered on (`talk`,
+  `walk`, `two-faces`, `no-face`), until the reference face set of #31 replaces it (`--references <file>` takes
+  another set in the same format). The file is a list of frames, under the repository's Apache-2.0 licence.
 
 ## Rebuilding
 
