@@ -12,6 +12,8 @@ export default defineConfig({
   fullyParallel: true,
   workers: 1,
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
+  // Reference images (e2e/demos.spec.ts) are the same for every platform: they are compared with a tolerance.
+  snapshotPathTemplate: '{testDir}/{testFileName}-snapshots/{arg}{ext}',
   use: {
     baseURL: `https://localhost:${port}`,
     ignoreHTTPSErrors: true,

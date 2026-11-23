@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- A four-pointed glint for the lenses (drawn with blend "screen"). CC0, Ouaf demo filters. -->
+  <path d="M50 2 C54 38 62 46 98 50 C62 54 54 62 50 98 C46 62 38 54 2 50 C38 46 46 38 50 2 Z" fill="#ffffff"/>
+  <circle cx="50" cy="50" r="10" fill="#fffbe0"/>
+</svg>

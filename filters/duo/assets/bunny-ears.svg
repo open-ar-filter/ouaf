@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 220">
+  <!-- Two bunny ears, for the second face of the duo. CC0, Ouaf demo filters. -->
+  <g stroke="#6a6a80" stroke-width="7">
+    <ellipse cx="98" cy="104" rx="36" ry="100" transform="rotate(-14 98 210)" fill="#f4f4fa"/>
+    <ellipse cx="202" cy="104" rx="36" ry="100" transform="rotate(14 202 210)" fill="#f4f4fa"/>
+  </g>
+  <ellipse cx="98" cy="114" rx="18" ry="76" transform="rotate(-14 98 210)" fill="#ffb8cc"/>
+  <ellipse cx="202" cy="114" rx="18" ry="76" transform="rotate(14 202 210)" fill="#ffb8cc"/>
+</svg>

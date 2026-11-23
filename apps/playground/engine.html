@@ -17,6 +17,8 @@
       fieldset { max-width: 640px; margin: 12px 0; }
       fieldset label { display: grid; grid-template-columns: 8em 1fr 4em; gap: 8px; align-items: center; margin: 4px 0; }
       fieldset .presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+      #demos { max-width: 640px; margin: 12px 0; }
+      #demos dd { margin: 0 0 8px 16px; font-size: 14px; }
     </style>
   </head>
   <body>
@@ -28,6 +30,11 @@
       <code>&amp;maxFaces=N</code>, <code>&amp;seed=N</code>, <code>&amp;autostart</code>.
       Open a <code>.ouaf</code> file below, or drop it on the page.
     </p>
+    <details id="demos">
+      <summary>Demo filters</summary>
+      <p>Each demo on a test clip, or on the camera (then press Start).</p>
+      <div></div>
+    </details>
     <label>Open .ouaf <input id="open" type="file" accept=".ouaf" multiple /></label>
     <button id="start" type="button">Start</button>
     <button id="snapshot" type="button">Snapshot</button>

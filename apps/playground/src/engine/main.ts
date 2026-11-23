@@ -4,6 +4,7 @@
  */
 import { CameraSource, VideoFileSource, createEngine, memorySource, type Engine, type EngineStats, type VideoSource } from '@ouaf/core'
 import * as core from '@ouaf/core'
+import { renderDemos } from './demos.ts'
 import { renderParams } from './params-panel.ts'
 import { playgroundPlugin } from './test-plugin.ts'
 
@@ -127,6 +128,11 @@ const onVideoFrame = (_now: number, meta: VideoFrameCallbackMetadata) => {
 if ('requestVideoFrameCallback' in video) video.requestVideoFrameCallback(onVideoFrame)
 
 startButton.addEventListener('click', () => void start())
+
+// The demo filters (#37): open by default when the page has no filter to show.
+const demos = document.getElementById('demos') as HTMLDetailsElement
+demos.open = FILTERS.length === 0
+renderDemos(demos.querySelector('div')!).catch((error: unknown) => show('demos', error instanceof Error ? error.message : String(error)))
 
 // Outputs (#33): the last photo or video, as a download link (nothing leaves the page).
 const output = document.getElementById('output') as HTMLAnchorElement

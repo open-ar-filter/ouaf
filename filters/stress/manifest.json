@@ -1,0 +1,67 @@
+{
+  "ouaf": "1",
+  "id": "stress",
+  "name": { "en": "Stress test (internal)", "fr": "Test de charge (interne)" },
+  "version": "1.0.0",
+  "description": {
+    "en": "Internal benchmark: every layer type at once on up to 4 faces (models, warps, face and post shaders, LUT, canvases fed with landmarks). Each group can be switched off to measure its cost.",
+    "fr": "Banc d'essai interne : tous les types de calques à la fois sur 4 visages (modèles, déformations, shaders, LUT, canvas nourris de points). Chaque groupe se désactive pour mesurer son coût."
+  },
+  "author": "Ouaf contributors",
+  "license": "CC0-1.0",
+  "tags": ["internal", "benchmark", "stress"],
+  "requires": { "face": true },
+  "params": {
+    "models": { "type": "boolean", "default": true, "group": { "en": "Groups" }, "label": { "en": "Models (2 per face)" } },
+    "stickers": { "type": "boolean", "default": true, "group": { "en": "Groups" }, "label": { "en": "Stickers (5 per face)" } },
+    "text": { "type": "boolean", "default": true, "group": { "en": "Groups" }, "label": { "en": "Text (2 per face)" } },
+    "warps": { "type": "boolean", "default": true, "group": { "en": "Groups" }, "label": { "en": "Warps (3 anchors per face)" } },
+    "faceShader": { "type": "boolean", "default": true, "group": { "en": "Groups" }, "label": { "en": "Face shader" } },
+    "grade": { "type": "boolean", "default": true, "group": { "en": "Groups" }, "label": { "en": "LUT, grain, vignette" } },
+    "film": { "type": "boolean", "default": true, "group": { "en": "Groups" }, "label": { "en": "Film shader" } },
+    "trails": { "type": "number", "default": 0.5, "min": 0, "max": 1, "step": 0.05, "group": { "en": "Groups" }, "label": { "en": "Trails (feedback shader)" } },
+    "canvas": { "type": "boolean", "default": true, "group": { "en": "Groups" }, "label": { "en": "Canvases (script, landmarks)" } }
+  },
+  "presets": {
+    "none": { "models": false, "stickers": false, "text": false, "warps": false, "faceShader": false, "grade": false, "film": false, "trails": 0, "canvas": false },
+    "objects": { "warps": false, "faceShader": false, "grade": false, "film": false, "trails": 0 },
+    "passes": { "models": false, "stickers": false, "text": false, "canvas": false }
+  },
+  "assets": {
+    "glasses": "assets/glasses.glb",
+    "crown": "assets/crown.glb",
+    "heart": "assets/heart.svg",
+    "shine": "assets/shine.svg",
+    "star": { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><polygon points='50,4 61,38 97,38 68,59 79,93 50,72 21,93 32,59 3,38 39,38' fill='#ffd000' stroke='#a06000' stroke-width='4'/></svg>" },
+    "face": "assets/face.frag",
+    "film": "assets/film.frag",
+    "trails": "assets/trails.frag"
+  },
+  "layers": [
+    { "type": "shader", "src": "face", "stage": "face", "visible": { "param": "faceShader" } },
+    { "type": "warp", "kind": "bulge", "anchor": ["leftEye", "rightEye"], "radius": 0.45, "strength": 0.4, "visible": { "param": "warps" } },
+    { "type": "warp", "kind": "swirl", "anchor": "noseTip", "radius": 0.35, "strength": { "bind": "face.pose.roll", "range": [-30, 30], "to": [-0.6, 0.6], "default": 0 }, "visible": { "param": "warps" } },
+
+    { "id": "glasses", "type": "model", "src": "glasses", "anchor": "eyes", "offset": [0, -0.04, 0.12], "occlusion": "head", "visible": { "param": "models" } },
+    { "id": "crown", "type": "model", "src": "crown", "anchor": "forehead", "offset": [0, 0.3, -0.75], "rotation": [-8, 0, 0], "scale": 1.25, "animation": "spin", "occlusion": "head", "visible": { "param": "models" } },
+
+    { "type": "sticker", "src": "heart", "anchor": "leftCheek", "offset": [0.1, -0.1, 0.1], "size": 0.35, "visible": { "param": "stickers" } },
+    { "type": "sticker", "src": "heart", "anchor": "rightCheek", "offset": [-0.1, -0.1, 0.1], "size": 0.35, "visible": { "param": "stickers" } },
+    { "type": "sticker", "src": "star", "anchor": "forehead", "offset": [0.9, 0.2, 0], "size": 0.4, "rotation": [0, 0, 15], "orient": "screen", "visible": { "param": "stickers" } },
+    { "type": "sticker", "src": "star", "anchor": "forehead", "offset": [-0.9, 0.2, 0], "size": 0.3, "rotation": [0, 0, -15], "orient": "screen", "visible": { "param": "stickers" } },
+    { "type": "sticker", "src": "shine", "anchor": "eyes", "offset": [-0.66, 0.1, 0.14], "size": 0.2, "blend": "screen", "visible": { "param": "stickers" } },
+
+    { "id": "name", "type": "text", "text": "STRESS", "anchor": "chin", "offset": [0, -0.45, 0.1], "size": 0.4, "font": "builtin:font/sans-bold", "color": "#ffffff", "outline": { "width": 0.1, "color": "#d01040" }, "shadow": { "color": "#00000099" }, "visible": { "param": "text" } },
+    { "id": "talk", "type": "text", "text": "blah", "anchor": "mouth", "offset": [0.9, 0, 0.1], "size": 0.3, "orient": "screen", "font": "builtin:font/handwritten", "color": "#80ffcc", "opacity": { "bind": "face.blendshapes.jawOpen", "range": [0.05, 0.3], "to": [0.2, 1], "default": 1 }, "visible": { "param": "text" } },
+
+    { "id": "mesh", "type": "canvas", "width": 192, "height": 192, "fps": 30, "anchor": "screen", "offset": [-0.17, -0.36, 0], "size": 0.2, "overlay": true, "visible": { "param": "canvas" } },
+    { "id": "meter", "type": "canvas", "width": 128, "height": 32, "fps": 15, "anchor": "chin", "offset": [0, -0.85, 0.1], "size": 0.2, "visible": { "param": "canvas" } },
+
+    { "type": "color", "lut": "builtin:lut/vivid", "intensity": 0.7, "grain": 0.25, "vignette": 0.4, "visible": { "param": "grade" } },
+    { "type": "shader", "src": "film", "uniforms": { "scratches": 0.6, "dust": 0.5, "flicker": 0.4, "leak": "#ff8a3d44" }, "visible": { "param": "film" } },
+    { "type": "shader", "src": "trails", "uniforms": { "amount": { "param": "trails" } } },
+
+    { "id": "title", "type": "text", "text": "STRESS · 4 faces", "anchor": "screen", "offset": [0, 0.45, 0], "size": 0.035, "font": "builtin:font/mono", "color": "#ffffff", "outline": { "width": 0.12, "color": "#000000" }, "overlay": true }
+  ],
+  "script": { "entry": "script.js", "draw": ["mesh", "meter"], "uses": ["face.landmarks", "face.blendshapes"] }
+}

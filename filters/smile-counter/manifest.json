@@ -1,0 +1,57 @@
+{
+  "ouaf": "1",
+  "id": "smile-counter",
+  "name": { "en": "Smile counter", "fr": "Compteur de sourires" },
+  "version": "1.0.0",
+  "description": {
+    "en": "Script sandbox: counts smiles per person (face state) and in total (filter state), pops the labels and emits \"smiles\" to the host; a grin fades in through a binding.",
+    "fr": "Bac à sable : compte les sourires par personne (état du visage) et au total (état du filtre), anime les étiquettes et émet « smiles » ; un sticker suit le sourire."
+  },
+  "author": "Ouaf contributors",
+  "license": "CC0-1.0",
+  "tags": ["demo", "script", "events", "state"],
+  "requires": { "face": true },
+  "params": {
+    "color": { "type": "color", "default": "#ffffff", "label": { "en": "Label color", "fr": "Couleur de l'étiquette" } }
+  },
+  "assets": {
+    "grin": { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='#ffd23f' stroke='#a06a00' stroke-width='5'/><circle cx='34' cy='38' r='7' fill='#4a2a00'/><circle cx='66' cy='38' r='7' fill='#4a2a00'/><path d='M24 58 Q50 88 76 58' fill='none' stroke='#4a2a00' stroke-width='7' stroke-linecap='round'/></svg>" }
+  },
+  "layers": [
+    {
+      "id": "label",
+      "type": "text",
+      "text": "Smile!",
+      "color": { "param": "color" },
+      "anchor": "chin",
+      "offset": [0, -0.55, 0.15],
+      "size": 0.55,
+      "font": "builtin:font/rounded-bold",
+      "outline": { "width": 0.1, "color": "#e0306a" }
+    },
+    {
+      "id": "grin",
+      "type": "sticker",
+      "src": "grin",
+      "anchor": "rightCheek",
+      "offset": [-0.35, 0.1, 0.1],
+      "size": 0.5,
+      "orient": "screen",
+      "opacity": { "bind": "face.blendshapes.mouthSmileLeft", "range": [0.15, 0.5], "to": [0, 1], "default": 0 }
+    },
+    {
+      "id": "total",
+      "type": "text",
+      "text": "SMILES 0",
+      "anchor": "screen",
+      "offset": [0, 0.43, 0],
+      "size": 0.05,
+      "font": "builtin:font/mono",
+      "color": "#ffffff",
+      "outline": { "width": 0.12, "color": "#e0306a" },
+      "overlay": true
+    }
+  ],
+  "events": { "smile": { "threshold": 0.5 } },
+  "script": { "entry": "script.js", "setup": true, "on": ["smile"], "uses": [] }
+}

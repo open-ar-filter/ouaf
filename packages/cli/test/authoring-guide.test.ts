@@ -6,7 +6,7 @@
  * - `ouaf=layer`: one layer, validated inside a minimal manifest (`requires.face` set);
  * - `ouaf=part`: manifest fields (`params`, `assets`, `layers`…) merged into a minimal manifest;
  * - `ouaf=<example>/<path>`: a file of a complete example folder, e.g. `spotlight/manifest.json`,
- *   `spotlight/assets/spotlight.frag`, `smile-counter/filter.ts`. A folder with `manifest.json` must pass
+ *   `spotlight/assets/spotlight.frag`, `smile-total/filter.ts`. A folder with `manifest.json` must pass
  *   `ouaf validate` without errors or warnings; a folder with `filter.ts` must pass `ouaf pack` the same way, type-check
  *   against `@ouaf/spec`, and its packed script must run its functions in the script runtime without warnings.
  *

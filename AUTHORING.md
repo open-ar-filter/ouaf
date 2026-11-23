@@ -537,6 +537,11 @@ Specified, or reserved, but not working in the reference engine today. Do not re
 
 From simple to complex. Each is a whole folder; in this repository, put it under `filters/<id>/`.
 
+Larger examples: the demo filters next to them (`filters/text-bubble/`, `filters/duo/`…, listed with what each shows
+in [`filters/README.md`](filters/README.md)), one per feature set, each with the test clip that shows it. Their ids
+are taken: give your filter another one. Their scripts are already packed (`manifest.json` with a `script` section and
+`script.js`, section 2).
+
 ### Sunglasses and a caption (stickers, params, presets, a binding)
 
 `filters/cool-shades/manifest.json`. The flame shows as the mouth opens.
@@ -635,14 +640,14 @@ vec4 effect(vec2 uv) {
 
 ### Smile counter (a script: events, state, set, animate, emit, messages)
 
-`filters/smile-counter/filter.ts`. Pack it to try it (section 2). The host can reset the count with
+`filters/smile-total/filter.ts`. Pack it to try it (section 2). The host can reset the count with
 `handle.send('reset')`.
 
-```ts ouaf=smile-counter/filter.ts
+```ts ouaf=smile-total/filter.ts
 import { defineFilter } from '@ouaf/spec'
 
 export default defineFilter({
-  id: 'smile-counter',
+  id: 'smile-total',
   name: { en: 'Smile counter', fr: 'Compteur de sourires' },
   version: '1.0.0',
   license: 'CC0-1.0',

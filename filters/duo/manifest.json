@@ -1,0 +1,39 @@
+{
+  "ouaf": "1",
+  "id": "duo",
+  "name": { "en": "Duo", "fr": "Duo" },
+  "version": "1.0.0",
+  "description": {
+    "en": "Multi-face: each person gets their own ears ({ pick } by face), and the script points a heart from each face to the other, growing as they get closer. Needs maxFaces ≥ 2.",
+    "fr": "Multi-visages : chacun a ses oreilles ({ pick } par visage), et le script oriente un cœur de chaque visage vers l'autre, qui grossit quand ils se rapprochent. maxFaces ≥ 2."
+  },
+  "author": "Ouaf contributors",
+  "license": "CC0-1.0",
+  "tags": ["demo", "multi-face", "pick", "script"],
+  "requires": { "face": true },
+  "params": {
+    "together": { "type": "number", "default": 3, "min": 1.5, "max": 6, "step": 0.1, "label": { "en": "\"Together\" distance (face units)", "fr": "Distance « ensemble » (unités visage)" } }
+  },
+  "assets": {
+    "cat": "assets/cat-ears.svg",
+    "bunny": "assets/bunny-ears.svg",
+    "heart": "assets/heart.svg"
+  },
+  "layers": [
+    { "id": "ears", "type": "sticker", "src": { "pick": ["cat", "bunny"], "by": "face" }, "anchor": "forehead", "offset": [0, 0.55, -0.2], "size": 1.1 },
+    { "id": "heart", "type": "sticker", "src": "heart", "anchor": "noseTip", "offset": [0, 1.4, 0.3], "size": 0.5, "orient": "screen", "visible": false },
+    {
+      "id": "status",
+      "type": "text",
+      "text": "Waiting for a friend",
+      "anchor": "screen",
+      "offset": [0, -0.43, 0],
+      "size": 0.045,
+      "font": "builtin:font/rounded-bold",
+      "color": "#ffffff",
+      "outline": { "width": 0.12, "color": "#ff2d6a" },
+      "overlay": true
+    }
+  ],
+  "script": { "entry": "script.js", "update": true, "uses": ["face.pose", "face.anchors"] }
+}

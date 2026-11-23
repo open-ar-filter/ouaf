@@ -27,6 +27,9 @@ import type { WireCanvas, WireCommand, WireDone, WireEvent, WireFont, WireFrame,
 
 export { estimateSize } from './size.ts'
 
+/** How late (ms) the watchdog timer may fire before the delay is blamed on this thread rather than on the script. */
+const WATCHDOG_LATE_MS = 250
+
 /** The engine's end of the channel to a sandbox (a `MessagePort`, or a test double). */
 export interface ScriptPort {
   postMessage(message: unknown, transfer?: Transferable[]): void
@@ -96,6 +99,8 @@ export class ScriptHost {
   /** Sequence number of the message awaiting an answer, or -1. */
   #inFlight = -1
   #watchdog: unknown
+  /** When the watchdog was armed (`now()`, ms). */
+  #armedAt = 0
   /** Answers received since the last frame, applied at the start of the next one. */
   #answers: WireDone[] = []
   #events: WireEvent[] = []
@@ -236,8 +241,7 @@ export class ScriptHost {
 
   #send(seq: number, message: WireInit | WireFrame, images: ImageBitmap[] = []): void {
     this.#inFlight = seq
-    const set = this.#o.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms))
-    this.#watchdog = set(() => this.#onTimeout(seq), SCRIPT_LIMITS.watchdogMs)
+    this.#armWatchdog(seq)
     const transfer: Transferable[] = message.t === 'frame' ? message.faces.flatMap((f) => (f.landmarks ? [f.landmarks.buffer as ArrayBuffer] : [])) : images
     try {
       this.#connection!.port.postMessage(message, transfer)
@@ -266,8 +270,25 @@ export class ScriptHost {
     this.#answers.push(m as WireDone)
   }
 
+  #armWatchdog(seq: number): void {
+    const set = this.#o.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms))
+    this.#armedAt = this.#now()
+    this.#watchdog = set(() => this.#onTimeout(seq), SCRIPT_LIMITS.watchdogMs)
+  }
+
+  #now(): number {
+    return (this.#o.now ?? (() => performance.now()))()
+  }
+
   #onTimeout(seq: number): void {
     if (this.#state !== 'running' || this.#inFlight !== seq) return
+    // A late timer means this thread was busy (a long task: rendering, decoding): the script's answer may be waiting
+    // behind the timer in the event loop. The script gets another period rather than being stopped for the host's
+    // stall; a script stuck in a loop is still stopped by the next timer that fires on time.
+    if (this.#now() - this.#armedAt > SCRIPT_LIMITS.watchdogMs + WATCHDOG_LATE_MS) {
+      this.#armWatchdog(seq)
+      return
+    }
     const what = seq === 0 ? 'setup' : 'a frame'
     this.#stop(`it did not answer ${what} within ${SCRIPT_LIMITS.watchdogMs} ms (an endless loop?)`)
   }
@@ -396,7 +417,7 @@ export class ScriptHost {
   }
 
   #emit(name: string, data: unknown): void {
-    const now = (this.#o.now ?? (() => performance.now()))()
+    const now = this.#now()
     if (now - this.#emitWindow >= 1000) {
       this.#emitWindow = now
       this.#emitCount = 0
