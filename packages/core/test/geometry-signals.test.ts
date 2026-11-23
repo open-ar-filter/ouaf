@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { createFaceFrame, LANDMARKS_STRIDE } from '../src/face.ts'
 import { blendshapeSignals, createSignals, SIGNAL, SIGNALS_STRIDE } from '../src/expressions/signals.ts'
-import { GeometrySignals, geometryMeasures, geometrySignals } from '../src/expressions/geometry.ts'
+import { GeometrySignals, geometryMeasures, geometrySignals, maxEyeSignals } from '../src/expressions/geometry.ts'
 import { bytesPerCall } from './allocation.ts'
 import type { RecordedEvent } from './expression-fixture.ts'
-import { GEOMETRY_CLIPS, loadFrame, loadGeometryFixture, replayGeometryFixture } from './geometry-fixture.ts'
+import { EngineEyeSignals, GEOMETRY_CLIPS, loadFrame, loadGeometryFixture, replayGeometryFixture } from './geometry-fixture.ts'
 
 /**
  * Geometric expression signals (#90, spec §13, §16.2) against MediaPipe's blendshapes on the test clips (fixtures
@@ -178,6 +178,65 @@ describe('geometrySignals', () => {
         g.source(faces, 1, s, SIGNALS_STRIDE)
       }),
     ).toBeLessThan(1)
+  })
+})
+
+describe('blinks with blendshapes: each eye the larger of the blendshape score and the geometry (maxEyeSignals)', () => {
+  // Blendshape blinks at 30 Hz are the reference; the three while the person looks down (pesquet-walk 4.4, 5.0 and
+  // 6.07 s, the blendshape score staying at 0.5-0.8 for seconds) are left out of the hits. At 15 and 10 Hz every
+  // sampling phase is replayed. Blendshapes alone: 8/8, 10/16, 19/24; with the geometry's eyes: 8/8, 12/16, 20/24.
+  const doubtful = new Set(['pesquet-walk:4400', 'pesquet-walk:5000', 'pesquet-walk:6067'])
+  const refs = fixtures.map((f) => replayGeometryFixture(f, blendshapeSignals).filter((e) => e.name === 'blink').map((e) => e.timeMs))
+  function score(make: () => Parameters<typeof replayGeometryFixture>[1], stepMs: number) {
+    let hits = 0
+    let total = 0
+    let extra = 0
+    let winks = 0
+    fixtures.forEach((fixture, c) => {
+      const phases = Math.max(1, Math.round(stepMs / 33.3))
+      for (let p = 0; p < phases; p++) {
+        const events = replayGeometryFixture({ ...fixture, frames: fixture.frames.slice(p) }, make(), { stepMs })
+        winks += events.filter((e) => e.name === 'wink').length
+        const used = new Set<number>()
+        for (const e of events.filter((x) => x.name === 'blink')) {
+          const j = refs[c]!.findIndex((t, k) => !used.has(k) && Math.abs(t - e.timeMs) <= 250)
+          if (j < 0) extra++
+          else {
+            used.add(j)
+            if (!doubtful.has(`${GEOMETRY_CLIPS[c]}:${refs[c]![j]}`)) hits++
+          }
+        }
+        total += refs[c]!.filter((t) => !doubtful.has(`${GEOMETRY_CLIPS[c]}:${t}`)).length
+      }
+    })
+    return { hits, total, extra, winks }
+  }
+
+  it.each([
+    ['30 Hz', 0, 8],
+    ['15 Hz', 66, 12],
+    ['10 Hz', 100, 20],
+  ] as const)('at %s: at least as many blinks as the blendshapes alone, no extra blink or wink', (_, stepMs, hits) => {
+    const raw = score(() => blendshapeSignals, stepMs)
+    const both = score(() => new EngineEyeSignals(1), stepMs)
+    expect(both.hits).toBeGreaterThanOrEqual(raw.hits)
+    expect(both.hits).toBeGreaterThanOrEqual(hits)
+    expect(both.extra).toBe(0)
+    expect(both.winks).toBe(0)
+  })
+
+  it('takes the larger value per eye, and keeps the blendshape value when the geometry has none', () => {
+    const signals = createSignals(2)
+    const geometry = createSignals(2)
+    signals.set([0.6, 0.2], 0)
+    geometry.set([0.3, 0.9], 0)
+    signals.set([0.4, 0.4], SIGNALS_STRIDE)
+    geometry.set([NaN, NaN], SIGNALS_STRIDE)
+    signals[SIGNAL.jawOpen] = 0.1
+    geometry[SIGNAL.jawOpen] = 0.8
+    maxEyeSignals(2, geometry, signals)
+    expect([...signals.subarray(0, 3)].map((v) => Math.round(v * 10) / 10)).toEqual([0.6, 0.9, 0.1])
+    expect([...signals.subarray(SIGNALS_STRIDE, SIGNALS_STRIDE + 2)].map((v) => Math.round(v * 10) / 10)).toEqual([0.4, 0.4])
   })
 })
 

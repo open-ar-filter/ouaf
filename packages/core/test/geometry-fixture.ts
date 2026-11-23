@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { blendshapeIndex, createFaceFrame, type FaceFrame } from '../src/face.ts'
 import { ExpressionEventDetector, type ExpressionEventDetectorOptions } from '../src/expressions/detector.ts'
 import { blendshapeSignals, createSignals, type ExpressionSignalSource } from '../src/expressions/signals.ts'
-import { GeometrySignals } from '../src/expressions/geometry.ts'
+import { GeometrySignals, maxEyeSignals } from '../src/expressions/geometry.ts'
 import { EXPRESSION_FIXTURE_BLENDSHAPES, type RecordedEvent } from './expression-fixture.ts'
 
 /**
@@ -42,6 +42,35 @@ export function loadFrame(fixture: GeometryFixture, f: readonly number[], faces:
   fixture.landmarks.forEach((index, i) => faces.landmarks.set(f.slice(LANDMARKS_AT + i * 3, LANDMARKS_AT + i * 3 + 3), index * 3))
 }
 
+/**
+ * What the engine reads for the events while blendshapes are available: the blendshape signals, with each eye the
+ * larger of its blendshape score and the geometric closure (`maxEyeSignals`).
+ */
+export class EngineEyeSignals {
+  readonly #geometry: GeometrySignals
+  readonly #signals = createSignals(1)
+
+  constructor(maxFaces: number) {
+    this.#geometry = new GeometrySignals(maxFaces)
+  }
+
+  begin(ids: ArrayLike<number>, timeMs: number): void {
+    this.#geometry.begin(ids, timeMs)
+  }
+
+  readonly source: ExpressionSignalSource = (faces, face, out, offset) => {
+    blendshapeSignals(faces, face, out, offset)
+    this.#geometry.source(faces, face, this.#signals, 0)
+    maxEyeSignals(1, this.#signals, out.subarray(offset))
+  }
+}
+
+/** A stateful signal source: given the face ids and the time of each frame before its signals are read. */
+export interface StatefulSignals {
+  begin(ids: ArrayLike<number>, timeMs: number): void
+  readonly source: ExpressionSignalSource
+}
+
 /** Face ids as a tracker with a 500 ms grace delay would assign them (spec §5.4). */
 const GRACE_MS = 500
 
@@ -52,7 +81,7 @@ const GRACE_MS = 500
  */
 export function replayGeometryFixture(
   fixture: GeometryFixture,
-  source: ExpressionSignalSource | GeometrySignals = blendshapeSignals,
+  source: ExpressionSignalSource | StatefulSignals = blendshapeSignals,
   options: Omit<ExpressionEventDetectorOptions, 'maxFaces'> & { stepMs?: number } = {},
 ): RecordedEvent[] {
   const faces = createFaceFrame(1)
@@ -71,7 +100,7 @@ export function replayGeometryFixture(
       if (t - lastSeen > GRACE_MS) ids[0] = (ids[0] ?? 0) + 1
       lastSeen = t
       loadFrame(fixture, f, faces)
-      if (source instanceof GeometrySignals) {
+      if (typeof source !== 'function') {
         source.begin(ids, t)
         source.source(faces, 0, signals, 0)
       } else source(faces, 0, signals, 0)
