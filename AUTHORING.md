@@ -517,8 +517,8 @@ engine from dropping them on slow devices).
 
 On a slow device (§16), the engine first drops blendshapes (`face.blendshapes.*` bindings take their `default`,
 scripts get none, expression events still fire, from the landmarks), then the faces beyond those tracked, then the
-analysis resolution; below 15 Hz of tracking for 3 s it hides face filters and shows the plain camera until the rate
-is back above 18 Hz. Give blendshape bindings a sensible `default`. To see it on a desktop, open
+analysis resolution; below 12 Hz of tracking for 3 s it hides face filters and shows the plain camera until the rate
+is back above 14 Hz. Give blendshape bindings a sensible `default`. To see it on a desktop, open
 `/engine.html?throttle=120&filter=…` (simulated slow tracking, also a slider in the panel).
 
 ## 13. Privacy and security

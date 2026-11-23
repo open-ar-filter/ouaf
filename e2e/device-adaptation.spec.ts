@@ -37,8 +37,8 @@ const blue = (page: Page) =>
   })
 
 test('slow tracking: capabilities dropped in order, then the face filter hidden; all back once tracking is fast', async ({ page }) => {
-  // 200 ms per result: 5 Hz with everything on, still 80 ms (≤ 12.5 Hz) with everything dropped: below the floor.
-  await open(page, 'maxFaces=2&throttle=200&filter=/filters/fixtures/dot-tint/')
+  // 250 ms per result: 4 Hz with everything on, still 100 ms (≤ 10 Hz) with everything dropped: below the 12 Hz floor.
+  await open(page, 'maxFaces=2&throttle=250&filter=/filters/fixtures/dot-tint/')
   await expect.poll(() => events(page), POLL).toContain('unsupported[blendshapes,extraFaces,resolution]')
   expect(await events(page)).toEqual([
     'degraded[blendshapes]',
@@ -61,7 +61,7 @@ test('slow tracking: capabilities dropped in order, then the face filter hidden;
   const hz = await page.evaluate(() => window.ouaf!.engine.performance.trackingHz)
   test.skip(hz < 22, `this machine tracks at ${hz.toFixed(1)} Hz without throttle: too slow to check the recovery`)
   // Shown again, then the capabilities come back one by one, last dropped first. Each step waits for its prediction
-  // (≥ 18 Hz shown, ≥ 20 Hz with the capability), or on a slow machine for a probe (30 s): up to 4 × 31 s.
+  // (≥ 14 Hz shown, ≥ 17 Hz with the capability), or on a slow machine for a probe (30 s): up to 4 × 31 s.
   await expect.poll(() => events(page), { ...POLL, timeout: 150_000 }).toContain('ok[]')
   expect((await events(page)).slice(4)).toEqual([
     'degraded[blendshapes,extraFaces,resolution]',
@@ -75,8 +75,8 @@ test('slow tracking: capabilities dropped in order, then the face filter hidden;
 })
 
 test('no flicker when hiding the filter is what frees the device: no re-show before the slow probe', async ({ page }) => {
-  // The pattern seen on the Redmi Note 11S (main-thread tracker): drawing the filter (55 ms of main-thread work per
-  // frame here) keeps tracking below 15 Hz; hiding it frees the main thread and tracking climbs above 18 Hz.
+  // The pattern seen on the Redmi Note 11S (main-thread tracker): drawing the filter (85 ms of main-thread work per
+  // frame here) keeps tracking below the 12 Hz floor; hiding it frees the main thread and tracking climbs above 14 Hz.
   await open(page, 'adapt=1&filter=/filters/fixtures/busy/')
   // On the phone the rate climbed over a few seconds after the hide: tracking stays slow (70 ms) for 2.5 s after it.
   await page.evaluate(() => {
@@ -90,10 +90,10 @@ test('no flicker when hiding the filter is what frees the device: no re-show bef
   })
   await expect.poll(() => events(page), POLL).toContain('unsupported[blendshapes,resolution]')
   const hz = async () => (await page.evaluate(() => window.ouaf!.engine.performance.trackingHz))
-  // Hidden: the rate climbs above 18 Hz (unless this machine is too slow even then).
+  // Hidden: the rate climbs above 14 Hz (unless this machine is too slow even then).
   await page.waitForTimeout(8000)
   const hidden = await hz()
-  test.skip(hidden <= 18, `this machine tracks at ${hidden.toFixed(1)} Hz even with the filter hidden`)
+  test.skip(hidden <= 14, `this machine tracks at ${hidden.toFixed(1)} Hz even with the filter hidden`)
   // Seen live: shown again 9 s after the hide, hidden again 6 s later. Now only the probe, 30 s after the hide.
   await page.waitForTimeout(16_000)
   expect(await events(page)).toEqual(['degraded[blendshapes]', 'degraded[blendshapes,resolution]', 'unsupported[blendshapes,resolution]'])
@@ -108,11 +108,12 @@ test('a filter that requires blendshapes never loses them: it is hidden instead'
 })
 
 test('with blendshapes dropped, expression events come from the landmark geometry', async ({ page }) => {
-  // 70 ms per result: at most 14.3 Hz, below the drop level whatever the frame cadence. Each drop saves a share (15 %,
-  // 20 %, 25 %): 28 ms with all three, 30 Hz at the clip's 30 fps, clearly above the floor (two drops alone could land on
-  // 15 Hz, the floor itself, as rates snap to 30, 15, 10 Hz). The filter stays shown, its events from the geometry.
-  await open(page, 'maxFaces=2&throttle=70&filter=/filters/fixtures/dot-tint/')
-  await expect.poll(() => events(page), POLL).toContain('degraded[blendshapes,extraFaces,resolution]')
+  // 100 ms per result: at most 10 Hz, below the 13 Hz drop level. Each drop saves a share (15 %, 20 %, 25 %): 85 ms
+  // without blendshapes (still below 13 Hz), 65 ms also without the extra faces (15 Hz: above it; at the clip's 30 fps
+  // a little jitter can push it to 10 Hz, then the resolution goes too: 40 ms, 25–30 Hz). Either way the filter stays
+  // shown above the 12 Hz floor, its events from the geometry.
+  await open(page, 'maxFaces=2&throttle=100&filter=/filters/fixtures/dot-tint/')
+  await expect.poll(async () => (await events(page)).some((e) => e.startsWith('degraded[blendshapes,extraFaces')), POLL).toBe(true)
   await expect.poll(() => page.evaluate(() => window.ouaf!.engine.performance.state), POLL).toBe('degraded')
   const before = await page.evaluate(() => window.ouaf!.events.length)
   // pesquet-talk (8 s, looping) has blinks at about 1.9, 3.0 and 6.9 s.

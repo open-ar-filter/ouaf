@@ -29,7 +29,7 @@ import { checkSeed, deriveSeed, FILE_SOURCE_SEED, randomSeed, SeededRandom } fro
 import type { FitMode } from '../viewport.ts'
 import { FaceIdentityTracker, FaceSmoother } from '../anchoring/index.ts'
 import { GeometrySignals, blendshapeSignals, createSignals, maxEyeSignals, readExpressionSignals } from '../expressions/index.ts'
-import { DeviceGovernor, type Capability, type GovernorTuning, type PerformanceState } from './governor.ts'
+import { DeviceGovernor, type Capability, type GovernorMeasures, type GovernorTuning, type PerformanceState } from './governor.ts'
 import { BACKEND_STORE_PREFIX, localBackendStore } from './backend-choice.ts'
 import { FaceAnchors } from './anchor-provider.ts'
 import { CORE_LOADERS, memorySource, urlSource, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
@@ -108,7 +108,7 @@ export interface EngineOptions {
   openSandbox?: (label: string) => ReturnType<typeof openSandbox>
   /**
    * Device adaptation (spec §16): with live sources, drop optional capabilities when face tracking is too slow, and
-   * hide the face filters below the 15 Hz floor (`on('performance')`). Default: true. `false` keeps everything on
+   * hide the face filters below the 12 Hz floor (`on('performance')`). Default: true. `false` keeps everything on
    * whatever the rate (tests, benchmarks); an object tunes the governor (`DEFAULT_GOVERNOR_TUNING`).
    */
   adaptation?: boolean | Partial<GovernorTuning>
@@ -125,6 +125,11 @@ export interface EngineOptions {
 export const REDUCED_ANALYSIS_SCALE = 0.5
 /** A pause between frames longer than this (ms) restarts the measure of the tracking rate (background tab…). */
 const GOVERNOR_PAUSE_MS = 1500
+/**
+ * The first results of a tracker are slow (model warm-up: a worker tracker gave 7.4 Hz for its first results on the
+ * Redmi Note 11S): when the governor starts, the results of this first period (ms) are not counted (spec §16.3).
+ */
+const TRACKER_WARMUP_MS = 1000
 /** The governor is consulted at most this often (ms). */
 const GOVERNOR_PERIOD_MS = 100
 /**
@@ -345,6 +350,10 @@ export class Engine {
   /** Faces looked for while the extra faces are dropped: the faces tracked when they were. */
   #reducedFaces = 1
   #governedAt = Number.NaN
+  readonly #governorMeasures: GovernorMeasures = {}
+  readonly #recovery = new Float64Array(2)
+  /** End of the tracker's warm-up when the governor (re)starts (NaN: none). */
+  #warmupUntil = Number.NaN
   #disposed = false
   #contextLost = false
   #onContextLost = (event: Event) => this.#contextLostHandler(event)
@@ -1388,8 +1397,17 @@ export class Engine {
     const last = this.#governedAt
     if (now - last < GOVERNOR_PERIOD_MS) return
     this.#governedAt = now
-    // The first step, or a pause of frames (hidden tab): the measure restarts from now.
+    // The first step, or a pause of frames (hidden tab): the measure restarts from now; on the first step, once the
+    // tracker's warm-up is over.
     if (Number.isNaN(last) || now - last > GOVERNOR_PAUSE_MS) {
+      g.restart(now)
+      tracking.restartRate(now)
+      this.#warmupUntil = Number.isNaN(last) ? now + TRACKER_WARMUP_MS : Number.NaN
+      return
+    }
+    if (!Number.isNaN(this.#warmupUntil)) {
+      if (now < this.#warmupUntil) return
+      this.#warmupUntil = Number.NaN
       g.restart(now)
       tracking.restartRate(now)
       return
@@ -1399,7 +1417,20 @@ export class Engine {
     governable.clear()
     const sheds = tracking.sheds
     for (const c of this.#droppable) if (!sheds || sheds.includes(c)) governable.add(c)
-    const change = g.update(now, rate, governable, tracking.pipelineMs)
+    // Showing and restoring judge the results with the faces of the decision (none in view is no recovery).
+    const reference = g.referenceFaces
+    const measures = this.#governorMeasures
+    measures.pipelineMs = tracking.pipelineMs
+    measures.faces = tracking.faces.count
+    if (reference > 0) {
+      tracking.rateWithFaces(reference, this.#recovery)
+      measures.recoveryHz = this.#recovery[0]!
+      measures.recoveryPipelineMs = this.#recovery[1]!
+    } else {
+      measures.recoveryHz = rate
+      measures.recoveryPipelineMs = measures.pipelineMs
+    }
+    const change = g.update(now, rate, governable, measures)
     if (!change) return
     if (change.kind === 'drop' && change.capability === 'extraFaces') this.#reducedFaces = Math.max(1, tracking.faces.count)
     tracking.restartRate(now)

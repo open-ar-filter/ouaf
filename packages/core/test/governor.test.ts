@@ -10,12 +10,26 @@ const ALL = new Set<Capability>(CAPABILITIES)
  * Runs the governor every 100 ms for `seconds`; returns the changes with their time (s). `pipeline`: the time per
  * result (ms) for the current configuration, when the test gives it.
  */
-function run(device: Device, seconds: number, options: { droppable?: (t: number) => ReadonlySet<Capability>; pipeline?: Device } = {}) {
+function run(
+  device: Device,
+  seconds: number,
+  options: { droppable?: (t: number) => ReadonlySet<Capability>; pipeline?: Device; faces?: (t: number) => number } = {},
+) {
   const g = new DeviceGovernor()
   const changes: Array<{ t: number; change: GovernorChange }> = []
   for (let ms = 0; ms <= seconds * 1000; ms += 100) {
     const t = ms / 1000
-    const change = g.update(ms, device(g.dropped, g.hidden, t), options.droppable?.(t) ?? ALL, options.pipeline?.(g.dropped, g.hidden, t))
+    const rate = device(g.dropped, g.hidden, t)
+    const pipelineMs = options.pipeline?.(g.dropped, g.hidden, t)
+    const faces = options.faces?.(t)
+    // As the engine: showing and restoring see only the results with the faces of the decision (none: no data).
+    const recovery = faces === undefined || faces >= g.referenceFaces ? rate : Number.NaN
+    const change = g.update(ms, rate, options.droppable?.(t) ?? ALL, {
+      ...(pipelineMs === undefined ? {} : { pipelineMs }),
+      ...(faces === undefined ? {} : { faces }),
+      recoveryHz: recovery,
+      ...(pipelineMs === undefined ? {} : { recoveryPipelineMs: Number.isNaN(recovery) ? Number.NaN : pipelineMs }),
+    })
     if (change) changes.push({ t: ms / 1000, change })
   }
   return { g, changes, kinds: changes.map(({ change: c }) => ('capability' in c ? `${c.kind} ${c.capability}` : c.kind)) }
@@ -36,8 +50,8 @@ describe('DeviceGovernor', () => {
     expect(g.state).toBe('ok')
   })
 
-  it('drops blendshapes first when that is enough, and keeps them dropped (Redmi Note 11S: 14.6 → 16.6 Hz)', () => {
-    const { g, kinds, changes } = run(costs(1000 / 14.6, { blendshapes: 1000 / 14.6 - 1000 / 16.6 }), 120)
+  it('drops blendshapes first when that is enough, and keeps them dropped (12 → 14 Hz)', () => {
+    const { g, kinds, changes } = run(costs(1000 / 12, { blendshapes: 1000 / 12 - 1000 / 14 }), 120)
     expect(kinds).toEqual(['drop blendshapes'])
     expect(changes[0]!.t).toBe(1)
     expect(g.state).toBe('degraded')
@@ -58,27 +72,27 @@ describe('DeviceGovernor', () => {
   })
 
   it('restores a capability at once when it becomes required', () => {
-    const { kinds, changes } = run(costs(1000 / 14, { blendshapes: 10 }), 10, { droppable: (t) => (t < 5 ? ALL : new Set(['extraFaces', 'resolution'])) })
+    const { kinds, changes } = run(costs(1000 / 11, { blendshapes: 20 }), 10, { droppable: (t) => (t < 5 ? ALL : new Set(['extraFaces', 'resolution'])) })
     expect(kinds.slice(0, 2)).toEqual(['drop blendshapes', 'restore blendshapes'])
     expect(changes[1]!.t).toBe(5)
   })
 
-  it('shows the filters again above 18 Hz, then restores the capabilities one at a time, last dropped first', () => {
+  it('shows the filters again above 14 Hz, then restores the capabilities one at a time, last dropped first', () => {
     // Slow for 10 s (e.g. heat), then fast.
     const { g, kinds, changes } = run((_, __, t) => (t < 10 ? 8 : 40), 60)
     expect(kinds).toEqual(['drop blendshapes', 'drop extraFaces', 'drop resolution', 'hide', 'show', 'restore resolution', 'restore extraFaces', 'restore blendshapes'])
     const t = Object.fromEntries(changes.map((c) => [('capability' in c.change ? `${c.change.kind} ${c.change.capability}` : c.change.kind), c.t]))
-    expect(t.show).toBeGreaterThanOrEqual(11) // settled rate above 18 Hz for 1 s
+    expect(t.show).toBeGreaterThanOrEqual(11) // settled rate above 14 Hz for 1 s
     expect(t['restore resolution']! - t.show!).toBeGreaterThanOrEqual(6) // settle + 5 s above the restore level
     expect(t['restore extraFaces']! - t['restore resolution']!).toBeGreaterThanOrEqual(6)
     expect(g.state).toBe('ok')
   })
 
   it('restores everything once a device that was heavily loaded frees up (gains measured as shares)', () => {
-    // As `throttleTracker`: 200 ms per result with everything on, each capability a share of it; 20 ms from 20 s on.
+    // As `throttleTracker`: 250 ms per result with everything on, each capability a share of it; 20 ms from 20 s on.
     const shares = { blendshapes: 0.15, extraFaces: 0.2, resolution: 0.25 }
     // The camera (30 fps) caps the rate: only the pipeline time tells what restoring a capability would cost.
-    const pipeline: Device = (dropped, _, t) => (t < 20 ? 200 : 20) * (1 - dropped.reduce((s, c) => s + shares[c], 0))
+    const pipeline: Device = (dropped, _, t) => (t < 20 ? 250 : 20) * (1 - dropped.reduce((s, c) => s + shares[c], 0))
     const device: Device = (dropped, hidden, t) => Math.min(30, 1000 / pipeline(dropped, hidden, t))
     const { g, kinds } = run(device, 90, { pipeline })
     expect(kinds).toEqual(['drop blendshapes', 'drop extraFaces', 'drop resolution', 'hide', 'show', 'restore resolution', 'restore extraFaces', 'restore blendshapes'])
@@ -86,15 +100,15 @@ describe('DeviceGovernor', () => {
   })
 
   it('does not restore a capability whose cost would bring the rate back down', () => {
-    // 14 Hz with blendshapes, 19 without: restoring them would predict 14 Hz.
-    const { kinds } = run(costs(1000 / 14, { blendshapes: 1000 / 14 - 1000 / 19 }), 120)
+    // 11 Hz with blendshapes, 16 without: restoring them would predict 11 Hz.
+    const { kinds } = run(costs(1000 / 11, { blendshapes: 1000 / 11 - 1000 / 16 }), 120)
     expect(kinds).toEqual(['drop blendshapes'])
   })
 
   it('does not flicker when hiding the filters is what frees the device: rare probes, further and further apart', () => {
-    // Everything dropped: 12 Hz while the filters are drawn, 20 Hz while they are hidden: showing them predicts 12 Hz.
-    // The measured rate (20 Hz) is above 18 Hz, so the show is probed after 30 s, then 60 s, 120 s…
-    const { kinds, changes } = run(costs(1000 / 12, {}, 1000 / 12 - 1000 / 20), 600)
+    // Everything dropped: 10 Hz while the filters are drawn, 16 Hz while they are hidden: showing them predicts 10 Hz.
+    // The measured rate (16 Hz) is above 14 Hz, so the show is probed after 30 s, then 60 s, 120 s…
+    const { kinds, changes } = run(costs(1000 / 10, {}, 1000 / 10 - 1000 / 16), 600)
     expect(kinds.slice(0, 4)).toEqual(['drop blendshapes', 'drop extraFaces', 'drop resolution', 'hide'])
     const shows = changes.filter((c) => c.change.kind === 'show').map((c) => c.t)
     expect(shows.length).toBeLessThanOrEqual(4)
@@ -106,29 +120,30 @@ describe('DeviceGovernor', () => {
   })
 
   it('shows the filters again once the device seems to have room for them, and learns when it was wrong', () => {
-    // Hidden at 12 Hz (20 Hz hidden: ratio 0.6); at 60 s the hidden rate rises to 50 Hz (predicted shown: 30 Hz), but
-    // drawing still brings it to 12 Hz: shown, hidden 3 s later, and the ratio measured at that hide (0.24: 12 Hz
-    // predicted) leaves only slow probes.
-    const device: Device = (_, hidden, t) => (hidden ? (t < 60 ? 20 : 50) : 12)
+    // Hidden at 10 Hz (16 Hz hidden); at 60 s the hidden rate rises to 50 Hz (predicted shown: 10 × 50 / 16 = 31 Hz),
+    // but drawing still brings it to 10 Hz: shown, hidden 3 s later, and what that hide gained (50 Hz hidden) leaves
+    // only slow probes.
+    const device: Device = (_, hidden, t) => (hidden ? (t < 60 ? 16 : 50) : 10)
     const { kinds, changes } = run(device, 300)
-    // A probe at 35 s (20 Hz measured while hidden, 12 Hz predicted shown), then the real show at 60 s.
+    // A probe at 35 s (16 Hz measured while hidden, 10 Hz predicted shown), then the real show at 60 s.
     expect(kinds.slice(0, 8)).toEqual(['drop blendshapes', 'drop extraFaces', 'drop resolution', 'hide', 'show', 'hide', 'show', 'hide'])
     expect(changes.map((c) => c.t).slice(3, 8)).toEqual([4, 35, 38, 60, 63])
     // Next show: a probe again, 120 s later (30 s doubled twice: hidden again soon after each show).
     expect(changes[8]!.t).toBeGreaterThanOrEqual(183)
   })
 
-  it('Redmi Note 11S pattern: hiding frees the main thread (13 → 23.5 Hz), no re-show before the slow probe', () => {
-    // Main-thread tracker: 13.2 Hz with the filter drawn. Once hidden the rate climbs over a few seconds (the window
-    // still holds slow results) to 23.5 Hz. Seen live: hidden, re-shown 9 s later at 23.5 Hz, hidden again 6 s later.
+  it('Redmi Note 11S pattern: hiding frees the main thread (11 → 20 Hz), no re-show before the slow probe', () => {
+    // Main-thread tracker: 11 Hz with the filter drawn. Once hidden the rate climbs over a few seconds (the window still
+    // holds slow results) to 20 Hz. Seen live (13.2 → 23.5 Hz with the 15 Hz floor of the time): hidden, re-shown 9 s
+    // later, hidden again 6 s later.
     let hiddenAt = Number.NaN
     const device: Device = (_, hidden, t) => {
       if (!hidden) {
         hiddenAt = Number.NaN
-        return 13.2
+        return 11
       }
       if (Number.isNaN(hiddenAt)) hiddenAt = t
-      return Math.min(23.5, 14 + (t - hiddenAt) * 3)
+      return Math.min(20, 12 + (t - hiddenAt) * 3)
     }
     const { kinds, changes } = run(device, 120, { droppable: () => new Set<Capability>(['blendshapes', 'resolution']) })
     expect(kinds.slice(0, 3)).toEqual(['drop blendshapes', 'drop resolution', 'hide'])
@@ -137,6 +152,35 @@ describe('DeviceGovernor', () => {
     // Only the probe (30 s) shows them again, then each probe waits twice as long.
     expect(shows[0]!).toBeGreaterThanOrEqual(hide + 30)
     expect(shows.length).toBeLessThanOrEqual(2)
+  })
+
+  it('Redmi Note 11S: the rate without a face (detector only) is not a recovery', () => {
+    // MediaPipe on the main thread: 11 Hz with a face (hidden or shown); with no face in view (20-40 s) it only runs its
+    // detector: 23 Hz. Seen live: hidden at 13.1 Hz, shown again 8 s later at 23.1 Hz with no face.
+    const faces = (t: number) => (t >= 20 && t < 40 ? 0 : 1)
+    const { kinds, changes } = run((_, __, t) => (faces(t) ? 11 : 23), 80, { faces, droppable: () => new Set<Capability>(['blendshapes', 'resolution']) })
+    expect(kinds.slice(0, 3)).toEqual(['drop blendshapes', 'drop resolution', 'hide'])
+    // Nothing while the face is away, nor once it is back (11 Hz again): the filters stay hidden.
+    expect(changes.filter((c) => c.t >= 20 && c.t < 80)).toEqual([])
+  })
+
+  it('a capability dropped with a face is not restored on the rate without it, but is once the face is back', () => {
+    // 12 Hz with a face and blendshapes, 14 Hz without them (kept dropped); 30 Hz with no face (10-30 s); from 50 s the
+    // device is fast with the face too (30 Hz).
+    const faces = (t: number) => (t >= 10 && t < 30 ? 0 : 1)
+    const device: Device = (dropped, _, t) => (!faces(t) || t >= 50 ? 30 : dropped.includes('blendshapes') ? 14 : 12)
+    const { kinds, changes } = run(device, 70, { faces, droppable: () => new Set<Capability>(['blendshapes']) })
+    expect(kinds).toEqual(['drop blendshapes', 'restore blendshapes'])
+    // Restored only after 50 s (+ 3 s with the face back, + 5 s above the restore level), not while no face was seen.
+    expect(changes[1]!.t).toBeGreaterThanOrEqual(55)
+  })
+
+  it('a face lost for a moment (every 8 s, like the test clip) does not hold the recovery back for ever', () => {
+    // Slow until 20 s (8 Hz), then fast (40 Hz); no face for 1 s of every 8 s (60 Hz then: detector only).
+    const faces = (t: number) => (t % 8 < 1 ? 0 : 1)
+    const { g, kinds } = run((_, __, t) => (!faces(t) ? 60 : t < 20 ? 8 : 40), 120, { faces })
+    expect(kinds).toEqual(['drop blendshapes', 'drop extraFaces', 'drop resolution', 'hide', 'show', 'restore resolution', 'restore extraFaces', 'restore blendshapes'])
+    expect(g.state).toBe('ok')
   })
 
   it('shows hidden filters soon when tracking really gets faster after the hide', () => {
