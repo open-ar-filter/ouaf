@@ -113,9 +113,10 @@ export interface EngineOptions {
    */
   adaptation?: boolean | Partial<GovernorTuning>
   /**
-   * Inference backend of the face tracker (built-in tracker: `CPU` or `GPU`). Default: chosen by measuring both on
-   * the first frames of a live source, then cached on the device per engine version (`localStorage`, never
-   * transmitted; spec §16.4). Until then the GPU is tried first.
+   * Inference backend of the face tracker (built-in tracker, case-insensitive: `litert` for our LiteRT.js pipeline in
+   * a worker, `GPU` or `CPU` for MediaPipe's delegates on the main thread). Default: chosen by measuring them on the
+   * first frames of a live source, then cached on the device per engine version (`localStorage`, never transmitted;
+   * spec §16.4). Until then LiteRT.js is tried first (MediaPipe GPU with `maxFaces` > 1).
    */
   trackerBackend?: string
 }

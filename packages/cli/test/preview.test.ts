@@ -125,6 +125,8 @@ describe('filters', () => {
     const bundle = await bundlePage()
     const page = bundle.get('page.js')!
     expect(page).toContain('ouafPreview')
+    // The face tracker's worker, a second entry (Rolldown does not emit workers).
+    expect(bundle.get('face-worker.js')).toContain('importScripts')
     for (const code of bundle.values()) expect(code).not.toMatch(/\bimport\s*\(?\s*["']https?:/)
   }, 60_000)
 })

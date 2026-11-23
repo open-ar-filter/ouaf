@@ -42,6 +42,8 @@ export interface FaceTrackerOptions {
   modelUrl: string
   /** Preferred delegate. Default: `'GPU'`, with automatic fallback to CPU. `'CPU'` skips the GPU attempt. */
   delegate?: Delegate
+  /** Fall back to the CPU delegate when the GPU one fails. Default: true; false rejects instead. */
+  cpuFallback?: boolean
   /**
    * Compute the 52 blendshapes (a second model run on every frame). Default: true. When false, `FaceFrame.blendshapes`
    * stays at 0; turn it off when no active filter uses expressions, to save time on slow devices.
@@ -152,6 +154,7 @@ export async function createFaceTrackerWith(options: FaceTrackerOptions, backend
     try {
       return await open('GPU')
     } catch (err) {
+      if (options.cpuFallback === false) throw err
       warn('GPU delegate unavailable, falling back to CPU face tracking.', err)
     }
   }

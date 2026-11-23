@@ -123,24 +123,32 @@ test('adaptation can be turned off', async ({ page }) => {
 
 test('the tracker backend is measured on the first live frames, cached on the device, or forced', async ({ page }) => {
   const tracker = () => page.evaluate(() => window.ouaf!.stats?.tracker ?? '')
+  const label = (backend: string) => (backend === 'LiteRT' ? 'LiteRT.js wasm in a worker, WebGL2 crops, VideoFrame' : `MediaPipe ${backend}, main thread`)
   await open(page, 'filter=/filters/fixtures/dot-tint/')
-  await expect.poll(tracker, POLL).toMatch(/^MediaPipe (CPU|GPU) \(measured: (GPU|CPU) [\d.]+ ms, (GPU|CPU) [\d.]+ ms\)/)
+  // LiteRT.js in a worker against MediaPipe's GPU and CPU delegates (#165).
+  await expect.poll(tracker, POLL).toMatch(/ \(measured: (LiteRT|GPU|CPU) [\d.]+ ms, (LiteRT|GPU|CPU) [\d.]+ ms, (LiteRT|GPU|CPU) [\d.]+ ms\)$/)
   const stored = await page.evaluate(() => Object.entries(localStorage).filter(([k]) => k.startsWith(window.ouaf!.core.BACKEND_STORE_PREFIX)))
   expect(stored).toHaveLength(1)
   const [key, value] = stored[0]!
-  expect(key).toBe('ouaf:tracker-backend:1.0.0:mediapipe')
+  expect(key).toBe('ouaf:tracker-backend:1.0.0:face')
   const choice = JSON.parse(value) as { backend: string; measuredMs: Record<string, number>; userAgent: string }
-  expect(Object.keys(choice.measuredMs).sort()).toEqual(['CPU', 'GPU'])
-  expect(choice.backend).toBe(choice.measuredMs.CPU! <= choice.measuredMs.GPU! ? 'CPU' : 'GPU')
-  expect(await tracker()).toContain(`MediaPipe ${choice.backend} (measured`)
+  expect(Object.keys(choice.measuredMs).sort()).toEqual(['CPU', 'GPU', 'LiteRT'])
+  // The fastest, MediaPipe (main thread) weighted by MAIN_THREAD_WEIGHT.
+  const weight = await page.evaluate(() => window.ouaf!.core.MAIN_THREAD_WEIGHT)
+  const score = (name: string) => choice.measuredMs[name]! * (name === 'LiteRT' ? 1 : weight)
+  expect(choice.backend).toBe(['LiteRT', 'GPU', 'CPU'].reduce((best, name) => (score(name) < score(best) ? name : best)))
+  console.log(`backend benchmark: ${JSON.stringify(choice.measuredMs)} → ${choice.backend}`)
+  expect(await tracker()).toBe(`${label(choice.backend)} (measured: ${Object.entries(choice.measuredMs).map(([n, v]) => `${n} ${v.toFixed(1)} ms`).join(', ')})`)
 
   // Next start: the cached choice, no benchmark.
   await open(page, 'filter=/filters/fixtures/dot-tint/')
-  await expect.poll(tracker, POLL).toContain(`MediaPipe ${choice.backend} (cached: `)
+  await expect.poll(tracker, POLL).toContain(`${label(choice.backend)} (cached: `)
   // Forced by the host.
   const other = choice.backend === 'CPU' ? 'GPU' : 'CPU'
   await open(page, `filter=/filters/fixtures/dot-tint/&backend=${other}`)
-  await expect.poll(tracker, POLL).toBe(`MediaPipe ${other} (forced), main thread`)
+  await expect.poll(tracker, POLL).toBe(`${label(other)} (forced)`)
+  await open(page, 'filter=/filters/fixtures/dot-tint/&backend=litert')
+  await expect.poll(tracker, POLL).toBe(`${label('LiteRT')} (forced)`)
   // `?backend=measure` forgets the choice: measured again.
   await open(page, 'filter=/filters/fixtures/dot-tint/&backend=measure')
   await expect.poll(tracker, POLL).toContain('(measured: ')

@@ -2,7 +2,21 @@
  * Engine page (`/engine.html`): drives `@ouaf/core`'s public API, the way a host would. Used by the browser tests
  * (`window.ouaf`) and by the layer-type work as a harness, until the playground app (#36) is rebuilt on the engine.
  */
-import { BACKEND_STORE_PREFIX, CameraSource, VideoFileSource, createEngine, memorySource, throttlePlugin, type Engine, type EngineStats, type PerformanceEvent, type TrackingThrottle, type VideoSource } from '@ouaf/core'
+import {
+  BACKEND_STORE_PREFIX,
+  CameraSource,
+  VideoFileSource,
+  createDefaultFaceTracker,
+  createEngine,
+  memorySource,
+  throttlePlugin,
+  type Engine,
+  type EngineStats,
+  type LiteRtTrackerOptions,
+  type PerformanceEvent,
+  type TrackingThrottle,
+  type VideoSource,
+} from '@ouaf/core'
 import * as core from '@ouaf/core'
 import { renderDemos } from './demos.ts'
 import { renderParams } from './params-panel.ts'
@@ -53,10 +67,16 @@ const ADAPT = params.has('adapt') ? params.get('adapt') !== '0' : !SOURCE || thr
 /** `?signals`: compares the expression signals from blendshapes and from the geometry, live. */
 const SIGNALS = params.has('signals')
 /**
- * `?backend=CPU|GPU` forces the tracker's backend; `?backend=measure` forgets the backend measured before on this
- * device (spec §16.4), so that the benchmark runs again. Default: the cached choice, else measured.
+ * `?backend=litert|GPU|CPU` forces the tracker's backend (our LiteRT.js pipeline in a worker, MediaPipe's GPU or CPU
+ * delegate on the main thread); `?backend=measure` forgets the backend measured before on this device (spec §16.4),
+ * so that the benchmark runs again. Default: the cached choice, else measured.
  */
 const BACKEND = params.get('backend') ?? undefined
+/** LiteRT.js tracker fallbacks, to test them: `?crop=canvas` (2D-canvas crops), `?transfer=bitmap` (`ImageBitmap`). */
+const LITERT: LiteRtTrackerOptions = {
+  ...(params.get('crop') === 'canvas' ? { crop: 'canvas' } : {}),
+  ...(params.get('transfer') === 'bitmap' ? { transfer: 'bitmap' } : {}),
+}
 if (BACKEND === 'measure') {
   try {
     for (const key of Object.keys(localStorage)) if (key.startsWith(BACKEND_STORE_PREFIX)) localStorage.removeItem(key)
@@ -71,7 +91,7 @@ const engine = createEngine({
   canvas,
   assetsBaseUrl: new URL('./', document.baseURI).href,
   maxFaces: MAX_FACES,
-  plugins: [playgroundPlugin, throttlePlugin(throttle), ...(SIGNALS ? [perf.signalsPlugin] : [])],
+  plugins: [playgroundPlugin, throttlePlugin(throttle, createDefaultFaceTracker({ liteRt: LITERT })), ...(SIGNALS ? [perf.signalsPlugin] : [])],
   adaptation: ADAPT,
   ...(BACKEND && BACKEND !== 'measure' ? { trackerBackend: BACKEND } : {}),
   ...(SEED === undefined ? {} : { seed: SEED }),

@@ -1,6 +1,7 @@
 # Face tracking in a worker or on the main thread (#6)
 
-Status: **accepted for mid-range Android, provisional elsewhere** (2026-11-21). An iPhone (WebGL on
+Status: **accepted for mid-range Android, provisional elsewhere** (2026-11-21); **in the engine** since #165 (the
+built-in tracker, see [`face-runtime.md`](face-runtime.md#in-the-engine-165)). An iPhone (WebGL on
 `OffscreenCanvas` in workers, Safari 17+) and a high-end Android phone still have to confirm it (#95).
 
 ## Question

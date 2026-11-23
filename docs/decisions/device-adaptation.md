@@ -57,12 +57,13 @@ the engine yet.
 1. Blendshapes, unless an enabled filter sets `requires.blendshapes`. Bindings take their `default`, scripts get no
    `blendshapes`, expression events come from the landmark geometry (below). The MediaPipe tracker keeps computing
    them: switching them needs a graph rebuild (`setOptions`) that stalled the main thread for about a second on the
-   desktop, for no measurable gain (#83: 35.6 against 35.7 ms on the CPU delegate). Our LiteRT.js tracker will skip
-   the model.
+   desktop, for no measurable gain (#83: 35.6 against 35.7 ms on the CPU delegate). The LiteRT.js tracker skips the
+   model (≈ 1–6 ms).
 2. Extra faces, when `maxFaces` > 1: the tracker looks for the faces tracked at that moment (at least one).
    MediaPipe: `numFaces` through `setOptions` (one stall per transition, rare thanks to the hysteresis).
 3. Analysis resolution: the frame is drawn at half size into a canvas before tracking (landmarks are normalized, so
-   nothing else changes). Its gain with MediaPipe is not measured on phones yet.
+   nothing else changes). Its gain with MediaPipe is not measured on phones yet. The LiteRT.js tracker ignores it (its
+   crops come from the full frame on the GPU): the governor then measures no gain.
 
 Face filters are **suspended** while hidden (`FilterHandle.suspended`): not drawn, no events, no script calls;
 tracking keeps running. Filters without face tracking keep rendering. `engine.on('performance')` fires at each change
@@ -111,19 +112,30 @@ engine page shows both sources side by side (`/engine.html?signals`) to check th
 
 ## Backend benchmark (spec §16.4)
 
-Built-in MediaPipe tracker: without a cached choice, it starts on the GPU delegate (with the CPU as fallback) and, on
-the first frames of a **live** source, opens the CPU delegate too; the two take turns on successive frames, 3 results
-each left out, then 12 each measured (the synchronous `detect` call). The lower median wins, on frames with a face
-when each backend has at least 6 of them. The loser is closed. During the benchmark (≈ 1–2 s at 15–30 Hz) the
+Built-in tracker (`defaultFaceTracker`, #165): three backends, our LiteRT.js pipeline in a worker (`LiteRT`) and
+MediaPipe's `GPU` and `CPU` delegates on the main thread (only MediaPipe with `maxFaces` > 1: LiteRT.js tracks one
+face). Without a cached choice it starts on LiteRT.js (MediaPipe GPU, then CPU, if it cannot start) and, on the first
+frames of a **live** source, opens the others; then each backend runs on consecutive frames, one after the other,
+3 results left out, then 12 measured (time from the call to its result). The lowest median wins, on frames with a face
+when each backend has at least 6 of them; MediaPipe's medians are multiplied by `MAIN_THREAD_WEIGHT` (1.15) for the
+decision, since its time is also taken from rendering. The others are closed. During the benchmark (≈ 2 s) the
 governor waits. A file source stops it (its results must not depend on timing); it runs again on the next live
-source.
+source. A tracker that breaks while running (the worker died) is replaced by the next one that opens.
 
-Cache: `localStorage`, key `ouaf:tracker-backend:<engine version>:<tracker id>`, value `{ backend, measuredMs,
-userAgent, at }`; ignored when the browser's user agent changed. Never transmitted (§15, `docs/privacy.md`).
-`EngineOptions.trackerBackend` forces a backend.
+Measured one after the other rather than in turns: in turns, MediaPipe's GPU delegate left work on the GPU that the
+worker's crops waited for, and the worker lost its eager scheduling (LiteRT.js measured 45–49 ms per result instead of
+17–20 on the desktop). The trade-off: a change of content or load during the 2 s affects the backends unequally (on
+`pesquet-talk` LiteRT.js is measured on the first second, without a face, with the detector on every frame).
+
+Cache: `localStorage`, key `ouaf:tracker-backend:<engine version>:<tracker id>` (`face` for the built-in tracker),
+value `{ backend, measuredMs, userAgent, at }`; ignored when the browser's user agent changed. Never transmitted (§15,
+`docs/privacy.md`). `EngineOptions.trackerBackend` forces a backend (`litert`, `GPU`, `CPU`, any case; on
+`/engine.html`: `?backend=`).
 
 Headless Chromium with a software GPU (SwiftShader), desktop: GPU 65–80 ms, CPU 20–23 ms per frame → CPU. The
-Redmi Note 11S measured by hand in #83 (MediaPipe: GPU ≈ 134 ms, CPU ≈ 67 ms) should also pick the CPU.
+Redmi Note 11S measured by hand in #83 (MediaPipe: GPU ≈ 134 ms, CPU ≈ 67 ms) should also pick the CPU among
+MediaPipe's delegates, and LiteRT.js in a worker (≈ 55–70 ms per result in #83's W8 runs) overall. Desktop (#165,
+`pesquet-talk`): LiteRT 32–48, GPU 44–52, CPU 17–20 ms → MediaPipe CPU.
 
 ## Frame budget (#34)
 

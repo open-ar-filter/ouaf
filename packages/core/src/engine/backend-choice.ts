@@ -65,6 +65,12 @@ export interface BenchmarkOptions {
   warmup?: number
   /** Results measured per backend after the warm-up. Default 12. */
   samples?: number
+  /**
+   * `alternate` (default): the backends take turns on successive frames, so that a change of load affects them alike.
+   * `blocks`: each backend runs its warm-up and samples on consecutive frames, one backend after the other, for
+   * backends that slow down the next one (work left on the GPU).
+   */
+  order?: 'alternate' | 'blocks'
 }
 
 /**
@@ -76,6 +82,7 @@ export class BackendBenchmark {
   readonly candidates: readonly string[]
   readonly #warmup: number
   readonly #samples: number
+  readonly #blocks: boolean
   readonly #all = new Map<string, number[]>()
   readonly #faces = new Map<string, number[]>()
   readonly #seen = new Map<string, number>()
@@ -86,6 +93,7 @@ export class BackendBenchmark {
     this.candidates = candidates
     this.#warmup = options.warmup ?? 3
     this.#samples = options.samples ?? 12
+    this.#blocks = options.order === 'blocks'
     for (const c of candidates) {
       this.#all.set(c, [])
       this.#faces.set(c, [])
@@ -93,9 +101,10 @@ export class BackendBenchmark {
     }
   }
 
-  /** The backend whose turn it is (round robin over the candidates still short of samples). */
+  /** The backend whose turn it is (round robin over the candidates still short of samples; the first of them in blocks). */
   get next(): string {
     const open = this.candidates.filter((c) => this.#all.get(c)!.length < this.#samples)
+    if (this.#blocks && open.length > 0) return open[0]!
     const list = open.length > 0 ? open : this.candidates
     return list[this.#turn++ % list.length]!
   }

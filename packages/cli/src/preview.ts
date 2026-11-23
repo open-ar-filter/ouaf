@@ -162,16 +162,20 @@ async function launch(chromium: Chromium): Promise<Browser> {
 
 const here = dirname(fileURLToPath(import.meta.url))
 
-/** Bundles the preview page and `@ouaf/core` into ES modules, in memory: file name → code. */
+/**
+ * Bundles the preview page and `@ouaf/core` into ES modules, in memory: file name → code. The face tracker's worker
+ * (`@ouaf/core/face-worker`) is a second entry, `face-worker.js`: Rolldown does not emit workers by itself.
+ */
 export async function bundlePage(): Promise<Map<string, string>> {
+  const core = createRequire(createRequire(import.meta.url).resolve('@ouaf/core'))
   const build = await rolldown({
-    input: join(here, 'preview/page.ts'),
+    input: { page: join(here, 'preview/page.ts'), 'face-worker': core.resolve('@ouaf/core/face-worker') },
     platform: 'browser',
     transform: { target: 'es2023' },
     onLog: () => {},
   })
   try {
-    const { output } = await build.generate({ format: 'esm', entryFileNames: 'page.js', chunkFileNames: '[name]-[hash].js' })
+    const { output } = await build.generate({ format: 'esm', entryFileNames: '[name].js', chunkFileNames: '[name]-[hash].js' })
     return new Map(output.filter((o) => o.type === 'chunk').map((o) => [o.fileName, o.code]))
   } finally {
     await build.close()
@@ -214,7 +218,8 @@ interface Mount {
 
 /**
  * The engine's self-hosted files under its `assetsBaseUrl` (the page's origin), laid out as the playground serves
- * them (apps/playground/vite.config.ts): MediaPipe's wasm, the Draco decoder, the built-in fonts and LUTs, the model.
+ * them (apps/playground/vite.config.ts): MediaPipe's and LiteRT.js's wasm, the Draco decoder, the built-in fonts and
+ * LUTs, the models.
  */
 function engineMounts(modelsDir: string): Mount[] {
   // Resolved from @ouaf/core, whose dependencies they are.
@@ -223,6 +228,7 @@ function engineMounts(modelsDir: string): Mount[] {
   const builtins = resolve(dirOf('@ouaf/builtins'), '../assets')
   return [
     { prefix: '/mediapipe/wasm/', dir: dirOf('@mediapipe/tasks-vision/vision_wasm_internal.wasm'), files: /^vision_wasm(_module)?_internal\.(js|wasm)$/ },
+    { prefix: '/litert/wasm/', dir: dirOf('@litertjs/core/wasm/litert_wasm_internal.wasm'), files: /^litert_wasm(_compat)?_internal\.(js|wasm)$/ },
     { prefix: '/draco/', dir: dirOf('three/examples/jsm/libs/draco/gltf/draco_decoder.wasm'), files: /^draco_(wasm_wrapper\.js|decoder\.wasm)$/ },
     { prefix: '/builtins/fonts/', dir: join(builtins, 'fonts'), files: /^[\w-]+\.woff2$/ },
     { prefix: '/builtins/luts/', dir: join(builtins, 'luts'), files: /^[\w-]+\.cube$/ },

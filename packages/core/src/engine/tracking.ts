@@ -58,14 +58,24 @@ export class TrackingHub {
   /** Results completed before this time are left out of the rate (`restartRate`). */
   #rateFrom = -Infinity
   #results = 0
+  /** A live frame came while a call was in flight (eager trackers): submitted again once the call completes. */
+  #missed: TrackerInput | undefined
+  #missedNow = 0
+  #missedTime = 0
   #onError: (error: unknown) => void
   #onResult = (): void => {
     this.#inflight = undefined
     this.#complete()
+    const input = this.#missed
+    if (input) {
+      this.#missed = undefined
+      this.submit(input, this.#missedNow, this.#missedTime)
+    }
   }
   #onFailure = (error: unknown): void => {
     this.#inflight = undefined
     this.#busy = false
+    this.#missed = undefined
     this.#onError(error)
   }
 
@@ -222,11 +232,23 @@ export class TrackingHub {
     }
   }
 
-  /** Submits the current frame when tracking is needed and the tracker is idle. Allocation-free for sync trackers. */
+  /**
+   * Submits the current frame when tracking is needed and the tracker is idle; with an eager tracker, a frame that
+   * comes while it is busy is submitted as soon as the call completes (`FrameTracker.eager`). Allocation-free for
+   * sync trackers.
+   */
   submit(input: TrackerInput, now: number, mediaTime: number): void {
     this.#lastNow = now
     const tracker = this.#tracker
-    if (!this.#needed || !tracker || this.#busy) return
+    if (!this.#needed || !tracker) return
+    if (this.#busy) {
+      if (this.#inflight && tracker.eager) {
+        this.#missed = input
+        this.#missedNow = now
+        this.#missedTime = mediaTime
+      }
+      return
+    }
     // Live frames: the tracker may measure its backends on them (spec §16.4), once.
     if (!this.#benchmarked) {
       this.#benchmarked = true
@@ -286,6 +308,7 @@ export class TrackingHub {
   /** Forgets the current result (new source): layers see no face until the next one; a call in flight is dropped. */
   clear(): void {
     this.#generation++
+    this.#missed = undefined
     this.#front.count = 0
     this.#results++
     // A benchmark aborted by a file source may run on the next live one (`FrameTracker.benchmark` runs it once).

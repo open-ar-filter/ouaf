@@ -98,6 +98,13 @@ export interface FrameTracker {
   benchmark?(): void
   /** A benchmark is running: results come from several backends and the tracking rate is not judged meanwhile. */
   readonly measuring?: boolean
+  /**
+   * Eager scheduling (docs/decisions/tracking-worker.md): when a frame of a live source came while a call was in
+   * flight, the engine calls `track` again as soon as that call completes, on the newest frame, instead of waiting for
+   * the next frame. For asynchronous trackers that do not block the main thread (a worker): otherwise a call that
+   * spans a frame tick misses it, and the rate snaps to 15 Hz, 10 Hz… Read on every frame. Default: false.
+   */
+  readonly eager?: boolean
   dispose(): void
 }
 

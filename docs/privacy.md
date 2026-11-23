@@ -3,7 +3,8 @@
 Ouaf processes the camera, the microphone and the face data **on the device**. The engine itself never sends images,
 landmarks, blendshapes or any other data anywhere, and filters run without network access (spec §15).
 
-There is one exception, coming from a third-party dependency, that hosts embedding `@ouaf/core` should know about.
+There is one exception, coming from a third-party dependency (MediaPipe, one of the face tracker's backends), that
+hosts embedding `@ouaf/core` should know about.
 
 ## Photos, videos and streams
 
@@ -36,10 +37,25 @@ allow what the sandbox needs: inline scripts and `blob:` workers for frames (`sc
 `worker-src blob:`, or no `script-src` / `worker-src` at all). Otherwise the script does not start: the engine
 emits an `error` (code `script`) and the rest of the filter keeps working.
 
+## Face tracking backends
+
+The built-in face tracker chooses between two runtimes by measuring them on the device (spec §16.4,
+[`device-adaptation.md`](decisions/device-adaptation.md#backend-benchmark-spec-164)):
+
+- **our own pipeline on [LiteRT.js](https://www.npmjs.com/package/@litertjs/core)** (`@litertjs/core`, 2.6.0), in a
+  worker: it loads `litert/wasm/litert_wasm_internal.{js,wasm}` (or the `_compat_` build where relaxed SIMD is missing)
+  and `models/face_detector.tflite`, `models/face_landmarks_detector.tflite`, `models/face_blendshapes.tflite` from
+  `assetsBaseUrl`, and sends nothing anywhere (checked by `e2e/litert-tracker.spec.ts`: no request leaves the page's
+  origin);
+- **MediaPipe Tasks**, whose metrics are described below. The built-in tracker loads it only when it is measured (the
+  first start on a device: about two seconds, with live sources), when it is the backend chosen, or as the fallback
+  where the LiteRT.js worker cannot run. A host that wants no MediaPipe at all forces `trackerBackend: 'litert'`
+  (MediaPipe then only loads if the worker cannot start) or installs `createLiteRtFaceTracker()` as its tracker.
+
 ## MediaPipe usage metrics
 
-Face tracking uses [MediaPipe Tasks](https://www.npmjs.com/package/@mediapipe/tasks-vision) (`@mediapipe/tasks-vision`,
-1.2.x). MediaPipe **always** sends usage metrics to Google, and offers no option to turn this off.
+[MediaPipe Tasks](https://www.npmjs.com/package/@mediapipe/tasks-vision) (`@mediapipe/tasks-vision`, 1.2.x) **always**
+sends usage metrics to Google, and offers no option to turn this off.
 
 | | |
 |---|---|
@@ -81,6 +97,10 @@ Notes:
 - **Workers**: a worker loaded from a URL does not get the page's `<meta>` policy; only the `Content-Security-Policy`
   header of the worker script's own response applies to it. If MediaPipe runs in a worker, send the header on the
   worker script (simplest: on every response). A worker created from a `blob:` URL inherits the page's policy.
+- The LiteRT.js tracker's worker fetches its wasm and models itself (`connect-src` of the worker script's response),
+  compiles WebAssembly (`'wasm-unsafe-eval'`) and evaluates LiteRT.js's Emscripten script with an indirect `eval`
+  (LiteRT.js 2.6.0 loads it with `importScripts`, which module workers do not have): a `script-src` on the worker
+  script's response must allow `'unsafe-eval'`. Without it the tracker falls back to MediaPipe, with a warning.
 
 ### Checking
 

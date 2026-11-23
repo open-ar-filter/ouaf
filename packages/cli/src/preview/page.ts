@@ -11,7 +11,7 @@
  *
  * Browser code only: no Node API. Talks to Node through `window.ouafPreview` (`protocol.ts`).
  */
-import { OfflineVideoSource, createEngine, type EngineStats, type FrameImage } from '@ouaf/core'
+import { OfflineVideoSource, createDefaultFaceTracker, createEngine, type EngineStats, type FrameImage, type OuafPlugin } from '@ouaf/core'
 import type { PreviewJob, PreviewPageOutcome, PreviewTiming } from './protocol.ts'
 
 /** Media time step between the copies of a still image (s). */
@@ -26,6 +26,16 @@ const CHANGED = 24
 const EPS = 1e-4
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** The built-in face tracker, its LiteRT.js worker loaded from the bundle's own entry (`face-worker.js`, preview.ts). */
+const facePlugin: OuafPlugin = {
+  name: 'preview-face',
+  version: '1.0.0',
+  setup(api) {
+    const createWorker = () => new Worker(new URL('./face-worker.js', document.baseURI), { type: 'module', name: 'ouaf-face-tracker' })
+    api.registerTracker(createDefaultFaceTracker({ liteRt: { createWorker } }))
+  },
+}
 
 function timing(values: number[]): PreviewTiming {
   const sorted = [...values].sort((a, b) => a - b)
@@ -109,6 +119,7 @@ async function render(job: PreviewJob): Promise<PreviewPageOutcome> {
     canvas,
     assetsBaseUrl: new URL('./', document.baseURI).href,
     maxFaces: job.maxFaces,
+    plugins: [facePlugin],
     ...(job.seed === undefined ? {} : { seed: job.seed }),
   })
   let stats: EngineStats | undefined
