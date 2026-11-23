@@ -17,7 +17,7 @@ type Sizes = Record<Layer, { w: number; h: number }>
 async function sizes(page: Page): Promise<Sizes> {
   const png = await page.locator('#canvas').screenshot()
   return page.evaluate(async (bytes) => {
-    const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }))
+    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))]))
     const c = new OffscreenCanvas(bitmap.width, bitmap.height)
     const ctx = c.getContext('2d')!
     ctx.drawImage(bitmap, 0, 0)
@@ -41,7 +41,7 @@ async function sizes(page: Page): Promise<Sizes> {
     }
     const size = (k: ReturnType<typeof box>) => (k.x1 < k.x0 ? { w: 0, h: 0 } : { w: k.x1 - k.x0 + 1, h: k.y1 - k.y0 + 1 })
     return { text: size(boxes.text), sticker: size(boxes.sticker), canvas: size(boxes.canvas) }
-  }, [...png])
+  }, png.toString('base64'))
 }
 
 const send = (page: Page, name: string, data?: unknown) =>
