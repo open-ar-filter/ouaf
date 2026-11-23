@@ -28,8 +28,11 @@ test('texts in front of stickers on the same anchor stay in front while the head
     const out: Array<Counts & { t: number }> = []
     const scratch = new OffscreenCanvas(1, 1)
     const ctx = scratch.getContext('2d', { willReadFrequently: true })!
-    const end = performance.now() + 6000 // the 2.4 s clip loops: more than two turns
-    while (performance.now() < end) {
+    // At least 6 s (the 2.4 s clip loops: more than two turns) and 40 frames with the bubbles shown, whatever the
+    // machine's frame rate (a slow CI runner renders few frames in 6 s), within 30 s.
+    const start = performance.now()
+    let shownFrames = 0
+    while (performance.now() - start < 30_000 && (performance.now() - start < 6000 || shownFrames < 40)) {
       await new Promise((r) => requestAnimationFrame(r))
       const w = (scratch.width = canvas.width / 4)
       const h = (scratch.height = canvas.height / 4)
@@ -44,6 +47,7 @@ test('texts in front of stickers on the same anchor stay in front while the head
         else if (g > 200 && r < 60 && b < 60) green++
         else if (b > 200 && r < 60 && g < 60) blue++
       }
+      if (red > 600) shownFrames++
       out.push({ red, green, blue, t: video.currentTime })
     }
     return out
