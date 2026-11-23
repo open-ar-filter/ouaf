@@ -108,6 +108,31 @@ describe('script host', () => {
     s.host.endFrame(0.033, s.source) // nothing is sent any more
   })
 
+  it('gives the script another period when the watchdog fires late (this thread was busy), not when it fires on time', async () => {
+    let fire: (() => void) | undefined
+    let clock = 0
+    const s = hostSetup(`export default { setup(f) {} }`, {
+      now: () => clock,
+      setTimeout: (fn) => ((fire = fn), 1),
+      clearTimeout: () => (fire = undefined),
+    })
+    await s.host.start({}, 0)
+    await idle(s.host)
+    s.host.beginFrame()
+    s.conn().port.onmessage = null // the frame never gets an answer
+    s.host.endFrame(0, s.source)
+    // A long task on this thread: the timer fires 2 s after it was armed.
+    clock += 2000
+    fire!()
+    expect(s.errors).toEqual([])
+    expect(s.host.state).toBe('running')
+    // Re-armed; this time it fires on time: the script is stopped.
+    clock += 1000
+    fire!()
+    expect(s.errors.map((e) => e.code)).toEqual(['SCRIPT_STOPPED'])
+    expect(s.host.state).toBe('stopped')
+  })
+
   it('sends a new seed with the next frame only, unfolds uniforms and routes play() to the layer', async () => {
     const played: Array<[number, number | undefined, string]> = []
     const s = hostSetup(`export default { setup(f) { f.layer('label').set({ uniforms: { amount: 0.5 } }); f.layer('label').play('wave') } }`, {

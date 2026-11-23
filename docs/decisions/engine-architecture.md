@@ -187,7 +187,8 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
   `import()` calls in code. It implements `f`, timers in media time, events in order, per-face state.
 - **Host** (`host.ts`): one frame in flight; answers are applied at the start of the next rendered frame
   (`beginFrame`, before the layers update), frames are sent after rendering (`endFrame`); 1 s watchdog
-  (`OuafError('SCRIPT_STOPPED')`); `f.emit` limits.
+  (`OuafError('SCRIPT_STOPPED')`), re-armed instead when its timer fires more than 250 ms late (the main thread was
+  busy, so the answer may be queued behind the timer); `f.emit` limits.
 - **Script values** (`overrides.ts`): in a scripted filter, every bindable property compiled with a `name`
   (`BindableProperty.name`) is wrapped by the bindings compiler (`BindingEnv.overrides`), so `.set()` and
   `.animate()` reach every layer type without code in the layers. Values are per face id or for every instance;
