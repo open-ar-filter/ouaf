@@ -5,6 +5,70 @@ Note 11S, Redmi Note 14 Pro 5G) ran the W runs of the
 [protocol](phase0-measurement-protocol.md#83--face-models-on-another-runtime): our own pipeline on LiteRT.js, **in a
 worker, single-threaded, crops on the GPU**, tracks at ≈ 15–18 Hz while the page keeps rendering at 29 fps, against
 ≈ 8–10 Hz for MediaPipe tasks-vision. An iPhone and a high-end Android phone still have to confirm it (#95).
+**In the engine** since #165, one face for now: see [In the engine](#in-the-engine-165).
+
+## In the engine (#165)
+
+`@ouaf/core` runs the pipeline of this spike in production form (`packages/core/src/litert/`): `face.worker.ts` (the
+worker: LiteRT.js single-threaded wasm, WebGL2 crops on an `OffscreenCanvas` with a 2D-canvas fallback, the geometry
+of `geometry.ts`), `tracker.ts` (page side: `VideoFrame` transfer, `ImageBitmap` where missing, result buffers
+transferred back and forth, the transformation matrix fitted to the landmarks with `estimateFacePose`, MediaPipe's
+geometry pipeline). The built-in tracker (`defaultFaceTracker`, `engine/builtin.ts`) chooses between it and MediaPipe's
+GPU and CPU delegates by measuring them ([`device-adaptation.md`](device-adaptation.md#backend-benchmark-spec-164)).
+
+- **Eager scheduling** (`FrameTracker.eager`, `TrackingHub`): a live frame that comes while the worker is busy is
+  submitted as soon as the result arrives. Without it a run that spans a frame tick misses it: 15.8 Hz on the desktop
+  below, 28 Hz with it.
+- **A frame queued in the worker** (`FrameTracker.offer`): that frame is also posted at once, and the worker starts
+  it as soon as its run ends (one frame waiting at most; a newer one replaces it). Without it the worker waited for
+  its result to reach the page and the next frame to come back: ≈ 25–30 ms on a busy main thread (desktop, main thread
+  throttled 4× over CDP: 13–14.5 Hz without the queue, 15–16.4 Hz with it). The next call takes that frame's result.
+- **Camera frames read in the worker** (`frames: 'track'`, default): from the camera's track through a
+  `MediaStreamTrackProcessor` whose stream is transferred to the worker, where it exists (Chromium) and the frames
+  match the `<video>` (same size, no rotation metadata; otherwise back to the `<video>` with a warning). Why: turning
+  a `<video>`'s frame into a texture in the worker (`texImage2D(VideoFrame)`) waits for the page's main thread: for a
+  hardware-decoded clip, 17 ms on an idle desktop, 55–63 ms with the main thread throttled 4× (the readback after it:
+  2 ms). With Chromium's fake camera both paths upload in ≈ 1 ms and track at 30 Hz even throttled 4×: what the
+  phone's camera costs is to be measured (`?frames=element` compares).
+- **Per-step timings** (`FrameTracker.timings`, `EngineStats.trackerTimings`, `pipelineMs`, a line of the engine
+  page's panel): capture, hand-off to the worker, queue, worker idle, run (detect, upload, crop, landmarks,
+  blendshapes), hand-off back, result, total; and the period (1000 / Hz) against the pipeline time.
+- **Redmi Note 11S with these timings** (camera, `glasses`, blendshapes dropped; battery at 3 %, display 14–16 fps, so
+  absolute numbers are pessimistic): 13.2–15.2 Hz, period 66–76 ms = the worker's run, 56–73 ms: crop 14.5–23 ms
+  (upload 0.1–0.2 ms: the readback waits for the GPU) and landmarks 38–50 ms; blendshapes 6.8 ms when on. 2D-canvas
+  crops are slower (crop 38–41 ms); the camera track and the `<video>`'s `VideoFrame` give the same rate.
+- **Async readback** (`readback: 'async'`, `?readback=async`, opt-in until the phone confirms it): the crop of
+  frame N is read back into a pixel buffer (PBO and fence) while the landmark model runs on frame N − 1, so that the
+  worker does not wait for the GPU. Results are one frame late (the worker says which frame a result describes, and
+  the page gives its media time), and frame N's ROI is extrapolated from the two previous results. On the desktop the
+  readback is 1–2 ms and the time is in the frame's upload (`texImage2D(VideoFrame)` 47–60 ms for a clip, ≈ 22 ms for
+  the fake camera, main thread throttled 4×), which it does not hide.
+- **Loading LiteRT.js in a module worker**: one shim left of the three. Its loader runs the Emscripten script with
+  `importScripts`, which throws in module workers: the worker fetches the script (the build LiteRT.js would pick) and
+  replaces `importScripts` during the load by an indirect `eval` of it; `Module.locateFile` (Emscripten's own hook)
+  points at the `.wasm`. No pthreads, so no `Worker` wrapper. A classic worker would need no shim, but bundlers
+  (Vite in dev) only serve module workers with imports.
+- **One face**: with `maxFaces` > 1 only MediaPipe is a candidate (multi-face is the next step of #165).
+- Blendshapes are skipped while the engine does not want them (governor, spec §16.2; checked by a browser test: the
+  model's time falls to 0); the analysis resolution is ignored (crops come from the full frame on the GPU), so the
+  tracker tells the governor not to drop it (`FrameTracker.sheds`).
+- LiteRT.js logs "Failed to create default WebGPU device" in the worker where there is no WebGPU adapter: its
+  environment always tries one; harmless.
+
+Desktop (headless Chromium 159, Linux, NVIDIA RTX 5080 laptop, clip `pesquet-closeup` / `pesquet-talk`, 2026-11-23):
+
+| | per result (ms, median) | tracking (engine) | main-thread tracking per frame |
+|---|---|---|---|
+| LiteRT.js worker, WebGL2 crops (crop 9, landmarks 6–9, blendshapes 1.2) | 16.6 standalone, 20–33 in the engine | 26–28 Hz | 0.01 ms |
+| … without eager scheduling | | 15.8 Hz | 0.02 ms |
+| … 2D-canvas crops | | 29 Hz | 0.04 ms |
+| MediaPipe CPU | 17–20 | | 17–20 ms |
+| MediaPipe GPU | 43–52 | | 43–52 ms |
+
+Same results as MediaPipe (`e2e/litert-tracker.spec.ts`, every third frame of four clips, VIDEO mode): median
+landmark distance 0.6–1.2 % of the face size (90th percentile 1.0–2.5 %), blendshapes 0.01–0.02 mean |Δ|, the matrix
+within 1.1–1.8° and 0.5–0.9 cm (median), and both find a face on 90–100 % of the same frames. `estimateFacePose` on
+MediaPipe's own landmarks gives MediaPipe's matrix exactly (≤ 0.01 cm).
 
 ## Question
 

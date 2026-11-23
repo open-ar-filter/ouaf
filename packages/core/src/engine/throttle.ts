@@ -11,7 +11,7 @@
  * ```
  */
 import type { FaceTrackerImpl, FrameTracker, OuafPlugin, TrackerConfig } from './plugin.ts'
-import { mediaPipeFaceTracker } from './builtin.ts'
+import { defaultFaceTracker } from './builtin.ts'
 
 export interface TrackingThrottle {
   /** Simulated time per result (ms) with every capability on; 0 or less: no throttling. Read on every frame. */
@@ -69,6 +69,20 @@ export function throttleTracker(impl: FaceTrackerImpl, throttle: TrackingThrottl
         get measuring() {
           return inner.measuring
         },
+        // Throttled results come at the simulated pace, on frame ticks (as a main-thread tracker's would).
+        get eager() {
+          return !(throttle.ms > 0) && (inner.eager ?? false)
+        },
+        offer(input, timestampMs, mediaTime) {
+          if (!(throttle.ms > 0)) inner.offer?.(input, timestampMs, mediaTime)
+        },
+        get timings() {
+          return inner.timings
+        },
+        // Throttled, every capability has a simulated cost.
+        get sheds() {
+          return throttle.ms > 0 ? undefined : inner.sheds
+        },
         configure(next) {
           current = { ...next }
           inner.configure(next)
@@ -81,7 +95,7 @@ export function throttleTracker(impl: FaceTrackerImpl, throttle: TrackingThrottl
 }
 
 /** A plugin that replaces the built-in face tracker with its throttled version (install it at engine creation). */
-export function throttlePlugin(throttle: TrackingThrottle, impl: FaceTrackerImpl = mediaPipeFaceTracker): OuafPlugin {
+export function throttlePlugin(throttle: TrackingThrottle, impl: FaceTrackerImpl = defaultFaceTracker): OuafPlugin {
   return {
     name: 'tracking-throttle',
     version: '1.0.0',

@@ -4,7 +4,8 @@
   "description": "Ouaf (Open Universal AR Filter) engine: loads and renders Ouaf v1 filters in the browser",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./face-worker": "./src/litert/face.worker.ts"
   },
   "license": "Apache-2.0",
   "repository": {
@@ -13,6 +14,7 @@
     "directory": "packages/core"
   },
   "dependencies": {
+    "@litertjs/core": "2.6.0",
     "@mediapipe/tasks-vision": "1.2.3",
     "@ouaf/builtins": "0.1.0",
     "@ouaf/spec": "0.1.0",

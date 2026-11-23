@@ -2,7 +2,21 @@
  * Engine page (`/engine.html`): drives `@ouaf/core`'s public API, the way a host would. Used by the browser tests
  * (`window.ouaf`) and by the layer-type work as a harness, until the playground app (#36) is rebuilt on the engine.
  */
-import { BACKEND_STORE_PREFIX, CameraSource, VideoFileSource, createEngine, memorySource, throttlePlugin, type Engine, type EngineStats, type PerformanceEvent, type TrackingThrottle, type VideoSource } from '@ouaf/core'
+import {
+  BACKEND_STORE_PREFIX,
+  CameraSource,
+  VideoFileSource,
+  createDefaultFaceTracker,
+  createEngine,
+  memorySource,
+  throttlePlugin,
+  type Engine,
+  type EngineStats,
+  type LiteRtTrackerOptions,
+  type PerformanceEvent,
+  type TrackingThrottle,
+  type VideoSource,
+} from '@ouaf/core'
 import * as core from '@ouaf/core'
 import { renderDemos } from './demos.ts'
 import { renderParams } from './params-panel.ts'
@@ -53,10 +67,24 @@ const ADAPT = params.has('adapt') ? params.get('adapt') !== '0' : !SOURCE || thr
 /** `?signals`: compares the expression signals from blendshapes and from the geometry, live. */
 const SIGNALS = params.has('signals')
 /**
- * `?backend=CPU|GPU` forces the tracker's backend; `?backend=measure` forgets the backend measured before on this
- * device (spec §16.4), so that the benchmark runs again. Default: the cached choice, else measured.
+ * `?backend=litert|GPU|CPU` forces the tracker's backend (our LiteRT.js pipeline in a worker, MediaPipe's GPU or CPU
+ * delegate on the main thread); `?backend=measure` forgets the backend measured before on this device (spec §16.4),
+ * so that the benchmark runs again. Default: the cached choice, else measured.
  */
 const BACKEND = params.get('backend') ?? undefined
+/**
+ * LiteRT.js tracker options, to test its fallbacks: `?crop=canvas` (2D-canvas crops), `?transfer=bitmap` (`ImageBitmap`),
+ * `?queue=0` (one frame at a time: no frame queued in the worker while it runs), `?frames=element` (camera frames
+ * captured from the `<video>`, not read from the track in the worker), `?readback=async` (WebGL2 crops read back while
+ * the landmark model runs on the previous frame: results one frame late).
+ */
+const LITERT: LiteRtTrackerOptions = {
+  ...(params.get('crop') === 'canvas' ? { crop: 'canvas' } : {}),
+  ...(params.get('transfer') === 'bitmap' ? { transfer: 'bitmap' } : {}),
+  ...(params.get('queue') === '0' ? { queue: false } : {}),
+  ...(params.get('frames') === 'element' ? { frames: 'element' } : {}),
+  ...(params.get('readback') === 'async' ? { readback: 'async' } : {}),
+}
 if (BACKEND === 'measure') {
   try {
     for (const key of Object.keys(localStorage)) if (key.startsWith(BACKEND_STORE_PREFIX)) localStorage.removeItem(key)
@@ -71,7 +99,7 @@ const engine = createEngine({
   canvas,
   assetsBaseUrl: new URL('./', document.baseURI).href,
   maxFaces: MAX_FACES,
-  plugins: [playgroundPlugin, throttlePlugin(throttle), ...(SIGNALS ? [perf.signalsPlugin] : [])],
+  plugins: [playgroundPlugin, throttlePlugin(throttle, createDefaultFaceTracker({ liteRt: LITERT })), ...(SIGNALS ? [perf.signalsPlugin] : [])],
   adaptation: ADAPT,
   ...(BACKEND && BACKEND !== 'measure' ? { trackerBackend: BACKEND } : {}),
   ...(SEED === undefined ? {} : { seed: SEED }),
@@ -111,21 +139,48 @@ engine.on('error', (e) => {
 })
 show('plugins', [...engine.plugins].map(([n, v]) => `${n}@${v}`).join(', '))
 
+/** How long a start step may take before the page says it is stuck (a camera still held by another tab or app). */
+const STEP_WARNING_MS = 10_000
+
 async function start(): Promise<void> {
   startButton.disabled = true
   let source: VideoSource
+  // Each step of the start is shown, and one that hangs says so: a camera that never opens otherwise left the page
+  // silently on "no tracker".
+  let step = ''
+  let since = 0
+  const begin = (name: string) => {
+    step = name
+    since = performance.now()
+    show('start', `${name}…`)
+  }
+  const watchdog = setInterval(() => {
+    const waited = performance.now() - since
+    if (step && waited > STEP_WARNING_MS) show('start', `${step}: no answer after ${Math.round(waited / 1000)} s (is the camera used by another tab or app? reload the page)`)
+  }, 1000)
   try {
+    begin(SOURCE ? `opening test-media/${SOURCE}.mp4` : 'opening the camera')
     source = SOURCE
       ? await VideoFileSource.open(new URL(`test-media/${SOURCE}.mp4`, document.baseURI).href, { video, mirror: params.get('mirror') === '1' })
       : await CameraSource.open({ facingMode: 'user', video })
+    begin('starting the engine on the source')
     await engine.setSource(source)
     show('source', SOURCE ? `test-media/${SOURCE}.mp4` : 'camera')
     // A folder URL, or a `.ouaf` package URL (`?filter=/filters/crown.ouaf`).
-    for (const url of FILTERS) await addFilter(url, url)
+    for (const url of FILTERS) {
+      begin(`loading the filter ${url} (and starting face tracking)`)
+      await addFilter(url, url)
+    }
+    step = ''
+    show('start', 'done')
   } catch (error) {
+    step = ''
+    show('start', `failed: ${error instanceof Error ? error.message : String(error)}`)
     hook.errors.push(String(error))
     show('error', error instanceof Error ? error.message : String(error))
     startButton.disabled = false
+  } finally {
+    clearInterval(watchdog)
   }
 }
 

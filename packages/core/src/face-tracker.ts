@@ -42,6 +42,8 @@ export interface FaceTrackerOptions {
   modelUrl: string
   /** Preferred delegate. Default: `'GPU'`, with automatic fallback to CPU. `'CPU'` skips the GPU attempt. */
   delegate?: Delegate
+  /** Fall back to the CPU delegate when the GPU one fails. Default: true; false rejects instead. */
+  cpuFallback?: boolean
   /**
    * Compute the 52 blendshapes (a second model run on every frame). Default: true. When false, `FaceFrame.blendshapes`
    * stays at 0; turn it off when no active filter uses expressions, to save time on slow devices.
@@ -124,18 +126,28 @@ export async function createFaceTrackerWith(options: FaceTrackerOptions, backend
   const model = await backend.loadModel(options.modelUrl)
 
   const open = async (delegate: Delegate): Promise<FaceTracker> => {
-    const landmarker = await backend.createLandmarker(
-      options.wasmBaseUrl,
-      {
-        baseOptions: { modelAssetBuffer: model, delegate },
-        runningMode: 'VIDEO',
-        numFaces: maxFaces,
-        outputFaceBlendshapes: options.blendshapes ?? true,
-        outputFacialTransformationMatrixes: true,
-        ...(options.canvas ? { canvas: options.canvas } : {}),
-      },
-      options.wasmLoader ?? 'classic',
-    )
+    // Our own canvas unless the host passes one, so that `dispose` releases MediaPipe's WebGL context at once rather
+    // than at garbage collection: the trackers closed after a benchmark must not keep GPU resources (#165).
+    const owned = options.canvas || typeof OffscreenCanvas !== 'function' ? undefined : new OffscreenCanvas(1, 1)
+    const canvas = options.canvas ?? owned
+    let landmarker: Landmarker
+    try {
+      landmarker = await backend.createLandmarker(
+        options.wasmBaseUrl,
+        {
+          baseOptions: { modelAssetBuffer: model, delegate },
+          runningMode: 'VIDEO',
+          numFaces: maxFaces,
+          outputFaceBlendshapes: options.blendshapes ?? true,
+          outputFacialTransformationMatrixes: true,
+          ...(canvas ? { canvas } : {}),
+        },
+        options.wasmLoader ?? 'classic',
+      )
+    } catch (err) {
+      loseContext(owned)
+      throw err
+    }
     try {
       // A GPU landmarker can be created and still fail on its first inference (missing WebGL features, driver
       // bugs): validate it now, while falling back is still possible. Also moves shader compilation out of the
@@ -143,15 +155,17 @@ export async function createFaceTrackerWith(options: FaceTrackerOptions, backend
       landmarker.detectForVideo(backend.warmupFrame(), WARMUP_TIMESTAMP_MS)
     } catch (err) {
       closeQuietly(landmarker)
+      loseContext(owned)
       throw err
     }
-    return new MediaPipeFaceTracker(landmarker, delegate, maxFaces, options.blendshapes ?? true, warn)
+    return new MediaPipeFaceTracker(landmarker, delegate, maxFaces, options.blendshapes ?? true, warn, owned)
   }
 
   if ((options.delegate ?? 'GPU') === 'GPU') {
     try {
       return await open('GPU')
     } catch (err) {
+      if (options.cpuFallback === false) throw err
       warn('GPU delegate unavailable, falling back to CPU face tracking.', err)
     }
   }
@@ -198,8 +212,19 @@ class MediaPipeFaceTracker implements FaceTracker {
   #numFaces: number
   #blendshapes: boolean
 
-  constructor(landmarker: Landmarker, delegate: Delegate, maxFaces: number, blendshapes: boolean, warn: (message: string, cause?: unknown) => void) {
+  /** The canvas of MediaPipe's WebGL context, when the tracker created it: its context is released on `dispose`. */
+  #canvas: OffscreenCanvas | undefined
+
+  constructor(
+    landmarker: Landmarker,
+    delegate: Delegate,
+    maxFaces: number,
+    blendshapes: boolean,
+    warn: (message: string, cause?: unknown) => void,
+    canvas?: OffscreenCanvas,
+  ) {
     this.#landmarker = landmarker
+    this.#canvas = canvas
     this.delegate = delegate
     this.maxFaces = maxFaces
     this.#numFaces = maxFaces
@@ -379,5 +404,18 @@ class MediaPipeFaceTracker implements FaceTracker {
     const landmarker = this.#landmarker
     this.#landmarker = undefined
     if (landmarker) closeQuietly(landmarker)
+    loseContext(this.#canvas)
+    this.#canvas = undefined
+  }
+}
+
+/** Releases the WebGL context MediaPipe created on `canvas` now (`WEBGL_lose_context`), if any. */
+function loseContext(canvas: OffscreenCanvas | undefined): void {
+  if (!canvas) return
+  try {
+    const gl = (canvas.getContext('webgl2') ?? canvas.getContext('webgl')) as WebGLRenderingContext | null
+    gl?.getExtension('WEBGL_lose_context')?.loseContext()
+  } catch {
+    // Already lost, or a 2D canvas: nothing to release.
   }
 }

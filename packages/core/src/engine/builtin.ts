@@ -8,6 +8,8 @@ import { createFaceTracker, trackerInputHeight, trackerInputWidth } from '../fac
 import type { Delegate, FaceFrame, FaceTracker, TrackerInput } from '../face.ts'
 import { BackendBenchmark, currentUserAgent, readStoredBackend, type StoredBackend } from './backend-choice.ts'
 import type { BackendInfo, FaceTrackerImpl, FrameTracker, OuafPlugin, TrackerConfig, TrackerEnv } from './plugin.ts'
+import { choosingFaceTracker, MAIN_THREAD_WEIGHT, type TrackerCandidate } from './tracker-choice.ts'
+import { openLiteRtTracker, type LiteRtFrameTracker, type LiteRtTrackerOptions } from '../litert/tracker.ts'
 import { canvasPlugin } from '../layers/canvas/index.ts'
 import { colorPlugin } from '../layers/color/index.ts'
 import { shaderPlugin } from '../layers/shader/index.ts'
@@ -19,9 +21,9 @@ import { warpPlugin } from '../layers/warp/index.ts'
 const DELEGATES: readonly Delegate[] = ['GPU', 'CPU']
 
 /**
- * Face tracker on MediaPipe tasks-vision, on the main thread (phase 0 tracker). PROVISIONAL: the default tracker
- * becomes our LiteRT.js pipeline in a worker (docs/decisions/face-runtime.md, tracking-worker.md); this one stays as
- * the fallback where the worker cannot run.
+ * Face tracker on MediaPipe tasks-vision alone, on the main thread (phase 0 tracker). The built-in tracker is
+ * `defaultFaceTracker`, which also runs our LiteRT.js pipeline in a worker (docs/decisions/face-runtime.md,
+ * tracking-worker.md) and keeps MediaPipe as a candidate and as the fallback.
  *
  * Backend (spec §16.4): the host's choice (`EngineOptions.trackerBackend`: `CPU` or `GPU`), else the one measured
  * before on this device and browser (local cache), else GPU first and, on the first frames of a live source, a
@@ -246,12 +248,69 @@ export class MediaPipeFrameTracker implements FrameTracker {
   }
 }
 
+/** Opens MediaPipe on one delegate, without falling back to the other, as a `FrameTracker` (no benchmark of its own). */
+async function openMediaPipe(delegate: Delegate, config: TrackerConfig, env: TrackerEnv): Promise<FrameTracker> {
+  const tracker = await createFaceTracker({
+    maxFaces: config.maxFaces,
+    wasmBaseUrl: new URL('mediapipe/wasm/', env.assetsBaseUrl).href,
+    modelUrl: new URL('models/face_landmarker.task', env.assetsBaseUrl).href,
+    // Always computed (see `mediaPipeFaceTracker`).
+    blendshapes: true,
+    delegate,
+    cpuFallback: false,
+    onWarning: env.warn,
+  })
+  return new MediaPipeFrameTracker(tracker, config, env, { name: delegate, source: 'only' })
+}
+
+export interface DefaultFaceTrackerOptions {
+  /** Options of the LiteRT.js tracker (crops, frame transfer), e.g. to test its fallbacks. */
+  liteRt?: LiteRtTrackerOptions
+}
+
+/**
+ * The built-in face tracker (spec §16.4, docs/decisions/face-runtime.md): our LiteRT.js pipeline in a worker
+ * (`LiteRT`), MediaPipe's GPU delegate (`GPU`) or its CPU delegate (`CPU`) on the main thread, whichever is the
+ * fastest on this device (MediaPipe must be 15 % faster than LiteRT.js to win: it also takes its time from rendering,
+ * `MAIN_THREAD_WEIGHT`). Forced by `EngineOptions.trackerBackend` (`litert`, `GPU`, `CPU`); else the cached choice;
+ * else LiteRT.js first, and on the first frames of a live source the three are measured and the fastest is kept and
+ * cached. LiteRT.js tracks one face: with `maxFaces` > 1 only MediaPipe is a candidate (multi-face: #165). MediaPipe
+ * is the fallback where the worker cannot run (no `Worker`, no `OffscreenCanvas`, worker failure).
+ *
+ * Files, under `assetsBaseUrl`: those of `mediaPipeFaceTracker`, and `litert/wasm/` and the `.tflite` models of
+ * `createLiteRtFaceTracker`.
+ */
+export function createDefaultFaceTracker(options: DefaultFaceTrackerOptions = {}): FaceTrackerImpl {
+  const liteRt: TrackerCandidate = {
+    name: 'LiteRT',
+    open: (config, env) => openLiteRtTracker(config, env, options.liteRt),
+    broken: (tracker) => (tracker as LiteRtFrameTracker).broken,
+  }
+  const mediaPipe = (delegate: Delegate): TrackerCandidate => ({
+    name: delegate,
+    open: (config, env) => openMediaPipe(delegate, config, env),
+    label: () => `MediaPipe ${delegate}, main thread`,
+    weight: MAIN_THREAD_WEIGHT,
+  })
+  return choosingFaceTracker({
+    id: 'face',
+    cost: { typicalMs: 15 },
+    candidates(config) {
+      const worker = typeof Worker === 'function' && typeof OffscreenCanvas === 'function'
+      return [...(worker && config.maxFaces === 1 ? [liteRt] : []), mediaPipe('GPU'), mediaPipe('CPU')]
+    },
+  })
+}
+
+/** The built-in face tracker with its default options (`createDefaultFaceTracker`). */
+export const defaultFaceTracker: FaceTrackerImpl = createDefaultFaceTracker()
+
 export const facePlugin: OuafPlugin = {
   name: 'face',
   version: '1.0.0',
   official: true,
   setup(api) {
-    api.registerTracker(mediaPipeFaceTracker)
+    api.registerTracker(defaultFaceTracker)
   },
 }
 

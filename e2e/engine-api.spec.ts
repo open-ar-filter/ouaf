@@ -81,7 +81,8 @@ test('stats report the rendering and tracking rates', async ({ page }) => {
         const off = window.ouaf!.engine.on('stats', (s) => (off(), resolve({ ...s })))
       }),
   )
-  expect(Object.keys(stats).sort()).toEqual(['faces', 'fps', 'frameMs', 'frameMsMax', 'height', 'trackMs', 'tracker', 'trackingHz', 'width'])
+  expect(Object.keys(stats).sort()).toEqual(['faces', 'fps', 'frameMs', 'frameMsMax', 'height', 'pipelineMs', 'trackMs', 'tracker', 'trackerTimings', 'trackingHz', 'width'])
+  expect(typeof stats.pipelineMs).toBe('number')
   expect(stats.frameMsMax).toBeGreaterThanOrEqual(stats.frameMs as number)
   expect(stats.trackMs).toBeGreaterThanOrEqual(0)
   expect(stats.fps).toBeGreaterThan(0)
