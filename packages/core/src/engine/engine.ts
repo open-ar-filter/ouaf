@@ -31,6 +31,7 @@ import { FaceIdentityTracker, FaceSmoother } from '../anchoring/index.ts'
 import { createSignals, readExpressionSignals } from '../expressions/index.ts'
 import { FaceAnchors } from './anchor-provider.ts'
 import { CORE_LOADERS, memorySource, urlSource, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
+import { fetchPackage, isPackageUrl, packageSource } from './package.ts'
 import { builtinPlugins } from './builtin.ts'
 import { Compositor, type StagePasses } from './compositor.ts'
 import { Emitter } from './emitter.ts'
@@ -163,8 +164,17 @@ export type EngineEvents = {
   sourceEnd: SourceEndEvent
 } & { [K in `filter:${string}`]: FilterEvent }
 
-/** A filter to load: URL of its folder (or of its `manifest.json`), or a `FilterSource` (`memorySource`…). */
-export type FilterInput = string | URL | FilterSource
+/**
+ * A filter to load:
+ * - a URL (`string` or `URL`, relative to the page): of a `.ouaf` package when its path ends with `.ouaf`
+ *   (`/filters/crown.ouaf`), else of a filter folder or of its `manifest.json` (development, spec §3);
+ * - a `.ouaf` package in memory: a `Blob` or `File` (file picker, drop), an `ArrayBuffer` or a `Uint8Array`;
+ * - a `FilterSource` (`memorySource`, `urlSource`, `packageSource`, or the host's own).
+ *
+ * A package served from a URL without the `.ouaf` extension is loaded by fetching it as a `Blob` first, or with
+ * `fetchPackage(url)`.
+ */
+export type FilterInput = string | URL | Blob | ArrayBuffer | Uint8Array | FilterSource
 
 export interface FilterSpec {
   src: FilterInput
@@ -969,8 +979,7 @@ export class Engine {
   }
 
   async #load(src: FilterInput, params: Readonly<Record<string, unknown>> | undefined): Promise<FilterInstance> {
-    const source = typeof src === 'string' || src instanceof URL ? urlSource(src, this.#fetch) : src
-    return loadFilter(this.#nextKey++, source, params, this.#loadEnv())
+    return loadFilter(this.#nextKey++, await filterSource(src, this.#fetch), params, this.#loadEnv())
   }
 
   #loadEnv(): FilterLoadEnv {
@@ -1207,7 +1216,16 @@ function videoElementSource(video: HTMLVideoElement): VideoSource {
 }
 
 function isFilterSpec(item: FilterInput | FilterSpec): item is FilterSpec {
-  return typeof item === 'object' && item !== null && !(item instanceof URL) && 'src' in item
+  return typeof item === 'object' && item !== null && !(item instanceof URL) && !(item instanceof Blob) && !(item instanceof ArrayBuffer) &&
+    !ArrayBuffer.isView(item) && 'src' in item
+}
+
+/** The `FilterSource` of a `FilterInput`: a folder, a package (URL, blob, bytes) or the source itself. */
+async function filterSource(src: FilterInput, fetchImpl: typeof fetch): Promise<FilterSource> {
+  if (typeof src === 'string' || src instanceof URL) return isPackageUrl(src) ? fetchPackage(src, fetchImpl) : urlSource(src, fetchImpl)
+  if (src instanceof Blob || src instanceof ArrayBuffer || src instanceof Uint8Array) return packageSource(src)
+  if (typeof src === 'object' && src !== null && typeof src.manifest === 'function' && typeof src.file === 'function') return src
+  throw new OuafError('filter-load', `Cannot load a filter from ${describeSource(src)}: expected a URL, a .ouaf package (Blob, File, ArrayBuffer, Uint8Array) or a FilterSource.`)
 }
 
 function describeSource(input: unknown): string {

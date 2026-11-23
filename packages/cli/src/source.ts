@@ -4,17 +4,13 @@
  */
 import { lstat, readdir, readFile, stat } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
+import { zipEntryType, type PackageEntryInfo } from '@ouaf/spec'
 import { readZipEntries, readZipEntry, ZipError, type ZipEntry } from './zip.ts'
 
-export type EntryType = 'file' | 'symlink' | 'other'
+export type EntryType = PackageEntryInfo['type']
 
-export interface PackageEntry {
-  /** Path inside the package, "/"-separated, e.g. "assets/hat.png". */
-  path: string
-  type: EntryType
-  /** Uncompressed size in bytes. */
-  size: number
-}
+/** A file of the package: path ("assets/hat.png"), type and uncompressed size (the shape `@ouaf/spec` checks). */
+export type PackageEntry = PackageEntryInfo
 
 export interface PackageSource {
   kind: 'folder' | 'zip' | 'memory'
@@ -69,8 +65,8 @@ export function zipSource(zip: Uint8Array, label: string): PackageSource {
   const byPath = new Map<string, ZipEntry>()
   const entries: PackageEntry[] = []
   for (const z of raw) {
-    if (z.name.endsWith('/') && z.size === 0) continue // directory entry
-    const type: EntryType = z.unixMode === 0o120000 ? 'symlink' : z.unixMode === undefined || z.unixMode === 0o100000 || z.unixMode === 0 ? 'file' : 'other'
+    const type = zipEntryType(z)
+    if (type === 'directory') continue
     entries.push({ path: z.name, type, size: z.size })
     if (!byPath.has(z.name)) byPath.set(z.name, z)
   }

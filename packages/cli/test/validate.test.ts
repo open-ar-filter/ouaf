@@ -2,7 +2,7 @@ import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { memorySource, openFolder } from '../src/source.ts'
+import { memorySource, openFolder, zipSource } from '../src/source.ts'
 import { validatePackage, validatePath, type PackageIssue, type PackageReport, type ShaderCompiler } from '../src/validate.ts'
 import { formatReport } from '../src/report.ts'
 import { avif, bytes, cube, glb, jpeg, ktx2, mp4, png, webm, zip } from './helpers.ts'
@@ -302,6 +302,18 @@ describe('package budget (spec §3)', () => {
     expect(warn.warnings[0]!.message).toContain('6.0 MB')
     const fail = await run(big(51_000_000))
     expect(codes(fail.errors)).toEqual(['package-too-large@'])
+  })
+
+  it('fails a zip whose files total more than 50 MB unpacked, and above 1000 files (the engine refuses them)', async () => {
+    const archive = zip({ 'manifest.json': JSON.stringify({ ...base, requires: {}, layers: [] }), 'assets/zeros.json': new Uint8Array(51_000_000) })
+    expect(archive.length).toBeLessThan(1_000_000)
+    const r = await validatePackage(zipSource(archive, 'zeros.ouaf'))
+    expect(codes(r.errors)).toContain('package-too-large@')
+    expect(r.errors.find((e) => e.code === 'package-too-large')!.message).toContain('51.0 MB unpacked')
+
+    const many = Object.fromEntries(Array.from({ length: 1001 }, (_, i) => [`assets/${i}.json`, '{}']))
+    const r2 = await run(memorySource({ 'manifest.json': JSON.stringify({ ...base, requires: {}, layers: [] }), ...many }))
+    expect(codes(r2.errors)).toEqual(['too-many-entries@'])
   })
 })
 
