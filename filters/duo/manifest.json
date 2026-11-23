@@ -4,8 +4,8 @@
   "name": { "en": "Duo", "fr": "Duo" },
   "version": "1.0.0",
   "description": {
-    "en": "Multi-face: each person gets their own ears ({ pick } by face), and the script points a heart from each face to the other, growing as they get closer. Needs maxFaces ≥ 2.",
-    "fr": "Multi-visages : chacun a ses oreilles ({ pick } par visage), et le script oriente un cœur de chaque visage vers l'autre, qui grossit quand ils se rapprochent. maxFaces ≥ 2."
+    "en": "Multi-face: each person gets their own ears ({ pick } by face), and the script places a heart on the screen midway between the two faces, growing as they get closer. Needs maxFaces ≥ 2.",
+    "fr": "Multi-visages : chacun a ses oreilles ({ pick } par visage), et le script place un cœur à l'écran à mi-chemin entre les deux visages, qui grossit quand ils se rapprochent. maxFaces ≥ 2."
   },
   "author": "Ouaf contributors",
   "license": "CC0-1.0",
@@ -21,7 +21,7 @@
   },
   "layers": [
     { "id": "ears", "type": "sticker", "src": { "pick": ["cat", "bunny"], "by": "face" }, "anchor": "forehead", "offset": [0, 0.55, -0.2], "size": 1.1 },
-    { "id": "heart", "type": "sticker", "src": "heart", "anchor": "noseTip", "offset": [0, 1.4, 0.3], "size": 0.5, "orient": "screen", "visible": false },
+    { "id": "heart", "type": "sticker", "src": "heart", "anchor": "screen", "size": 0.05, "visible": false },
     {
       "id": "status",
       "type": "text",
