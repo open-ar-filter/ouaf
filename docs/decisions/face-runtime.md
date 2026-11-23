@@ -19,14 +19,29 @@ GPU and CPU delegates by measuring them ([`device-adaptation.md`](device-adaptat
 - **Eager scheduling** (`FrameTracker.eager`, `TrackingHub`): a live frame that comes while the worker is busy is
   submitted as soon as the result arrives. Without it a run that spans a frame tick misses it: 15.8 Hz on the desktop
   below, 28 Hz with it.
+- **A frame queued in the worker** (`FrameTracker.offer`): that frame is also posted at once, and the worker starts
+  it as soon as its run ends (one frame waiting at most; a newer one replaces it). Without it the worker waited for
+  its result to reach the page and the next frame to come back: ≈ 25–30 ms on a busy main thread (desktop, main thread
+  throttled 4× over CDP: 13–14.5 Hz without the queue, 15–16.4 Hz with it). The next call takes that frame's result.
+- **Camera frames read in the worker** (`frames: 'track'`, default): from the camera's track through a
+  `MediaStreamTrackProcessor` whose stream is transferred to the worker, where it exists (Chromium) and the frames
+  match the `<video>` (same size, no rotation metadata; otherwise back to the `<video>` with a warning). Why: turning
+  a `<video>`'s frame into a texture in the worker (`texImage2D(VideoFrame)`) waits for the page's main thread: for a
+  hardware-decoded clip, 17 ms on an idle desktop, 55–63 ms with the main thread throttled 4× (the readback after it:
+  2 ms). With Chromium's fake camera both paths upload in ≈ 1 ms and track at 30 Hz even throttled 4×: what the
+  phone's camera costs is to be measured (`?frames=element` compares).
+- **Per-step timings** (`FrameTracker.timings`, `EngineStats.trackerTimings`, `pipelineMs`, a line of the engine
+  page's panel): capture, hand-off to the worker, queue, worker idle, run (detect, upload, crop, landmarks,
+  blendshapes), hand-off back, result, total; and the period (1000 / Hz) against the pipeline time.
 - **Loading LiteRT.js in a module worker**: one shim left of the three. Its loader runs the Emscripten script with
   `importScripts`, which throws in module workers: the worker fetches the script (the build LiteRT.js would pick) and
   replaces `importScripts` during the load by an indirect `eval` of it; `Module.locateFile` (Emscripten's own hook)
   points at the `.wasm`. No pthreads, so no `Worker` wrapper. A classic worker would need no shim, but bundlers
   (Vite in dev) only serve module workers with imports.
 - **One face**: with `maxFaces` > 1 only MediaPipe is a candidate (multi-face is the next step of #165).
-- Blendshapes are skipped while the engine does not want them (governor, spec §16.2); the analysis resolution is
-  ignored (crops come from the full frame on the GPU).
+- Blendshapes are skipped while the engine does not want them (governor, spec §16.2; checked by a browser test: the
+  model's time falls to 0); the analysis resolution is ignored (crops come from the full frame on the GPU), so the
+  tracker tells the governor not to drop it (`FrameTracker.sheds`).
 - LiteRT.js logs "Failed to create default WebGPU device" in the worker where there is no WebGPU adapter: its
   environment always tries one; harmless.
 

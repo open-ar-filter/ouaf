@@ -12,6 +12,7 @@
  */
 import { createFaceFrame, type FaceFrame, type TrackerInput } from '../face.ts'
 import type { BackendInfo, FaceTrackerImpl, FrameTracker, LandmarkModifier, TrackerConfig, TrackerEnv } from './plugin.ts'
+import type { Capability } from './governor.ts'
 
 /** Sliding window of the tracking rate (spec §16.1: "a few seconds"). */
 export const TRACKING_RATE_WINDOW_MS = 3000
@@ -114,6 +115,16 @@ export class TrackingHub {
   /** The tracker's backend and how it was chosen (spec §16.4), when it says. */
   get backend(): BackendInfo | undefined {
     return this.#tracker?.backend
+  }
+
+  /** Mean time per result of the tracker's steps (`FrameTracker.timings`), when it says. */
+  get timings(): Readonly<Record<string, number>> | undefined {
+    return this.#tracker?.timings
+  }
+
+  /** The capabilities whose drop makes the tracker faster (`FrameTracker.sheds`); undefined: all. */
+  get sheds(): readonly Capability[] | undefined {
+    return this.#tracker?.sheds
   }
 
   /** The tracker is measuring its backends: the tracking rate is not representative meanwhile. */
@@ -246,6 +257,7 @@ export class TrackingHub {
         this.#missed = input
         this.#missedNow = now
         this.#missedTime = mediaTime
+        tracker.offer?.(input, now, mediaTime)
       }
       return
     }

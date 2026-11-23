@@ -167,6 +167,13 @@ export interface EngineStats {
   frameMsMax: number
   /** Mean time per frame spent by a tracker that runs on the main thread (ms; 0 for a tracker in a worker). */
   trackMs: number
+  /**
+   * Mean time from a frame's submission to its tracking result (ms, `NaN` before the first): what one result costs.
+   * The tracking rate is at most `1000 / pipelineMs`; below it, the gap is time spent waiting for frames.
+   */
+  pipelineMs: number
+  /** The tracker's own steps, mean ms per result (`FrameTracker.timings`), when it reports them. */
+  trackerTimings: Readonly<Record<string, number>> | undefined
   /** Tracker backend in use, when tracking runs. */
   tracker: string | undefined
   /** Internal resolution (px) the engine renders at. */
@@ -333,6 +340,8 @@ export class Engine {
   #performance: PerformanceEvent = { state: 'ok', dropped: [], trackingHz: 0 }
   /** Capabilities the enabled stack may lose (recomputed on stack changes). */
   #droppable = new Set<Capability>()
+  /** `#droppable` less what the tracker cannot shed (`FrameTracker.sheds`): what the governor may drop. */
+  #governable = new Set<Capability>()
   /** Faces looked for while the extra faces are dropped: the faces tracked when they were. */
   #reducedFaces = 1
   #governedAt = Number.NaN
@@ -1145,6 +1154,8 @@ export class Engine {
         frameMs,
         frameMsMax: this.#statsMaxMs,
         trackMs: this.#statsTrackMs / this.#statsFrames,
+        pipelineMs: this.#tracking.pipelineMs,
+        trackerTimings: this.#tracking.timings ? { ...this.#tracking.timings } : undefined,
         tracker: this.#tracking.description,
         width: this.#compositor.width,
         height: this.#compositor.height,
@@ -1384,7 +1395,11 @@ export class Engine {
       return
     }
     const rate = tracking.rateHz
-    const change = g.update(now, rate, this.#droppable, tracking.pipelineMs)
+    const governable = this.#governable
+    governable.clear()
+    const sheds = tracking.sheds
+    for (const c of this.#droppable) if (!sheds || sheds.includes(c)) governable.add(c)
+    const change = g.update(now, rate, governable, tracking.pipelineMs)
     if (!change) return
     if (change.kind === 'drop' && change.capability === 'extraFaces') this.#reducedFaces = Math.max(1, tracking.faces.count)
     tracking.restartRate(now)

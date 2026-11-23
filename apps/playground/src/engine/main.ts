@@ -72,10 +72,16 @@ const SIGNALS = params.has('signals')
  * so that the benchmark runs again. Default: the cached choice, else measured.
  */
 const BACKEND = params.get('backend') ?? undefined
-/** LiteRT.js tracker fallbacks, to test them: `?crop=canvas` (2D-canvas crops), `?transfer=bitmap` (`ImageBitmap`). */
+/**
+ * LiteRT.js tracker options, to test its fallbacks: `?crop=canvas` (2D-canvas crops), `?transfer=bitmap` (`ImageBitmap`),
+ * `?queue=0` (one frame at a time: no frame queued in the worker while it runs), `?frames=element` (camera frames
+ * captured from the `<video>`, not read from the track in the worker).
+ */
 const LITERT: LiteRtTrackerOptions = {
   ...(params.get('crop') === 'canvas' ? { crop: 'canvas' } : {}),
   ...(params.get('transfer') === 'bitmap' ? { transfer: 'bitmap' } : {}),
+  ...(params.get('queue') === '0' ? { queue: false } : {}),
+  ...(params.get('frames') === 'element' ? { frames: 'element' } : {}),
 }
 if (BACKEND === 'measure') {
   try {

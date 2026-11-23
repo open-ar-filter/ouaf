@@ -52,6 +52,8 @@ export interface PipelineOptions {
 export interface StageTimings {
   /** Detector stage: letterbox, model, decoding. */
   detectMs: number
+  /** Frame upload to the GPU crops' texture (`texImage2D`; part of `detectMs` or `cropMs`). */
+  uploadMs: number
   cropMs: number
   landmarksMs: number
   blendshapesMs: number
@@ -187,7 +189,7 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
   const raw = new Float32Array(LANDMARK_COUNT * 3)
   const presence = new Float32Array(1)
   const pixels = new Float32Array(LANDMARK_COUNT * 3)
-  const timings: StageTimings = { detectMs: NaN, cropMs: NaN, landmarksMs: NaN, blendshapesMs: NaN }
+  const timings: StageTimings = { detectMs: NaN, uploadMs: NaN, cropMs: NaN, landmarksMs: NaN, blendshapesMs: NaN }
   let tracked: Roi | undefined
   let uploaded = false
 
@@ -213,7 +215,9 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
 
   const upload = (g: GpuCropper, source: FrameSource, width: number, height: number) => {
     if (uploaded) return
+    const t = performance.now()
     g.upload(source, width, height)
+    timings.uploadMs = performance.now() - t
     uploaded = true
   }
 
@@ -268,7 +272,7 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
       tracked = undefined
     },
     async run(source, width, height, withBlendshapes, out) {
-      timings.detectMs = timings.cropMs = timings.landmarksMs = timings.blendshapesMs = NaN
+      timings.detectMs = timings.uploadMs = timings.cropMs = timings.landmarksMs = timings.blendshapesMs = NaN
       uploaded = false
       out.found = false
       out.presence = 0

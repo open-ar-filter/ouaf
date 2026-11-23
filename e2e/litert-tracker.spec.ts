@@ -51,6 +51,20 @@ test('nothing is fetched from another origin by the LiteRT.js tracker (docs/priv
   expect(urls.some((u) => u.includes('/litert/wasm/litert_wasm'))).toBe(true)
 })
 
+test('the governor drops only what LiteRT.js can shed: blendshapes, never the analysis resolution', async ({ page }) => {
+  // A slow main thread (CDP, 8×) slows the hand-offs to and from the worker: the rate falls below the drop level.
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 8 })
+  await page.goto('/engine.html?source=pesquet-talk&autostart&backend=litert&adapt=1&filter=/filters/fixtures/dot-tint/')
+  await expect.poll(() => page.evaluate(() => window.ouaf?.performance.length ?? 0), { timeout: 90_000, intervals: [500, 1000] }).toBeGreaterThan(0)
+  await page.waitForTimeout(6000)
+  const events = await page.evaluate(() => window.ouaf!.performance.map((e) => e.dropped.join(',')))
+  expect(events[0]).toBe('blendshapes')
+  expect(events.filter((e) => e.includes('resolution'))).toEqual([])
+  // Blendshapes dropped: the worker skips their model.
+  await expect.poll(async () => (await stats(page)).trackerTimings?.blendshapesMs ?? -1, POLL).toBeLessThan(0.1)
+})
+
 /**
  * Same results as MediaPipe (VIDEO mode, CPU) on every third frame of four clips, decoded frame-exactly: on the
  * frames where both find the face, landmarks within a few % of the face size (the spike measured 0.6–2.5 % mean on

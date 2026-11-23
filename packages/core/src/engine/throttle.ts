@@ -73,6 +73,16 @@ export function throttleTracker(impl: FaceTrackerImpl, throttle: TrackingThrottl
         get eager() {
           return !(throttle.ms > 0) && (inner.eager ?? false)
         },
+        offer(input, timestampMs, mediaTime) {
+          if (!(throttle.ms > 0)) inner.offer?.(input, timestampMs, mediaTime)
+        },
+        get timings() {
+          return inner.timings
+        },
+        // Throttled, every capability has a simulated cost.
+        get sheds() {
+          return throttle.ms > 0 ? undefined : inner.sheds
+        },
         configure(next) {
           current = { ...next }
           inner.configure(next)

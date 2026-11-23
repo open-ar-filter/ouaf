@@ -11,6 +11,7 @@ import type { FaceFrame, TrackerInput } from '../face.ts'
 import type { VideoSource } from '../video-source.ts'
 import type { AssetLoader } from './assets.ts'
 import type { FrameContext, LayerContext, LayerInstance, LayerTypeImpl } from './layer-type.ts'
+import type { Capability } from './governor.ts'
 
 export interface OuafPlugin {
   /** Plugin name, as filters list it in `requires.plugins` (`mood@^1`). Lowercase letters, digits and dashes. */
@@ -105,6 +106,24 @@ export interface FrameTracker {
    * spans a frame tick misses it, and the rate snaps to 15 Hz, 10 Hz… Read on every frame. Default: false.
    */
   readonly eager?: boolean
+  /**
+   * An eager tracker's chance to start on a live frame that came while its call is in flight (a worker queues it and
+   * starts it as soon as its run ends, without waiting for the page). The engine still calls `track` once the call
+   * completes, on the newest frame; the tracker may answer it with the result of an offered frame of the same input
+   * (`FaceFrame.mediaTime` then says which). Optional.
+   */
+  offer?(input: TrackerInput, timestampMs: number, mediaTime: number): void
+  /**
+   * Mean time per result of the tracker's steps (ms), for stats (`EngineStats.trackerTimings`), e.g. the hand-offs to
+   * and from a worker and each model. Optional.
+   */
+  readonly timings?: Readonly<Record<string, number>>
+  /**
+   * The optional capabilities (spec §16.2) whose drop makes this tracker faster. Default: all. The governor does not
+   * drop the others: they would cost it a step for nothing (LiteRT.js crops from the full frame whatever the
+   * analysis resolution). Read on every governor step.
+   */
+  readonly sheds?: readonly Capability[]
   dispose(): void
 }
 

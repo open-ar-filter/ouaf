@@ -63,6 +63,32 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLEl
 
 const fmt = (v: number, digits = 1) => (Number.isFinite(v) ? v.toFixed(digits) : '—')
 
+/** Short names of the tracker's steps (`EngineStats.trackerTimings`, LiteRT.js: `LiteRtTimings`). */
+const STEP_NAMES: Record<string, string> = {
+  waitMs: 'wait',
+  captureMs: 'capture',
+  toWorkerMs: '→worker',
+  queueMs: 'queue',
+  idleMs: 'idle',
+  workerMs: 'worker',
+  detectMs: 'detect',
+  uploadMs: 'upload',
+  cropMs: 'crop',
+  landmarksMs: 'lmk',
+  blendshapesMs: 'bs',
+  toPageMs: '→page',
+  resultMs: 'result',
+  totalMs: 'total',
+}
+
+/** `period 62 ms · pipeline 53 ms · wait 9 · capture 0.3 · …`: what a tracking result costs, step by step. */
+function describeSteps(s: EngineStats): string {
+  if (!(s.trackingHz > 0)) return ''
+  const parts = [`period ${fmt(1000 / s.trackingHz, 0)} ms`, `pipeline ${fmt(s.pipelineMs, 0)} ms`]
+  for (const [key, v] of Object.entries(s.trackerTimings ?? {})) parts.push(`${STEP_NAMES[key] ?? key} ${fmt(v)}`)
+  return parts.join(' · ')
+}
+
 /** Creates the panel; `attach` wires it to the engine once created (the throttle and signals plugins come first). */
 export function createPerfPanel(throttle: TrackingThrottle, options: { signals: boolean }): PerfPanel & { attach(engine: Engine): void } {
   const style = el('style', { textContent: STYLE })
@@ -81,6 +107,8 @@ export function createPerfPanel(throttle: TrackingThrottle, options: { signals: 
   state.dataset.state = 'ok'
   const dropped = el('span', { textContent: 'none' })
   const tracker = el('div', { textContent: 'no tracker', className: 'ouaf-perf-info' })
+  // Where a result's time goes: the period (1000 / Hz) against the pipeline (call → result), then the tracker's steps.
+  const steps = el('div', { textContent: '', className: 'ouaf-perf-info' })
   const stateLine = el('div', { className: 'ouaf-perf-state' }, el('b', { textContent: 'governor' }), state, ' · ', el('b', { textContent: 'dropped' }), dropped)
   const log = el('ul', { className: 'ouaf-perf-log' })
   const events: PerformanceEvent[] = []
@@ -140,7 +168,7 @@ export function createPerfPanel(throttle: TrackingThrottle, options: { signals: 
       'Engine: events delivered to the filters, under the source in use: with blendshapes, each eye is the larger of the blendshape and the geometry; geometry alone while blendshapes are dropped (?throttle). "Alone": what each source would fire by itself, approximated here on the displayed faces, once per tracking result. Blink 10 times, then read the counts.',
   })
 
-  const element = el('div', { className: 'ouaf-perf' }, style, grid, tracker, stateLine, help, log, throttleLine, ...(options.signals ? [table, resetButton, signalsHelp] : []))
+  const element = el('div', { className: 'ouaf-perf' }, style, grid, tracker, steps, stateLine, help, log, throttleLine, ...(options.signals ? [table, resetButton, signalsHelp] : []))
 
   const showState = (p: PerformanceEvent) => {
     state.textContent = p.state
@@ -244,6 +272,7 @@ export function createPerfPanel(throttle: TrackingThrottle, options: { signals: 
         set('faces', String(s.faces))
         set('size', `${s.width}×${s.height}`)
         tracker.textContent = s.tracker ?? 'no tracker'
+        steps.textContent = describeSteps(s)
         showState(engine.performance)
       })
       engine.on('performance', (p) => {

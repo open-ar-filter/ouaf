@@ -63,7 +63,8 @@ the engine yet.
    MediaPipe: `numFaces` through `setOptions` (one stall per transition, rare thanks to the hysteresis).
 3. Analysis resolution: the frame is drawn at half size into a canvas before tracking (landmarks are normalized, so
    nothing else changes). Its gain with MediaPipe is not measured on phones yet. The LiteRT.js tracker ignores it (its
-   crops come from the full frame on the GPU): the governor then measures no gain.
+   crops come from the full frame on the GPU), and says so (`FrameTracker.sheds`: blendshapes only): the governor does
+   not spend a step on it.
 
 Face filters are **suspended** while hidden (`FilterHandle.suspended`): not drawn, no events, no script calls;
 tracking keeps running. Filters without face tracking keep rendering. `engine.on('performance')` fires at each change
@@ -152,7 +153,8 @@ face). Without a cached choice it starts on LiteRT.js (MediaPipe GPU, then CPU, 
 frames of a **live** source, opens the others; then each backend runs on consecutive frames, one after the other,
 3 results left out, then 12 measured (time from the call to its result). The lowest median wins, on frames with a face
 when each backend has at least 6 of them; MediaPipe's medians are multiplied by `MAIN_THREAD_WEIGHT` (1.15) for the
-decision, since its time is also taken from rendering. The others are closed. During the benchmark (≈ 2 s) the
+decision, since its time is also taken from rendering. The others are closed, MediaPipe's WebGL contexts lost at
+once (`WEBGL_lose_context`) rather than at garbage collection. During the benchmark (≈ 2 s) the
 governor waits. A file source stops it (its results must not depend on timing); it runs again on the next live
 source. A tracker that breaks while running (the worker died) is replaced by the next one that opens.
 

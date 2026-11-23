@@ -12,6 +12,7 @@
 import { BackendBenchmark, currentUserAgent, readStoredBackend, type BenchmarkOptions, type StoredBackend } from './backend-choice.ts'
 import type { FaceFrame, TrackerInput } from '../face.ts'
 import type { BackendInfo, FaceTrackerImpl, FrameTracker, TrackerConfig, TrackerEnv } from './plugin.ts'
+import type { Capability } from './governor.ts'
 
 export interface TrackerCandidate {
   /** Backend name, as `EngineOptions.trackerBackend` forces it (compared without case) and as it is cached. */
@@ -165,6 +166,18 @@ export class ChoosingFrameTracker implements FrameTracker {
    */
   get eager(): boolean {
     return (this.#last ?? this.#current).tracker.eager ?? false
+  }
+
+  offer(input: TrackerInput, timestampMs: number, mediaTime: number): void {
+    ;(this.#last ?? this.#current).tracker.offer?.(input, timestampMs, mediaTime)
+  }
+
+  get timings(): Readonly<Record<string, number>> | undefined {
+    return this.#bench ? undefined : this.#current.tracker.timings
+  }
+
+  get sheds(): readonly Capability[] | undefined {
+    return this.#current.tracker.sheds
   }
 
   benchmark(): void {
