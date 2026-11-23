@@ -45,3 +45,19 @@ export function Bindable<T extends TSchema>(schema: T) {
 export type TParamBinding = Static<typeof ParamBinding>
 export type TDataBinding = Static<typeof DataBinding>
 export type TBinding = Static<typeof Binding>
+
+/** Type of the values of a data path (`DataPathDef.type`, spec §8). */
+export type DataValueType = 'number' | 'string' | 'boolean'
+
+/**
+ * The data value a `map` key matches for data of `type` (spec §8), or `undefined` when it can never match: a string
+ * key matches the same string; for booleans only `"true"` and `"false"`; for numbers only the canonical JSON form of a
+ * number (`"1"`, `"-2"`, `"0.5"`), so `"1.0"`, `"01"`, `"1e0"` or `" 1"` never match. Shared by the engine (lookup
+ * table) and the validator (keys that can never match).
+ */
+export function mapKeyValue(key: string, type: DataValueType): string | number | boolean | undefined {
+  if (type === 'string') return key
+  if (type === 'boolean') return key === 'true' ? true : key === 'false' ? false : undefined
+  const n = Number(key)
+  return key.trim() !== '' && Number.isFinite(n) && String(n) === key ? n : undefined
+}

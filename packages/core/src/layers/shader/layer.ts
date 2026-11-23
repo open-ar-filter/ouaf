@@ -231,8 +231,13 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
     throw cause
   }
   const wrapped = prepare(decl, ctx, uniforms, stage)
-  const source = ctx.assets.get<string>(decl.src)
-  const usesSizes = /\bouaf_faceSize\b/.test(source)
+  // The validator reports it when it can read the source (spec §11.1); the engine loads the layer anyway.
+  if (ctx.requiresFace === false && wrapped.faceInputs.length > 0) {
+    const inputs = wrapped.faceInputs.join(', ')
+    ctx.warn(`shader layer${decl.id ? ` "${decl.id}"` : ''} (${decl.src}) uses ${inputs}, which need "requires": { "face": true }: ` +
+      'without it no face is tracked, so they read as no face (empty mask, 0 faces).')
+  }
+  const usesSizes = wrapped.faceSize
   const anchors = decl.anchors ?? []
   const inputs = anchors.length > 0 || usesSizes ? new ShaderFaceInputs(ctx.maxFaces, anchors, usesSizes) : undefined
   const visible = compileBinding(decl.visible ?? true, { type: 'boolean', fallback: true, path: 'visible', name: 'visible' }, env)

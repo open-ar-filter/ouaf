@@ -91,6 +91,11 @@ export interface LayerContext {
   /** Maximum number of faces of the engine: size per-face resources for it. */
   readonly maxFaces: number
   /**
+   * Whether the filter declares `requires.face` (spec §4.1): without it no face is tracked, and face data read as when
+   * no face is visible. Absent outside a filter (render passes).
+   */
+  readonly requiresFace?: boolean
+  /**
    * The layer's seeded generator, a number in [0, 1) per call (spec §12.5): use it for every random choice. Seeded at
    * activation and again when the source changes, with a fixed seed for file sources (image, offline video,
    * `pushFrame`: every run gives the same draws), a random one for live sources, or the host's

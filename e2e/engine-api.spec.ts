@@ -48,7 +48,7 @@ test('engine.send reaches every filter; engine.on("filter:<name>") says which on
   expect(await page.evaluate(() => window.engineEvents!.slice(2))).toEqual([{ key: b, same: true, data: 2 }])
 })
 
-test('send refuses bad names and data that cannot be cloned, at the call; the scripts keep running', async ({ page }) => {
+test('send refuses bad names, data that cannot be cloned and data over 64 KB, at the call; the scripts keep running', async ({ page }) => {
   await open(page)
   const codes = await page.evaluate(() => {
     const { engine, core } = window.ouaf!
@@ -64,9 +64,10 @@ test('send refuses bad names and data that cannot be cloned, at the call; the sc
       name: codeOf(() => engine.send('not a name', 1)),
       fn: codeOf(() => engine.send('tint', { f: () => 1 })),
       handle: codeOf(() => engine.filters[0]!.send('tint', document.body)),
+      big: codeOf(() => engine.send('tint', 'x'.repeat(40_000))),
     }
   })
-  expect(codes).toEqual({ name: 'invalid-message', fn: 'invalid-message', handle: 'invalid-message' })
+  expect(codes).toEqual({ name: 'invalid-message', fn: 'invalid-message', handle: 'invalid-message', big: 'invalid-message' })
   await page.evaluate(() => window.ouaf!.engine.send('tint', '#ff0000'))
   await expect.poll(() => page.evaluate(() => window.engineEvents!.length), POLL).toBe(2)
   expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])

@@ -136,6 +136,11 @@ shaders are chained.
 `orient`, `follow`, `faces` (section 4), `overlay: true` (drawn last, above the color grading: UI, score) and
 `excludeFromCapture: true` (with `overlay`: left out of photos, videos and streams).
 
+`scale` (bindable, default 1) multiplies the layer's size: a number scales it uniformly, `[x, y, z]` per axis of the
+layer (`[1, 1.4, 1]` stretches it vertically). It is a visual transform of what is drawn: a text is not laid out or
+rasterized again, so `scale` is the cheap way to animate a "pop", but a text enlarged a lot (above about 1.5×) gets
+blurry; for a lasting larger text, raise `size`.
+
 Bindable properties accept a fixed value, `{ "param": … }` or `{ "bind": … }` (section 8). The schema gives every
 bound and default; the main ones are below.
 
@@ -251,6 +256,11 @@ directly (§10.1). **Remote URLs (`http:`, `https:`, `data:`…) are forbidden.*
 | shader | `.frag`, `.glsl` | Section 11. |
 | font | WOFF2, WOFF, TTF, OTF | For `text.font`. |
 
+Data a script needs (word lists, levels, tables) is not an asset: import the JSON in `filter.ts`
+(`import levels from './levels.json'`, the file next to `filter.ts`, not in `assets/`) and `ouaf pack` bundles it
+into `script.js`. The `data` (`.json`) and `lottie` kinds are reserved: nothing reads them yet, and `ouaf validate`
+reports such assets as unused.
+
 The kind comes from the extension; set `kind` to override it. Built-in resources (§10.3), always available:
 fonts `builtin:font/sans`, `builtin:font/sans-bold` (default), `builtin:font/rounded-bold`, `builtin:font/serif`,
 `builtin:font/mono`, `builtin:font/handwritten`; LUTs `builtin:lut/vintage`, `builtin:lut/noir`, `builtin:lut/warm`,
@@ -301,8 +311,8 @@ A bindable property can follow tracking data, evaluated by the engine every fram
 | `{ "param": "size" }` | value of a parameter |
 | `{ "bind": "face.blendshapes.jawOpen" }` | the data itself |
 | `{ "bind": "…", "range": [a, b], "to": [c, d] }` | clamped to `[a, b]`, mapped linearly to `[c, d]` (both or neither) |
-| `{ "bind": "…", "map": { "…": … } }` | lookup table (string data) |
-| `"default": value` | used when the data is missing (no face, blendshapes dropped) |
+| `{ "bind": "…", "map": { "…": … } }` | lookup table: data value → property value |
+| `"default": value` | used when the data is missing (no face, blendshapes dropped, a value `map` does not list), as it is (not passed through `map` or `range`) |
 
 Data paths: `time` (media time, s), `faces.count`, `face.index`, `face.size` (eye distance / screen height),
 `face.pose.yaw`, `face.pose.pitch`, `face.pose.roll` (degrees), `face.blendshapes.<name>` (0–1, the 51 ARKit names
@@ -317,7 +327,8 @@ needs `requires.face`.
 
 Tracking data are numbers. A number property takes them as they are or through `range` / `to`, a text shows them;
 other types (booleans, colors, vectors) need `map`, whose keys are exact values, which suits `faces.count` and
-`face.index`. Anything richer (conditions, sums, state) belongs in a script.
+`face.index`. Write numeric keys as JSON writes the number: `"1"` matches 1, but `"1.0"` or `"01"` never match
+(`ouaf validate` warns about them). Anything richer (conditions, sums, state) belongs in a script.
 
 ```json ouaf=layer
 { "type": "text", "text": "★", "anchor": "forehead", "offset": [0, 0.7, 0], "size": 0.5,
@@ -339,7 +350,7 @@ Expression events fire **once** at the start of a gesture, with hysteresis (§13
 | `kiss` | `mouthPucker` | 0.7 |
 | `nod`, `shake` | head "yes" / "no" (0.5 ≈ 10° each way) | 0.5 |
 | `paramChange` | a parameter changed: `{ name, value, previous }` | — |
-| `message:<name>` | message from the host page: `{ data }` | — |
+| `message:<name>` | message from the host page (`engine.send(name, data)`): `{ data }`, a copy, ≤ 64 KB; `name`: a letter, then letters, digits, `_`, `-` | — |
 
 Tune them in the manifest: `"events": { "smile": { "threshold": 0.6, "minDurationMs": 150 } }` (`threshold` 0–1,
 only for events that have one; `minDurationMs` 0–5000). Face events need `requires.face`. They keep working when the
@@ -368,7 +379,7 @@ be plain JSON (no `Date`, `Map`, getters, `undefined` in lists). The top level o
 | | |
 |---|---|
 | `f.layer(id, face?)` | handle on a layer: every instance, or with `face` only that face's |
-| `.set({ … })` | sets properties until set to `null` (back to the manifest value). Settable today: the bindable properties: `visible`, `opacity`, `offset`, `rotation`, `size`, `text`, `color`, sticker `rate`, model `scale`, warp `radius` / `strength` / `direction`, the color-layer numbers and `tint`, shader `uniforms: { name: value }` |
+| `.set({ … })` | sets properties until set to `null` (back to the manifest value). Settable today: the bindable properties: `visible`, `opacity`, `offset`, `rotation`, `size`, `scale`, `text`, `color`, sticker `rate`, warp `radius` / `strength` / `direction`, the color-layer numbers and `tint`, shader `uniforms: { name: value }` (one by one: `{ uniforms: { amount: null } }` restores only `amount`; a value keeps the uniform's type) |
 | `.animate({ prop: target }, { duration, easing?, delay?, repeat? })` | tween numbers, vectors, colors from the current value; `{ prop: { keyframes: [a, b, …] } }` plays evenly spaced values; `repeat: -1` loops |
 | `.play(name)` | model layers: start a glTF animation |
 | `.invalidate()` | canvas layers: redraw |
@@ -429,7 +440,9 @@ alpha 0 leaves the image unchanged.
 - Each `uniforms` entry is a uniform of the same name (number → `float`, boolean → `bool`, `vec2`, `vec3`,
   color → `vec4`), each `textures` entry a `sampler2D`. Names must be GLSL identifiers, not keywords or built-ins,
   not `main` / `effect`, no `gl_` prefix or `__`; `ouaf_` / `OUAF_` are reserved. Bound uniforms read the first face.
-- Declare `requires.face` when the shader uses the face (anchors, `stage: "face"`, `ouaf_faceMask`).
+- Declare `requires.face` when the shader uses the face: `anchors`, `stage: "face"`, or `ouaf_faceMask`,
+  `ouaf_faceCount`, `ouaf_faceSize` in the source (comments do not count). `ouaf validate` and `ouaf pack` read the
+  shader file and report a missing `requires.face`.
 - `ouaf validate` checks the declarations, `#version`, `main()` and `effect()`, but cannot compile GLSL yet: the
   engine compiles it when it loads the filter, and the playground shows the errors with the line in your file.
 
@@ -444,7 +457,7 @@ alpha 0 leaves the image unchanged.
 | Text | 500 characters per layer; inline SVG 100 000 characters |
 | Shader | 32 uniforms, 4 textures, 16 anchors |
 | Canvas | 16–2048 px per side, ≤ 60 fps |
-| Script | 1 s watchdog; `f.emit` ≤ 64 KB and ≤ 60 per second; top level of `filter.ts` ≤ 2 s at pack time |
+| Script | 1 s watchdog; `f.emit` ≤ 64 KB and ≤ 60 per second; host messages ≤ 64 KB; top level of `filter.ts` ≤ 2 s at pack time |
 
 Performance: prefer bindings to `update`, keep canvases small and slow, few videos, `fps: 0` canvases redrawn on
 `invalidate()`, GLB with compressed meshes, and `requires.blendshapes` only when truly needed (it prevents the
@@ -466,11 +479,10 @@ Specified, or reserved, but not working in the reference engine today. Do not re
 - `ouaf preview` (#30): pack, then load the `.ouaf` (section 2).
 - `pairContact` / `pairSeparate` and `frame.pairs` (`uses: ["pairs"]`): no detector yet, `frame.pairs` is empty (#116).
 - Adaptive quality: dropping capabilities on slow devices, hiding below 15 Hz, `performance` events (§16; #34, #90).
-- Script `.set()` / `.animate()` of `src`, `font`, `lut`, `animation`, and of `scale` outside `model` layers: ignored
-  with a warning (#26). These properties are not bindable either.
-- `scale` on `text`, `sticker` and `canvas` layers: accepted by the format, ignored by the engine; use `size`.
-- Starting a sticker with `autoplay: false` from a script; `f.sound()` and audio assets; `lottie` assets; reading a
-  `data` (JSON) asset from the script (import the JSON in `filter.ts` instead); `asset` params in layers.
+- Script `.set()` / `.animate()` of `src`, `font`, `lut`, `animation`: ignored with a warning (#26). These
+  properties are not bindable either.
+- Starting a sticker with `autoplay: false` from a script; `f.sound()` and audio assets; `lottie` and `data` assets
+  (reserved: import JSON in `filter.ts`, section 6); `asset` params in layers.
 - KTX2 textures; GLSL compilation in `ouaf validate`; reserved `requires` (`hands`, `segmentation`, `pose`, `audio`)
   and reserved events (`tap`…): warnings.
 - With a file source, the engine does not wait for the script yet, so offline renders of scripted filters are not
@@ -670,14 +682,14 @@ then `→` a hint. Fix errors first; warnings do not block (unless `--strict`). 
 | `unknown-property` | a typo, or a property of another layer type | use the suggested name; check the layer's properties in section 5 |
 | `enum`, `type`, `format`, `range` | wrong value, type, pattern (ids, colors, semver) or bound | follow the hint: it lists the accepted values |
 | `unknown-anchor` | e.g. `"nose"` | `noseTip`; the hint lists every anchor |
-| `requires-face` | a face anchor, `face.*` binding, face event or `face.*` use without `requires.face` | add `"requires": { "face": true }` |
+| `requires-face` | a face anchor, `face.*` binding, face event, `face.*` use or shader face input (`ouaf_faceMask`…) without `requires.face` | add `"requires": { "face": true }` |
 | `unused-requirement` | `requires.face` (or `blendshapes`) while nothing uses it | remove it: tracking costs performance |
 | `unknown-asset`, `missing-file` | name not declared in `assets`; file not in the folder (paths are case-sensitive) | declare it / fix the path or the file name |
-| `unused-asset`, `unreferenced-file` | declared or shipped but never used | remove it, or reference it |
+| `unused-asset`, `unreferenced-file` | declared or shipped but never used (a `data` asset: scripts cannot read it) | remove it, or reference it; import JSON in `filter.ts` |
 | `format-mismatch`, `unsupported-format` | the content does not match the extension (a JPEG named `.png`), or an unsupported format (GIF…) | export again in a supported format, fix the extension |
 | `image-too-large`, `video-too-large`, `unsupported-codec` | over the limits of section 12, HEVC video… | resize / re-encode (H.264 MP4 or VP9 WebM) |
 | `unknown-param`, `param-type-mismatch`, `preset-invalid` | binding or preset on a missing param, of the wrong type or out of bounds | declare the param, use a fitting type |
-| `unknown-data-path`, `binding-range`, `binding-map-required` | wrong `bind` path; `range` without `to`; string data without `map` | use a path of section 8; give both `range` and `to` |
+| `unknown-data-path`, `binding-range`, `binding-map-required`, `binding-map-key` | wrong `bind` path; `range` without `to`; data bound without `map` to a property of another type (a number into a color, a vector or `visible`; plugin text into a color); a `map` key that never matches (`"1.0"` for a number) | use a path of section 8; give both `range` and `to`; add `map` from data values to property values; write the key the hint gives (`"1"`) |
 | `unknown-event`, `not-tunable` | wrong event name; `threshold` on an event that has none | names of section 9 |
 | `duplicate-id`, `missing-id`, `unknown-layer`, `not-canvas`, `canvas-not-drawn` | layer ids; a canvas needs an `id` and a `draw.<id>` function | give unique ids; add the draw function |
 | `shader-version`, `shader-main`, `shader-no-effect`, `shader-name` | `#version`, `main()`, no `effect()`, a reserved uniform name | write only `vec4 effect(vec2 uv)`; rename the uniform |

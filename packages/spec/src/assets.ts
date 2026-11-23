@@ -11,7 +11,9 @@ export const AssetPath = Type.String({
   'x-hint': 'Put the file in the filter\'s assets/ folder, e.g. "assets/hat.glb".',
 })
 
-export const AssetKind = Type.Enum(['image', 'spritesheet', 'video', 'model', 'audio', 'lut', 'shader', 'font', 'lottie', 'data'], { description: 'Kind of asset (inferred from the file extension when omitted).' },
+export const AssetKind = Type.Enum(['image', 'spritesheet', 'video', 'model', 'audio', 'lut', 'shader', 'font', 'lottie', 'data'], {
+  description: 'Kind of asset (inferred from the file extension when omitted). "lottie" and "data" are reserved: no v1 layer or script API reads them, only plugin layers.',
+},
 )
 
 export const AssetFile = Type.Object(

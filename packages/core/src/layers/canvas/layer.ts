@@ -8,8 +8,8 @@
  * `anchor: "screen"`): `draw` receives the whole frame, not a face.
  *
  * Placement is the sticker's (`createSticker`): one quad per selected face, `size` is the height in anchor units and
- * the width follows `width / height`; `visible`, `opacity`, `size`, `offset`, `rotation` are bindable and settable by
- * the script. Nothing is shown until the script has drawn once.
+ * the width follows `width / height`, `scale` multiplies it; `visible`, `opacity`, `size`, `scale`, `offset`,
+ * `rotation` are bindable and settable by the script. Nothing is shown until the script has drawn once.
  *
  * Images arrive premultiplied, like decoded image assets: `ImageBitmap` uploads ignore `UNPACK_PREMULTIPLY_ALPHA` and
  * `UNPACK_FLIP_Y` (WebGL), and the sticker material samples v = 0 as the top row.

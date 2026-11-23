@@ -277,6 +277,30 @@ describe('text layer', () => {
     expect(h.meshes.map((m) => m.visible)).toEqual([false, false])
   })
 
+  it('scale multiplies the drawn block around the anchor point, uniformly or per axis, without redrawing', () => {
+    const axis = (m: Mesh, i: number) => new Vector3().setFromMatrixColumn(m.matrix, i).length()
+    const base = harness({ text: 'abcd', align: 'left', size: 0.5 })
+    base.frame(1)
+    const p = params({ s: ['number', 2] })
+    const doubled = harness({ text: 'abcd', align: 'left', size: 0.5, scale: { param: 's' } }, p)
+    doubled.frame(1)
+    expect(axis(doubled.meshes[0]!, 0)).toBeCloseTo(2 * axis(base.meshes[0]!, 0))
+    expect(axis(doubled.meshes[0]!, 1)).toBeCloseTo(2 * axis(base.meshes[0]!, 1))
+    // The anchor point stays on the left edge: the plane centre moves away from it twice as far.
+    expect(position(doubled.meshes[0]!).x).toBeCloseTo(2 * position(base.meshes[0]!).x)
+    p.set('s', 3)
+    doubled.frame(1)
+    expect(axis(doubled.meshes[0]!, 1)).toBeCloseTo(3 * axis(base.meshes[0]!, 1))
+    expect(doubled.draws()).toBe(1)
+    const stretched = harness({ text: 'abcd', size: 0.5, scale: [1, 1.4, 1] })
+    stretched.frame(1)
+    expect(axis(stretched.meshes[0]!, 0)).toBeCloseTo(axis(base.meshes[0]!, 0))
+    expect(axis(stretched.meshes[0]!, 1)).toBeCloseTo(1.4 * axis(base.meshes[0]!, 1))
+    const flat = harness({ text: 'abcd', scale: [1, 0, 1] })
+    flat.frame(1)
+    expect(flat.meshes[0]!.visible).toBe(false)
+  })
+
   it('puts the anchor on the alignment edge', () => {
     const left = harness({ text: 'abcd', align: 'left' })
     left.frame(1)

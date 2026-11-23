@@ -251,6 +251,21 @@ describe('sticker layer', () => {
     layer.dispose()
   })
 
+  it('scale multiplies the size, uniformly or per axis, bindable; a factor ≤ 0 hides the quad', () => {
+    const ctx = context({ wide: asset('image', 200, 100) })
+    const uniform = createSticker({ type: 'sticker', src: 'wide', size: 0.5, scale: 2 } as LayerDecl, ctx)
+    uniform.update(frameAt(0, fakeAnchors([4])))
+    expect(scaleOf(meshes(uniform)[0]!.matrix)).toEqual([12, 6, 12]) // twice the [6, 3, 6] of size 0.5
+    const stretched = createSticker({ type: 'sticker', src: 'wide', size: 0.5, scale: [1, 1.4, 1] } as LayerDecl, ctx)
+    stretched.update(frameAt(0, fakeAnchors([4])))
+    expect(scaleOf(meshes(stretched)[0]!.matrix)).toEqual([6, 4.2, 6])
+    const bound = createSticker({ type: 'sticker', src: 'wide', size: 0.5, scale: { bind: 'face.index', range: [0, 1], to: [0, 1] } } as LayerDecl, ctx)
+    bound.update(frameAt(0, fakeAnchors([4, 9])))
+    expect(meshes(bound).map((m) => m.visible)).toEqual([false, true]) // face 0: scale 0
+    expect(scaleOf(meshes(bound)[1]!.matrix)).toEqual([6, 3, 6])
+    for (const l of [uniform, stretched, bound]) l.dispose()
+  })
+
   it('orient "screen" keeps the quad facing the screen; rotation is in degrees', () => {
     const layer = createSticker(
       { type: 'sticker', src: 'img', orient: 'screen', rotation: [0, 0, 90], offset: [1, 0, 0] } as LayerDecl,
@@ -491,7 +506,8 @@ describe('sticker layer: allocation', () => {
     const layers = [
       createSticker({ type: 'sticker', src: 'walk', offset: [0, 1, 0], rotation: [0, 0, 15], opacity: { bind: 'face.index', range: [0, 3], to: [1, 0.5] } } as LayerDecl, ctx),
       createSticker({ type: 'sticker', src: { pick: ['a', 'b'] }, orient: 'screen', faces: 'largest' } as LayerDecl, ctx),
-      createSticker({ type: 'sticker', src: 'a', anchor: 'screen', faces: 2 } as LayerDecl, ctx),
+      createSticker({ type: 'sticker', src: 'a', anchor: 'screen', faces: 2, scale: [1, 2, 1] } as LayerDecl, ctx),
+      createSticker({ type: 'sticker', src: 'b', scale: { bind: 'face.index', range: [0, 3], to: [1, 2] } } as LayerDecl, ctx),
     ]
     const ids = [1, 2, 3, 4]
     const anchors = fakeAnchors(ids)

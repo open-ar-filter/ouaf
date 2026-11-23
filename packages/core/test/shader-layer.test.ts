@@ -213,7 +213,10 @@ describe('checkProgram', () => {
 describe('shader layer', () => {
   const EFFECT = 'vec4 effect(vec2 uv) {\n  return ouaf_sample(uv);\n}\n'
 
-  async function setup(decl: Record<string, unknown>, options: { source?: string; log?: string; params?: Record<string, unknown>; types?: Record<string, string> } = {}) {
+  async function setup(
+    decl: Record<string, unknown>,
+    options: { source?: string; log?: string; params?: Record<string, unknown>; types?: Record<string, string>; requiresFace?: boolean; warnings?: string[] } = {},
+  ) {
     const faces: FaceFrame = createFaceFrame(2)
     const anchors: AnchorProvider = {
       face: (face, _anchor, _follow, m) => (face < faces.count ? (m.makeScale(6.3, 6.3, 6.3).setPosition(face * 10, 0, -60), true) : false),
@@ -229,8 +232,9 @@ describe('shader layer', () => {
       params: {} as LayerContext['params'],
       bindings: bindingEnv(options.params ?? {}, options.types ?? {}, faces),
       maxFaces: 2,
+      ...(options.requiresFace !== undefined ? { requiresFace: options.requiresFace } : {}),
       random: Math.random,
-      warn: () => {},
+      warn: (m: string) => void options.warnings?.push(m),
     } satisfies LayerContext
     const layer = (await createShaderLayer({ type: 'shader', src: 'assets/fx.frag', ...decl } as LayerDecl, ctx)) as PassLayer
     const frame: FrameContext = { time: 1.5, now: 0, dt: 20, faces, anchors, width: 1280, height: 720, mirrored: false }
@@ -290,6 +294,26 @@ describe('shader layer', () => {
     expect(name.details[0]!.message).toContain('"my-amount" is not a GLSL identifier')
     const type = await reject({ types: { s: 'string' } }, { uniforms: { u: { param: 's' } } })
     expect(type.details[0]!.message).toContain('parameter "s" has type "string"')
+  })
+
+  it('warns at load when the source uses a face input without requires.face, and loads anyway (spec §11.1)', async () => {
+    const source = 'vec4 effect(vec2 uv) { return ouaf_sample(uv) * ouaf_faceMask(uv) * float(ouaf_faceCount); }'
+    const warnings: string[] = []
+    const { layer } = await setup({ id: 'mask' }, { source, requiresFace: false, warnings })
+    expect(warnings).toEqual([
+      'shader layer "mask" (assets/fx.frag) uses ouaf_faceMask, ouaf_faceCount, which need "requires": { "face": true }: ' +
+        'without it no face is tracked, so they read as no face (empty mask, 0 faces).',
+    ])
+    expect(layer.kind).toBe('pass')
+    layer.dispose()
+    // With requires.face, with no face input (comments do not count), or outside a filter: no warning.
+    const quiet: string[] = []
+    for (const options of [
+      { source, requiresFace: true },
+      { source: '// ouaf_faceMask(uv)\n' + EFFECT, requiresFace: false },
+      { source },
+    ]) (await setup({}, { ...options, warnings: quiet })).layer.dispose()
+    expect(quiet).toEqual([])
   })
 
   it('does not allocate per frame', async () => {

@@ -275,15 +275,30 @@ describe('formats and limits (spec §10)', () => {
 })
 
 describe('shaders (spec §11)', () => {
-  const shader = (src: string, compileShader?: ShaderCompiler) =>
+  const shader = (src: string, compileShader?: ShaderCompiler, requires: Record<string, unknown> = {}, ref = 'fx') =>
     validatePackage(memorySource({
-      'manifest.json': JSON.stringify({ ...base, requires: {}, assets: { fx: 'assets/fx.frag' }, layers: [{ type: 'shader', src: 'fx' }] }),
+      'manifest.json': JSON.stringify({ ...base, requires, assets: { fx: 'assets/fx.frag' }, layers: [{ type: 'shader', id: 'mask', src: ref }] }),
       'assets/fx.frag': src,
     }), compileShader ? { compileShader } : {})
 
   it('ignores #version and main() inside comments', async () => {
     const r = await shader('/* #version 300 es\nvoid main() {} */\n// void main()\nvec4 effect(vec2 uv) { return ouaf_sample(uv); }\n')
     expect(r.errors).toEqual([])
+  })
+
+  it('ouaf_faceMask uses the face: requires.face is needed, and is not reported unused (spec §11.1)', async () => {
+    const masked = 'vec4 effect(vec2 uv) { return ouaf_sample(uv) * ouaf_faceMask(uv); }\n'
+    const missing = await shader(masked)
+    expect(codes(missing.errors)).toEqual(['requires-face@manifest.json:1#/requires'])
+    expect(missing.errors[0]!.message).toContain('ouaf_faceMask in the shader of layer "mask"')
+    const declared = await shader(masked, undefined, { face: true })
+    expect([declared.errors, declared.warnings]).toEqual([[], []])
+    // By path rather than by asset name (the asset is then unused: its own warning).
+    const byPath = await shader(masked, undefined, { face: true }, 'assets/fx.frag')
+    expect(codes(byPath.warnings)).not.toContain('unused-requirement@manifest.json:1#/requires/face')
+    // A commented-out call is not a use.
+    const commented = await shader('// ouaf_faceMask(uv)\nvec4 effect(vec2 uv) { return ouaf_sample(uv); /* ouaf_faceMask */ }\n', undefined, { face: true })
+    expect(codes(commented.warnings)).toEqual(['unused-requirement@manifest.json:1#/requires/face'])
   })
 
   it('hands the source to a compiler hook and reports its diagnostics with their lines', async () => {

@@ -7,6 +7,7 @@ import { createFaceFrame } from '../src/face.ts'
 import { FrameDataBuilder, type FrameDataSource } from '../src/script/frame-data.ts'
 import { ScriptHost, estimateSize, type ScriptHostOptions, type ScriptPort } from '../src/script/host.ts'
 import { ScriptOverrides } from '../src/script/overrides.ts'
+import { ShaderUniforms } from '../src/layers/shader/uniforms.ts'
 import { env, fakeImage, runtime, tick } from './script-helpers.ts'
 
 /** Waits until the host has the script's answer to its last message (or 2 s at most). */
@@ -155,6 +156,43 @@ describe('script host', () => {
     s.host.endFrame(0.033, s.source)
     expect(sent.map((m) => m.seed)).toEqual([7, undefined])
     expect(s.warnings).toEqual([])
+  })
+
+  it('sets, animates and restores shader uniforms one by one (spec §12.4)', async () => {
+    const s = hostSetup(`export default { on: { 'message:go'(f, { data }) {
+      if (data === 'set') f.layer('label').set({ uniforms: { amount: 2, tint: '#00ff00' } })
+      if (data === 'reset') f.layer('label').set({ uniforms: { amount: null } })
+      if (data === 'animate') f.layer('label').animate({ uniforms: { amount: 4, offset: [1, 1] } }, { duration: 1000, easing: 'linear' })
+      if (data === 'bad') f.layer('label').set({ uniforms: { nope: 1, flag: 1 } })
+    } } }`)
+    const u = new ShaderUniforms({ amount: 0.5, tint: '#ff0000', offset: [0, 0], flag: true }, env(s.overrides.forLayer(0)))
+    const values = () => {
+      u.update(0)
+      const rgb = [...(u.uniforms.tint!.value as Float32Array)].slice(0, 3)
+      return { amount: u.uniforms.amount!.value, tint: rgb, offset: [...(u.uniforms.offset!.value as Float32Array)] }
+    }
+    await s.host.start({}, 0)
+    await idle(s.host)
+    const step = async (data: string, time: number) => {
+      s.host.beginFrame()
+      s.host.queue({ name: 'message:go', payload: { data } })
+      s.overrides.clock.advance(time)
+      s.host.endFrame(time, s.source)
+      await idle(s.host)
+      s.host.beginFrame()
+    }
+    await step('set', 0)
+    expect(values()).toEqual({ amount: 2, tint: [0, 1, 0], offset: [0, 0] })
+    // null restores that uniform only.
+    await step('reset', 0.1)
+    expect(values()).toEqual({ amount: 0.5, tint: [0, 1, 0], offset: [0, 0] })
+    // Numbers and vectors animate (colors too), from the current value: halfway, 0.5 → 4 and [0, 0] → [1, 1].
+    await step('animate', 0.2)
+    s.overrides.clock.advance(0.7)
+    expect(values()).toEqual({ amount: 2.25, tint: [0, 1, 0], offset: [0.5, 0.5] })
+    await step('bad', 0.8)
+    expect(s.warnings.join('\n')).toMatch(/no property "uniforms.nope" a script can set \(settable: opacity, text, uniforms.amount, uniforms.tint, uniforms.offset, uniforms.flag\)/)
+    expect(s.warnings.join('\n')).toMatch(/1 is not a valid "uniforms.flag"/)
   })
 
   it('drops messages over 64 KB or beyond 60 per second', async () => {

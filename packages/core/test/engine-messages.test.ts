@@ -37,4 +37,13 @@ describe('host messages (send)', () => {
     expect(codeOf(() => messagePayload('go', Symbol('s')))).toBe('invalid-message')
     expect(() => messagePayload('go', { fn: () => 1 })).toThrow(/send\("go"\): the data cannot be sent to a script, it must be structured-cloneable/)
   })
+
+  it('refuses data larger than 64 KB, measured as f.emit measures it (spec §12.4)', () => {
+    // Strings count 2 bytes a character: 32 768 characters are 64 KB.
+    expect(messagePayload('go', 'x'.repeat(32_000))).toEqual({ data: 'x'.repeat(32_000) })
+    expect(codeOf(() => messagePayload('go', 'x'.repeat(32_769)))).toBe('invalid-message')
+    expect(codeOf(() => messagePayload('go', { bytes: new Uint8Array(64 * 1024) }))).toBe('invalid-message')
+    expect(codeOf(() => messagePayload('go', new Uint8Array(60 * 1024)))).toBe('no error')
+    expect(() => messagePayload('go', Array.from({ length: 10_000 }, (_, i) => i))).toThrow(/send\("go"\): the data is larger than 64 KB/)
+  })
 })

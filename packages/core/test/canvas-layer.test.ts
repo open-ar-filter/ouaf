@@ -86,6 +86,14 @@ describe('canvas layer', () => {
     expect(second.closed).toBe(true)
   })
 
+  it('scale multiplies the size, as on a sticker', () => {
+    const layer = createCanvasLayer({ type: 'canvas', id: 'bubble', width: 200, height: 100, size: 0.5, scale: [2, 1, 1] } as LayerDecl, context())
+    layer.setImage(asBitmap(image(200, 100)))
+    layer.update(frame(1))
+    expect(scaleOf(meshes(layer.object)[0]!.matrix)).toEqual([12, 3, 6])
+    layer.dispose()
+  })
+
   it('refuses an image of another size than declared', () => {
     const warnings: string[] = []
     const layer = createCanvasLayer({ type: 'canvas', id: 'c', width: 64, height: 64 } as LayerDecl, context(warnings))
