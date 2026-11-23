@@ -11,7 +11,7 @@
  * Landmark indices are those of MediaPipe's face mesh; "left" / "right" are the person's sides (spec §5.1).
  */
 import { LANDMARKS_STRIDE, type FaceFrame } from '../face.ts'
-import { SIGNAL, writeHeadPose, type ExpressionSignalSource } from './signals.ts'
+import { SIGNAL, SIGNALS_STRIDE, writeHeadPose, type ExpressionSignalSource } from './signals.ts'
 
 /** Landmarks the geometric source reads (for fixtures and tests). */
 export const GEOMETRY_LANDMARKS = {
@@ -280,5 +280,23 @@ export class GeometrySignals {
     const span = EYE_BASELINE.one - EYE_BASELINE.zero
     out[offset + SIGNAL.eyeClosedLeft] = Math.min(1, Math.max(0, (1 - measures[M_EYE_LEFT]! / st[o + 1]! - EYE_BASELINE.zero) / span - smile))
     out[offset + SIGNAL.eyeClosedRight] = Math.min(1, Math.max(0, (1 - measures[M_EYE_RIGHT]! / st[o + 2]! - EYE_BASELINE.zero) / span - smile))
+  }
+}
+
+/**
+ * Eyes for the blink and wink events while blendshapes are available (#90): per eye, the larger of the blendshape
+ * score and the geometric closure (`GeometrySignals`), written into `signals` for the first `count` faces; `geometry`
+ * holds the geometric signals of the same faces (same layout). MediaPipe's `eyeBlink` peaks at 0.5–0.6 on a full blink
+ * for some people, and a blink sampled at 10–15 Hz is often caught half-closed: on the test clips this catches more
+ * blendshape blinks at 15 and 10 Hz with no extra event. Only the event signals change: bindings and scripts keep the
+ * raw blendshapes. Allocation-free.
+ */
+export function maxEyeSignals(count: number, geometry: Float32Array, signals: Float32Array): void {
+  for (let i = 0; i < count; i++) {
+    const o = i * SIGNALS_STRIDE
+    for (let k = SIGNAL.eyeClosedLeft; k <= SIGNAL.eyeClosedRight; k++) {
+      const g = geometry[o + k]!
+      if (g > signals[o + k]!) signals[o + k] = g
+    }
   }
 }

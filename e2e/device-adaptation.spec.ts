@@ -51,13 +51,18 @@ test('slow tracking: capabilities dropped in order, then the face filter hidden;
   expect(await blue(page)).toBeGreaterThan(20)
   expect(await page.evaluate(() => window.ouaf!.engine.performance.state)).toBe('unsupported')
 
-  // Throttle off: the machine's own speed (the benchmark picked its faster backend). Shown again above 18 Hz, then the
-  // capabilities come back one by one, last dropped first, if the machine has room for them (≥ 20 Hz predicted).
+  // The device frees up *later* (throttle off): the machine's own speed (the benchmark picked its faster backend).
+  // Not at the hide itself: for its first `hiddenBaselineMs` hidden, the governor learns what hiding gained, and a
+  // speed-up then is what hiding the filter freed (the flicker case, which waits for a probe).
+  test.setTimeout(300_000)
+  await page.waitForTimeout(await page.evaluate(() => window.ouaf!.core.DEFAULT_GOVERNOR_TUNING.hiddenBaselineMs + 1000))
   await page.evaluate(() => (window.ouaf!.throttle.ms = 0))
   await page.waitForTimeout(5000)
   const hz = await page.evaluate(() => window.ouaf!.engine.performance.trackingHz)
   test.skip(hz < 22, `this machine tracks at ${hz.toFixed(1)} Hz without throttle: too slow to check the recovery`)
-  await expect.poll(() => events(page), { ...POLL, timeout: 90_000 }).toContain('ok[]')
+  // Shown again, then the capabilities come back one by one, last dropped first. Each step waits for its prediction
+  // (≥ 18 Hz shown, ≥ 20 Hz with the capability), or on a slow machine for a probe (30 s): up to 4 × 31 s.
+  await expect.poll(() => events(page), { ...POLL, timeout: 150_000 }).toContain('ok[]')
   expect((await events(page)).slice(4)).toEqual([
     'degraded[blendshapes,extraFaces,resolution]',
     'degraded[blendshapes,extraFaces]',
@@ -103,15 +108,44 @@ test('a filter that requires blendshapes never loses them: it is hidden instead'
 })
 
 test('with blendshapes dropped, expression events come from the landmark geometry', async ({ page }) => {
-  // 40 ms per result: 15 Hz, below the drop level; 34 ms without blendshapes, 24 ms also without the resolution:
-  // the governor stops dropping once the rate is back above 16 Hz, and the filter stays shown.
-  await open(page, 'throttle=40&filter=/filters/fixtures/dot-tint/')
-  await expect.poll(() => events(page), POLL).toContain('degraded[blendshapes]')
+  // 70 ms per result: at most 14.3 Hz, below the drop level whatever the frame cadence. Each drop saves a share (15 %,
+  // 20 %, 25 %): 28 ms with all three, 30 Hz at the clip's 30 fps, clearly above the floor (two drops alone could land on
+  // 15 Hz, the floor itself, as rates snap to 30, 15, 10 Hz). The filter stays shown, its events from the geometry.
+  await open(page, 'maxFaces=2&throttle=70&filter=/filters/fixtures/dot-tint/')
+  await expect.poll(() => events(page), POLL).toContain('degraded[blendshapes,extraFaces,resolution]')
+  await expect.poll(() => page.evaluate(() => window.ouaf!.engine.performance.state), POLL).toBe('degraded')
   const before = await page.evaluate(() => window.ouaf!.events.length)
   // pesquet-talk (8 s, looping) has blinks at about 1.9, 3.0 and 6.9 s.
   await expect.poll(() => page.evaluate((n) => window.ouaf!.events.slice(n).filter((e) => e.name === 'blink').length, before), { ...POLL, timeout: 30_000 }).toBeGreaterThan(0)
   expect(await page.evaluate(() => window.ouaf!.engine.performance.state)).toBe('degraded')
   expect(await page.evaluate(() => window.ouaf!.engine.performance.dropped[0])).toBe('blendshapes')
+})
+
+test('?signals: peaks of the last 1.5 s, and blink counts that match the events the engine fired', async ({ page }) => {
+  await open(page, 'signals&filter=/filters/fixtures/dot-tint/')
+  const read = () =>
+    page.evaluate(() => ({
+      rows: [...document.querySelectorAll('.ouaf-perf table tr')].map((tr) => [...tr.children].map((c) => c.textContent ?? '')),
+      blinks: window.ouaf!.events.filter((e) => e.name === 'blink').length,
+    }))
+  let panel = await read()
+  const row = (name: string) => panel.rows.find((r) => r[0] === name)!
+  // pesquet-talk has blinks at about 1.9, 3.0 and 6.9 s (looping). The table is refreshed 4 times a second, and shows
+  // "—" while no face is tracked (the clip has cuts): wait for a counted blink and a face.
+  await expect
+    .poll(async () => {
+      panel = await read()
+      return Number(row('blink')[1]) > 0 && row('eyeClosedLeft').slice(1).every((cell) => !Number.isNaN(Number(cell)))
+    }, POLL)
+    .toBe(true)
+  // Signal rows: now and peak for each source, as numbers; a peak is at least the value now.
+  for (const cell of row('eyeClosedLeft').slice(1)) expect(Number(cell)).not.toBeNaN()
+  expect(Number(row('eyeClosedLeft')[2])).toBeGreaterThanOrEqual(Number(row('eyeClosedLeft')[1]) - 1e-9)
+  // Blendshapes available (no throttle): the engine's blinks are counted under "engine (bs+geo)".
+  const blink = row('blink')
+  expect(Number(blink[1])).toBeGreaterThan(0)
+  expect(Number(blink[1])).toBeLessThanOrEqual(panel.blinks)
+  expect(Number(blink[2])).toBe(0)
 })
 
 test('adaptation can be turned off', async ({ page }) => {

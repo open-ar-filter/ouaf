@@ -104,6 +104,40 @@ lowering on purpose, hence the larger MAE. Compensating the pitch helped one con
 kept. The clips have one person: the baseline's main gain, other people's eye shapes, is for live tests to confirm
 (`/engine.html?signals`).
 
+**Blinks with blendshapes, at low tracking rates.** Live (webcam, full light, ≈ 30 Hz tracking), MediaPipe's
+`eyeBlink` peaked at about 0.6 on full blinks for one person, borderline for the default 0.5. On the clips, the peak of
+min(left, right) per reference blink (blendshape blinks at 30 Hz), sampled from the raw results at every phase:
+
+| Rate | Source | Median peak | ≥ 0.5 | ≥ 0.4 | ≥ 0.35 |
+|---|---|---|---|---|---|
+| 30 Hz | blendshapes / geometry | 0.59 / 0.74 | 100 % / 91 % | 100 % / 100 % | 100 % / 100 % |
+| 15 Hz | blendshapes / geometry | 0.59 / 0.69 | 82 % / 73 % | 86 % / 82 % | 91 % / 82 % |
+| 10 Hz | blendshapes / geometry | 0.54 / 0.63 | 73 % / 70 % | 85 % / 79 % | 94 % / 82 % |
+
+So a blink seen at 10–15 Hz is often caught half-closed, whatever the source. What the clips say about the fixes
+tried (clear reference blinks hit, extra blinks; the three blendshape "blinks" while the person looks down are left
+out of the hits), at 30 / 15 / 10 Hz:
+
+| Option | Hits | Extra |
+|---|---|---|
+| Blendshapes, threshold 0.5 (unchanged default) | 8/8, 10/16, 19/24 | 0, 0, 0 |
+| Blendshapes, threshold 0.4 | 7/8, 10/16, 15/24 | 3, 6, 7 |
+| Blendshapes, threshold 0.35 | 7/8, 12/16, 16/24 | 7, 6, 15 |
+| Blendshapes, detector calibration on, threshold 0.4 | 6/8, 10/16, 17/24 | 1, 0, 0 |
+| Blendshapes normalised per face (open / closed envelopes) | at best 6/8, 10/16, 15/24 | 1, 0, 0, plus winks |
+| Geometry (mapping 0.2 → 0, 0.7 → 1); 0.6 or 0.5 for the "1" end | 7/8, 10/16, 17/24 | 1, 2, 1; more with a lower "1" |
+| **Each eye: max(blendshape, geometry)** | **8/8, 12/16, 20/24** | **0, 0, 0** (no wink either) |
+
+Lowering the threshold or normalising the blendshapes adds false blinks while the person looks down (the score stays
+at 0.3–0.8 for seconds); a more sensitive geometric mapping only adds false blinks. The engine therefore keeps the
+default threshold (0.5) and, while blendshapes are available, gives the blink and wink detectors each eye's **larger**
+value of the blendshape score and the geometric closure (`maxEyeSignals`): it catches the blinks a low `eyeBlink`
+misses (the live case) and more blinks at 15 and 10 Hz, with no extra event on the clips. Bindings and scripts keep
+the raw blendshapes. Caveat: the reference blinks are blendshape crossings themselves; labelling the clips by eye was
+tried but the person mostly looks down and moves, and the eye crops are too small to tell a blink from lowered lids.
+The engine page's `?signals` panel shows each signal's peak over 1.5 s and counts the blinks and winks the engine
+fired, and those each source alone would fire, to measure this live.
+
 Smiles with the default thresholds: 3 of the 4 blendshape smiles fire from the geometry within 250 ms (at 30 Hz and
 at 15 Hz), with extra smile / smileEnd pairs around the threshold. The clips do not reach the thresholds of
 `mouthOpen` (jawOpen ≤ 0.3 on those frames), `eyebrowRaise` or `kiss`: those mappings are extrapolated, their "1" set

@@ -2,16 +2,21 @@
  * Performance panel of the engine page (#90, #34): rendering and tracking rates, frame budget, the device governor's
  * state and dropped capabilities (spec §16), the `performance` events, and a control that simulates slow tracking
  * (`throttlePlugin`) to watch the governor on a fast device. With `?signals`, a table compares the expression signals
- * from blendshapes and from the landmark geometry for face 0 (spec §13), live.
+ * from blendshapes and from the landmark geometry for face 0 (spec §13), live, with the peak of the last 1.5 s (a blink
+ * lasts one or two tracking results), and counts blinks and winks: those the engine fired (with the source it used:
+ * blendshapes, or the geometry while they are dropped) and those each source alone would fire.
  */
 import {
+  BLENDSHAPES_STRIDE,
   DEFAULT_GOVERNOR_TUNING,
+  ExpressionEventDetector,
   SIGNAL,
   blendshapeSignals,
   createSignals,
   GeometrySignals,
   type Engine,
   type EngineStats,
+  type ExpressionEventPayload,
   type ObjectLayer,
   type OuafPlugin,
   type PerformanceEvent,
@@ -41,6 +46,8 @@ const STYLE = `
 
 export interface PerfPanel {
   readonly element: HTMLElement
+  /** An expression event the engine delivered to a filter (counted under `?signals`). */
+  expression(e: ExpressionEventPayload): void
   /** `performance` events received, oldest first (test hook). */
   readonly events: PerformanceEvent[]
   /** Renders the expression signals of face 0 (`?signals`), installed with the engine. */
@@ -97,19 +104,43 @@ export function createPerfPanel(throttle: TrackingThrottle, options: { signals: 
     textContent: `floor ${t.floorHz} Hz (hidden after ${t.floorDelayMs / 1000} s), shown above ${t.resumeHz} Hz; drops below ${t.dropBelowHz} Hz, restores above ${t.restoreAboveHz} Hz`,
   })
 
+  const SIGNAL_NAMES = ['eyeClosedLeft', 'eyeClosedRight', 'jawOpen', 'smile', 'browRaise', 'pucker'] as const
   const table = el('table')
-  const signalRows = new Map<string, [HTMLElement, HTMLElement]>()
+  /** Per signal: blendshapes now, blendshapes peak, geometry now, geometry peak. */
+  const signalRows = new Map<string, HTMLElement[]>()
+  const COUNTED = ['blink', 'wink left', 'wink right'] as const
+  /** Per counted event: engine (blendshapes), engine (geometry), blendshapes alone, geometry alone. */
+  const countCells = new Map<string, HTMLElement[]>()
+  const counts = new Map<string, number[]>(COUNTED.map((n) => [n, [0, 0, 0, 0]]))
+  const resetButton = el('button', { type: 'button', textContent: 'Reset counts' })
   if (options.signals) {
-    table.append(el('tr', {}, el('th', { textContent: 'signal' }), el('th', { textContent: 'blendshapes' }), el('th', { textContent: 'geometry' })))
-    for (const name of ['eyeClosedLeft', 'eyeClosedRight', 'jawOpen', 'smile', 'browRaise', 'pucker'] as const) {
-      const a = el('td', { textContent: '—' })
-      const b = el('td', { textContent: '—' })
-      signalRows.set(name, [a, b])
-      table.append(el('tr', {}, el('td', { textContent: name }), a, b))
+    table.append(el('tr', {}, ...['signal', 'blendshapes', 'peak 1.5 s', 'geometry', 'peak 1.5 s'].map((h) => el('th', { textContent: h }))))
+    for (const name of SIGNAL_NAMES) {
+      const cells = [0, 1, 2, 3].map(() => el('td', { textContent: '—' }))
+      signalRows.set(name, cells)
+      table.append(el('tr', {}, el('td', { textContent: name }), ...cells))
+    }
+    table.append(el('tr', {}, ...['events', 'engine (bs+geo)', 'engine (geo)', 'bs alone', 'geo alone'].map((h) => el('th', { textContent: h }))))
+    for (const name of COUNTED) {
+      const cells = [0, 1, 2, 3].map(() => el('td', { textContent: '0' }))
+      countCells.set(name, cells)
+      table.append(el('tr', {}, el('td', { textContent: name }), ...cells))
     }
   }
+  const showCounts = () => {
+    for (const [name, cells] of countCells) counts.get(name)!.forEach((n, i) => (cells[i]!.textContent = String(n)))
+  }
+  resetButton.addEventListener('click', () => {
+    for (const c of counts.values()) c.fill(0)
+    showCounts()
+  })
+  const signalsHelp = el('div', {
+    className: 'ouaf-perf-info',
+    textContent:
+      'Engine: events delivered to the filters, under the source in use: with blendshapes, each eye is the larger of the blendshape and the geometry; geometry alone while blendshapes are dropped (?throttle). "Alone": what each source would fire by itself, approximated here on the displayed faces, once per tracking result. Blink 10 times, then read the counts.',
+  })
 
-  const element = el('div', { className: 'ouaf-perf' }, style, grid, tracker, stateLine, help, log, throttleLine, ...(options.signals ? [table] : []))
+  const element = el('div', { className: 'ouaf-perf' }, style, grid, tracker, stateLine, help, log, throttleLine, ...(options.signals ? [table, resetButton, signalsHelp] : []))
 
   const showState = (p: PerformanceEvent) => {
     state.textContent = p.state
@@ -119,11 +150,26 @@ export function createPerfPanel(throttle: TrackingThrottle, options: { signals: 
 
   const bs = createSignals(1)
   const geo = createSignals(1)
-  // The engine's own source (adaptive open-eye baseline), fed every frame; on the displayed faces (smoothed), where
-  // the engine reads the raw result: blinks look a little weaker here.
+  // The engine's own source (adaptive open-eye baseline), fed once per tracking result; on the displayed faces
+  // (smoothed), where the engine reads the raw result: blinks look a little weaker here than in the engine.
   const geometry = new GeometrySignals(1)
   const ids = new Int32Array(1)
+  const detectors = [new ExpressionEventDetector({ maxFaces: 1 }), new ExpressionEventDetector({ maxFaces: 1 })] as const
+  /** Peak of each signal over the last `PEAK_MS`, and when it was reached: blendshapes, then geometry. */
+  const PEAK_MS = 1500
+  const peaks = new Float64Array(2 * SIGNAL_NAMES.length)
+  const peakAt = new Float64Array(2 * SIGNAL_NAMES.length).fill(-Infinity)
+  /** Blendshapes of the last result seen: they only change with a new tracking result (copied, not smoothed). */
+  const lastScores = new Float32Array(BLENDSHAPES_STRIDE)
   let shownAt = -Infinity
+  let engineRef: Engine | undefined
+  const countEvents = (column: number, out: ReturnType<ExpressionEventDetector['update']>) => {
+    for (let i = 0; i < out.count; i++) {
+      const e = out.items[i]!
+      const key = e.name === 'blink' ? 'blink' : e.name === 'wink' ? `wink ${e.side}` : undefined
+      if (key) counts.get(key)![column]!++
+    }
+  }
   const signalsPlugin: OuafPlugin = {
     name: 'playground-signals',
     version: '1.0.0',
@@ -136,20 +182,41 @@ export function createPerfPanel(throttle: TrackingThrottle, options: { signals: 
           object: new Group(),
           update(frame) {
             if (!options.signals) return
-            const has = frame.faces.count > 0
+            const faces = frame.faces
+            const has = faces.count > 0
+            let fresh = false
             if (has) {
+              for (let i = 0; i < BLENDSHAPES_STRIDE; i++) if (faces.blendshapes[i] !== lastScores[i]) fresh = true
+              if (fresh) lastScores.set(faces.blendshapes.subarray(0, BLENDSHAPES_STRIDE))
+            }
+            if (fresh) {
               ids[0] = frame.anchors.id(0)
+              blendshapeSignals(faces, 0, bs, 0)
               geometry.begin(ids, frame.now)
-              geometry.source(frame.faces, 0, geo, 0)
+              geometry.source(faces, 0, geo, 0)
+              countEvents(2, detectors[0].update(frame.now, 1, ids, bs))
+              countEvents(3, detectors[1].update(frame.now, 1, ids, geo))
+              SIGNAL_NAMES.forEach((name, k) => {
+                for (let src = 0; src < 2; src++) {
+                  const v = (src ? geo : bs)[SIGNAL[name]]!
+                  const j = src * SIGNAL_NAMES.length + k
+                  if (v >= peaks[j]! || frame.now - peakAt[j]! > PEAK_MS) {
+                    peaks[j] = v
+                    peakAt[j] = frame.now
+                  }
+                }
+              })
             }
             if (frame.now - shownAt < 250) return
             shownAt = frame.now
-            if (has) blendshapeSignals(frame.faces, 0, bs, 0)
-            for (const [name, [a, b]] of signalRows) {
-              const k = SIGNAL[name as keyof typeof SIGNAL]
-              a.textContent = has ? fmt(bs[k]!, 2) : '—'
-              b.textContent = has ? fmt(geo[k]!, 2) : '—'
-            }
+            SIGNAL_NAMES.forEach((name, k) => {
+              const cells = signalRows.get(name)!
+              cells[0]!.textContent = has ? fmt(bs[SIGNAL[name]]!, 2) : '—'
+              cells[1]!.textContent = fmt(peaks[k]!, 2)
+              cells[2]!.textContent = has ? fmt(geo[SIGNAL[name]]!, 2) : '—'
+              cells[3]!.textContent = fmt(peaks[SIGNAL_NAMES.length + k]!, 2)
+            })
+            showCounts()
           },
           dispose() {},
         }),
@@ -161,7 +228,14 @@ export function createPerfPanel(throttle: TrackingThrottle, options: { signals: 
     element,
     events,
     signalsPlugin,
+    expression(e) {
+      const key = e.name === 'blink' ? 'blink' : e.name === 'wink' ? `wink ${e.side}` : undefined
+      if (!key || !engineRef) return
+      // The source the engine used: the geometry while the governor has dropped blendshapes.
+      counts.get(key)![engineRef.performance.dropped.includes('blendshapes') ? 1 : 0]!++
+    },
     attach(engine) {
+      engineRef = engine
       engine.on('stats', (s: EngineStats) => {
         set('fps', fmt(s.fps))
         set('frame', `${fmt(s.frameMs)} (max ${fmt(s.frameMsMax)}) / ${fmt(1000 / s.fps)}`)

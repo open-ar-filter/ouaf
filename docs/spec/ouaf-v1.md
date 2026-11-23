@@ -887,6 +887,9 @@ phase 1 work they depend on.
 - Default event thresholds, after measurements on a variety of faces, and the mapping of the geometric measures used
   when blendshapes are dropped (13, 16.2) onto the same scale. The reference engine's first mapping is fitted on the
   test clips (#90): it covers blinks, smiles and speech; a wide-open mouth, raised eyebrows and a kiss are extrapolated.
+  For blinks and winks it also uses the eye geometry while blendshapes are available (the larger of the two values per
+  eye): MediaPipe's `eyeBlink` peaks at 0.5–0.6 on a full blink for some people, and a blink sampled at 10–15 Hz is
+  often caught half-closed. The default blink threshold stays 0.5.
 - Numeric limits (package size, dimensions, number of layers) after measurements on mobile: the phase 0 runs only
   drew a debug overlay (1–3 ms per frame), so rendering limits are measured with real layers (benchmark page,
   adaptive quality).

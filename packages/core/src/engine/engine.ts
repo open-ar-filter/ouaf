@@ -28,7 +28,7 @@ import { assertReadable, describeImage, isCanvas, isFrameImage, isSecurityError,
 import { checkSeed, deriveSeed, FILE_SOURCE_SEED, randomSeed, SeededRandom } from '../random.ts'
 import type { FitMode } from '../viewport.ts'
 import { FaceIdentityTracker, FaceSmoother } from '../anchoring/index.ts'
-import { GeometrySignals, blendshapeSignals, createSignals, readExpressionSignals } from '../expressions/index.ts'
+import { GeometrySignals, blendshapeSignals, createSignals, maxEyeSignals, readExpressionSignals } from '../expressions/index.ts'
 import { DeviceGovernor, type Capability, type GovernorTuning, type PerformanceState } from './governor.ts'
 import { BACKEND_STORE_PREFIX, localBackendStore } from './backend-choice.ts'
 import { FaceAnchors } from './anchor-provider.ts'
@@ -284,6 +284,7 @@ export class Engine {
   #signals: Float32Array
   /** Expression signals from the landmark geometry while blendshapes are dropped (spec §13, §16.2). */
   #geometry: GeometrySignals
+  #geometrySignals: Float32Array
   #bindingData = new FaceBindingData(createFaceFrame(1))
   #tracking: TrackingHub
   #fetch: typeof fetch
@@ -357,6 +358,7 @@ export class Engine {
     this.#drawn = createFaceFrame(maxFaces)
     this.#signals = createSignals(maxFaces)
     this.#geometry = new GeometrySignals(maxFaces)
+    this.#geometrySignals = createSignals(maxFaces)
     for (const loader of CORE_LOADERS) for (const kind of loader.kinds) this.#loaders.set(kind, loader)
 
     for (const plugin of options.builtins === false ? [] : builtinPlugins()) this.use(plugin)
@@ -1087,13 +1089,15 @@ export class Engine {
   #detectExpressions(raw: Readonly<FaceFrame>, timeMs: number): void {
     const faces = this.#smoothed
     const identity = this.#identity
-    if (this.#bindingData.blendshapes) readExpressionSignals(faces, this.#signals, blendshapeSignals)
-    else {
-      // From the raw result, in the same slots as the smoothed one: smoothing would blunt a blink that lasts one or two
-      // results (and the mapping was calibrated on raw landmarks).
-      this.#geometry.begin(identity.ids, timeMs)
-      readExpressionSignals(raw, this.#signals, this.#geometry.source)
-    }
+    // The geometric signals, from the raw result in the same slots as the smoothed one: smoothing would blunt a blink
+    // that lasts one or two results (and the mapping was calibrated on raw landmarks). Computed even with blendshapes:
+    // blinks and winks read the larger of the two eye values (`maxEyeSignals`), and the eye baselines stay warm.
+    this.#geometry.begin(identity.ids, timeMs)
+    if (this.#bindingData.blendshapes) {
+      readExpressionSignals(faces, this.#signals, blendshapeSignals)
+      readExpressionSignals(raw, this.#geometrySignals, this.#geometry.source)
+      maxEyeSignals(Math.min(faces.count, raw.count), this.#geometrySignals, this.#signals)
+    } else readExpressionSignals(raw, this.#signals, this.#geometry.source)
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
       const detector = filter.expressions
