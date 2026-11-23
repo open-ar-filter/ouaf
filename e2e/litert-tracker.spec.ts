@@ -46,9 +46,22 @@ test('sync readback (?readback=sync): each crop read back before its landmark mo
   expect(await page.evaluate(() => window.ouaf!.warnings)).toEqual([])
 })
 
-test('with maxFaces > 1, MediaPipe tracks (LiteRT.js tracks one face)', async ({ page }) => {
+test('with maxFaces > 1, LiteRT.js tracks every face (no more MediaPipe only)', async ({ page }) => {
   await open(page, 'source=two-faces-stacked&autostart&maxFaces=2&filter=/filters/fixtures/dot-tint/')
-  await expect.poll(async () => (await stats(page)).tracker, POLL).toMatch(/^MediaPipe GPU, main thread/)
+  await expect.poll(async () => (await stats(page)).tracker, POLL).toMatch(/^LiteRT\.js wasm in a worker/)
+  await expect.poll(async () => (await stats(page)).faces, POLL).toBe(2)
+})
+
+test('the governor drops the extra faces of LiteRT.js (it can shed them)', async ({ page }) => {
+  // One face in view, up to four wanted: the detector looks for the others every 500 ms. Dropping the extra faces
+  // (spec §16.2: the faces tracked at that moment are kept) stops that: the tracker then asks its worker for one face
+  // (unit test). Main thread throttled (CDP, 8×): the rate falls below the drop level; blendshapes go first, then the
+  // extra faces.
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 8 })
+  await page.goto('/engine.html?source=pesquet-closeup&autostart&backend=litert&maxFaces=4&adapt=1&filter=/filters/fixtures/dot-tint/')
+  await expect.poll(() => page.evaluate(() => window.ouaf?.performance.map((e) => e.dropped.join(',')) ?? []), { timeout: 90_000, intervals: [500, 1000] }).toContain('blendshapes,extraFaces')
+  expect((await stats(page)).faces).toBe(1)
 })
 
 test('nothing is fetched from another origin by the LiteRT.js tracker (docs/privacy.md)', async ({ page, baseURL }) => {
@@ -199,4 +212,169 @@ test(`landmarks, blendshapes and matrix match MediaPipe on the test clips: ${var
     expect(r.translationCm, clip).toBeLessThan(t.translationCm)
   }
 })
+}
+
+/**
+ * Several faces (#165, second PR): on `two-faces-stacked` (2) and `four-faces-grid` (4), every second frame, each of
+ * our faces is matched with MediaPipe's nearest (landmark centroids) on the frame it describes, and compared with the
+ * limits of the single face. Faces stay in their slots (a face's centroid is nearest its own previous one: no swap),
+ * and the number of faces does not flicker more than MediaPipe's.
+ */
+for (const [clip, maxFaces] of [
+  ['two-faces-stacked', 2],
+  ['four-faces-grid', 4],
+] as const) {
+  test(`several faces match MediaPipe's, in stable slots: ${clip}`, async ({ page }) => {
+    test.setTimeout(240_000)
+    await page.goto('/engine.html')
+    await page.waitForFunction(() => !!window.ouaf)
+    const r = await page.evaluate(
+      async ({ clip, maxFaces }) => {
+        const core = window.ouaf!.core
+        const warnings: string[] = []
+        const env = { assetsBaseUrl: new URL('./', document.baseURI).href, warn: (m: string) => void warnings.push(m) }
+        const config = { maxFaces, blendshapes: true, analysisScale: 1 }
+        const quantile = (values: number[], p: number) => [...values].sort((x, y) => x - y)[Math.min(values.length - 1, Math.floor(p * values.length))] ?? Number.NaN
+        const ours = await core.createLiteRtFaceTracker().create(config, env)
+        const mediaPipe = await core.mediaPipeFaceTracker.create(config, { ...env, backend: 'CPU' })
+        const a = core.createFaceFrame(maxFaces)
+        const theirs = new Map<number, ReturnType<typeof core.createFaceFrame>>()
+        const source = await core.OfflineVideoSource.open(`/test-media/${clip}.mp4`, { rate: Infinity })
+        const N = 478
+        const centroid = (f: ReturnType<typeof core.createFaceFrame>, i: number) => {
+          let x = 0
+          let y = 0
+          for (let k = 0; k < N; k++) {
+            x += f.landmarks[(i * N + k) * 3]! * f.width
+            y += f.landmarks[(i * N + k) * 3 + 1]! * f.height
+          }
+          return [x / N, y / N] as const
+        }
+        const landmarks: number[] = []
+        const blendshapes: number[] = []
+        const rotations: number[] = []
+        const translations: number[] = []
+        let frames = 0
+        let agree = 0
+        let swaps = 0
+        let ourChanges = 0
+        let theirChanges = 0
+        let ourPrevCount = -1
+        let theirPrevCount = -1
+        let prev: Array<readonly [number, number]> = []
+        for (let k = 0; ; k++) {
+          const frame = await source.read()
+          if (!frame) break
+          try {
+            if (k % 2) continue
+            const ts = frame.time * 1000 + 1
+            const mp = core.createFaceFrame(maxFaces)
+            await mediaPipe.track(frame.image, ts, frame.time, mp)
+            theirs.set(frame.time, mp)
+            await ours.track(frame.image, ts, frame.time, a)
+          } finally {
+            frame.close()
+          }
+          const b = theirs.get(a.mediaTime)
+          if (!b) continue
+          frames++
+          if (a.count === b.count) agree++
+          if (ourPrevCount >= 0 && a.count !== ourPrevCount) ourChanges++
+          if (theirPrevCount >= 0 && b.count !== theirPrevCount) theirChanges++
+          ourPrevCount = a.count
+          theirPrevCount = b.count
+          // Slots: each face nearest its own previous centroid.
+          const now = Array.from({ length: a.count }, (_, i) => centroid(a, i))
+          if (prev.length === now.length && now.length > 1) {
+            for (let i = 0; i < now.length; i++) {
+              const d = prev.map((p) => Math.hypot(p[0] - now[i]![0], p[1] - now[i]![1]))
+              if (d.indexOf(Math.min(...d)) !== i) swaps++
+            }
+          }
+          prev = now
+          // Match each of our faces with MediaPipe's nearest one not taken.
+          const taken = new Set<number>()
+          const w = a.width
+          const h = a.height
+          for (let i = 0; i < a.count; i++) {
+            const c = now[i]!
+            let best = -1
+            let bestD = Infinity
+            for (let j = 0; j < b.count; j++) {
+              if (taken.has(j)) continue
+              const cj = centroid(b, j)
+              const d = Math.hypot(cj[0] - c[0], cj[1] - c[1])
+              if (d < bestD) {
+                bestD = d
+                best = j
+              }
+            }
+            if (best < 0) continue
+            taken.add(best)
+            let x0 = Infinity
+            let x1 = -Infinity
+            let y0 = Infinity
+            let y1 = -Infinity
+            for (let k2 = 0; k2 < N; k2++) {
+              const x = b.landmarks[(best * N + k2) * 3]! * w
+              const y = b.landmarks[(best * N + k2) * 3 + 1]! * h
+              x0 = Math.min(x0, x)
+              x1 = Math.max(x1, x)
+              y0 = Math.min(y0, y)
+              y1 = Math.max(y1, y)
+            }
+            const size = Math.max(x1 - x0, y1 - y0)
+            let sum = 0
+            for (let k2 = 0; k2 < N; k2++) {
+              const p = (i * N + k2) * 3
+              const q = (best * N + k2) * 3
+              sum += Math.hypot((a.landmarks[p]! - b.landmarks[q]!) * w, (a.landmarks[p + 1]! - b.landmarks[q + 1]!) * h)
+            }
+            landmarks.push((100 * sum) / N / size)
+            let bs = 0
+            for (let s = 1; s < 52; s++) bs += Math.abs(a.blendshapes[i * 52 + s]! - b.blendshapes[best * 52 + s]!)
+            blendshapes.push(bs / 51)
+            const ma = a.matrices.subarray(i * 16, i * 16 + 16)
+            const mb = b.matrices.subarray(best * 16, best * 16 + 16)
+            translations.push(Math.hypot(ma[12]! - mb[12]!, ma[13]! - mb[13]!, ma[14]! - mb[14]!))
+            let trace = 0
+            for (let c2 = 0; c2 < 3; c2++) {
+              const na = Math.hypot(ma[c2 * 4]!, ma[c2 * 4 + 1]!, ma[c2 * 4 + 2]!)
+              const nb = Math.hypot(mb[c2 * 4]!, mb[c2 * 4 + 1]!, mb[c2 * 4 + 2]!)
+              trace += (ma[c2 * 4]! * mb[c2 * 4]! + ma[c2 * 4 + 1]! * mb[c2 * 4 + 1]! + ma[c2 * 4 + 2]! * mb[c2 * 4 + 2]!) / (na * nb)
+            }
+            rotations.push((Math.acos(Math.min(1, Math.max(-1, (trace - 1) / 2))) * 180) / Math.PI)
+          }
+        }
+        source.dispose()
+        ours.dispose()
+        mediaPipe.dispose()
+        return {
+          warnings,
+          frames,
+          agree,
+          swaps,
+          ourChanges,
+          theirChanges,
+          faces: landmarks.length,
+          landmarks: [quantile(landmarks, 0.5), quantile(landmarks, 0.9)],
+          blendshapes: quantile(blendshapes, 0.5),
+          rotationDeg: quantile(rotations, 0.5),
+          translationCm: quantile(translations, 0.5),
+        }
+      },
+      { clip, maxFaces },
+    )
+    console.log(clip, JSON.stringify(r))
+    expect(r.warnings).toEqual([])
+    expect(r.faces).toBeGreaterThan(20)
+    expect(r.agree / r.frames).toBeGreaterThan(0.85)
+    expect(r.swaps).toBe(0)
+    expect(r.ourChanges).toBeLessThanOrEqual(r.theirChanges + 2)
+    expect(r.landmarks[0]).toBeLessThan(LIMITS.median)
+    expect(r.landmarks[1]).toBeLessThan(LIMITS.p90)
+    expect(r.blendshapes).toBeLessThan(LIMITS.blendshapes)
+    expect(r.rotationDeg).toBeLessThan(LIMITS.rotationDeg)
+    expect(r.translationCm).toBeLessThan(LIMITS.translationCm)
+  })
 }

@@ -10,8 +10,9 @@
  * the page and the page to answer with a frame, a round trip of ≈ 25 ms on a busy main thread. The next `track` on the
  * same source then takes that frame's result (`FaceFrame.mediaTime` says which frame it is), or its run in progress.
  *
- * One face (`maxFaces` > 1: MediaPipe, until multi-face lands, #165). Landmarks and blendshapes in the `FaceFrame`
- * layout of the MediaPipe tracker; the facial transformation matrix is fitted to the landmarks on the main thread
+ * Up to `maxFaces` faces, each tracked in its own slot (`slots.ts`: a face keeps its place in `FaceFrame` from result
+ * to result, the detector looks for the missing ones). Landmarks and blendshapes in the `FaceFrame` layout of the
+ * MediaPipe tracker; the facial transformation matrix is fitted to the landmarks on the main thread
  * (`estimateFacePose`, MediaPipe's geometry pipeline). Blendshapes are skipped while the engine does not want them
  * (`TrackerConfig.blendshapes`). The analysis resolution is ignored: the crops are taken from the full frame on the
  * GPU, whose cost does not depend on its size.
@@ -88,7 +89,8 @@ export type LiteRtTimings = {
   totalMs: number
 }
 
-const SHEDS: readonly Capability[] = ['blendshapes']
+const SHEDS_ONE: readonly Capability[] = ['blendshapes']
+const SHEDS_MANY: readonly Capability[] = ['blendshapes', 'extraFaces']
 /** Frames posted to the worker and not back yet: the one running and one waiting. */
 const MAX_FLIGHTS = 2
 
@@ -130,14 +132,13 @@ export async function openLiteRtTracker(config: TrackerConfig, env: TrackerEnv, 
         }
       }
       const assetsBaseUrl = new URL(env.assetsBaseUrl, typeof location === 'undefined' ? undefined : location.href).href
-      worker.postMessage({ type: 'init', assetsBaseUrl, crop: options.crop ?? 'gpu', readback: options.readback ?? 'async' } satisfies ToWorker)
+      worker.postMessage({ type: 'init', assetsBaseUrl, crop: options.crop ?? 'gpu', readback: options.readback ?? 'async', maxFaces: Math.max(1, config.maxFaces) } satisfies ToWorker)
     })
   } catch (err) {
     worker.terminate()
     throw err
   }
   for (const w of ready.warnings) env.warn(w)
-  if (config.maxFaces > 1) env.warn(`The LiteRT.js face tracker tracks one face (${config.maxFaces} asked).`)
   const tracker = new LiteRtFrameTracker(worker, ready.crop, transfer, config, env, options.queue ?? true, options.frames ?? 'track')
   tracker.readback = ready.readback
   return tracker
@@ -200,8 +201,10 @@ export class LiteRtFrameTracker implements FrameTracker {
   readonly #env: TrackerEnv
   readonly #queue: boolean
   #config: TrackerConfig
+  /** Faces it can track: its result buffers hold that many (`TrackerConfig.maxFaces` when created). */
+  readonly capacity: number
   /** Free result buffers, transferred back and forth. */
-  readonly #free: ArrayBuffer[] = [new ArrayBuffer(RESULT_FLOATS * 4), new ArrayBuffer(RESULT_FLOATS * 4)]
+  readonly #free: ArrayBuffer[] = []
   readonly #flights = new Map<number, Flight>()
   /** The newest frame posted (0: none since the last reset): the one a call takes. */
   #latest = 0
@@ -218,6 +221,7 @@ export class LiteRtFrameTracker implements FrameTracker {
   readonly #warned = new Set<string>()
 
   constructor(worker: Worker, crop: Crop, transfer: FrameTransfer, config: TrackerConfig, env: TrackerEnv, queue = true, frames: 'track' | 'element' = 'track') {
+    this.capacity = Math.max(1, config.maxFaces)
     this.#streamOff = frames === 'element'
     this.#worker = worker
     this.crop = crop
@@ -247,9 +251,12 @@ export class LiteRtFrameTracker implements FrameTracker {
     return true
   }
 
-  /** Only blendshapes make it faster when dropped: one face, and crops from the full frame whatever its resolution. */
+  /**
+   * Blendshapes (a model per face) and extra faces (a crop and a landmark model per face) make it faster when dropped;
+   * the analysis resolution does not (crops from the full frame whatever its resolution).
+   */
   get sheds(): readonly Capability[] {
-    return SHEDS
+    return this.capacity > 1 ? SHEDS_MANY : SHEDS_ONE
   }
 
   /** The worker died or failed: every call fails from now on. */
@@ -388,7 +395,7 @@ export class LiteRtFrameTracker implements FrameTracker {
       frame?.close()
       return
     }
-    const buffer = this.#free.pop() ?? new ArrayBuffer(RESULT_FLOATS * 4)
+    const buffer = this.#free.pop() ?? new ArrayBuffer(RESULT_FLOATS * 4 * this.capacity)
     const reset = this.#reset
     this.#reset = false
     flight.captureMs = performance.now() - flight.capturedAt
@@ -400,6 +407,7 @@ export class LiteRtFrameTracker implements FrameTracker {
       width: flight.width,
       height: flight.height,
       blendshapes: this.#config.blendshapes,
+      maxFaces: Math.max(1, Math.min(this.capacity, this.#config.maxFaces)),
       reset,
       ...(flight.exact ? { exact: true } : {}),
       buffer,
@@ -489,13 +497,17 @@ export class LiteRtFrameTracker implements FrameTracker {
     out.mediaTime = frame.mediaTime
     out.width = frame.width
     out.height = frame.height
-    if (!msg.found) return
-    const data = new Float32Array(msg.buffer, 0, RESULT_FLOATS)
-    out.landmarks.set(data.subarray(0, LANDMARKS_STRIDE), 0)
-    if (msg.hasBlendshapes) out.blendshapes.set(data.subarray(LANDMARKS_STRIDE, LANDMARKS_STRIDE + BLENDSHAPES_STRIDE), 0)
-    else out.blendshapes.fill(0, 0, BLENDSHAPES_STRIDE)
-    if (!estimateFacePose(out, 0, out.matrices, 0)) out.matrices.fill(0, 0, MATRIX_STRIDE)
-    out.count = 1
+    const count = Math.min(msg.count, out.maxFaces, this.capacity)
+    const data = new Float32Array(msg.buffer)
+    for (let f = 0; f < count; f++) {
+      const src = f * RESULT_FLOATS
+      out.landmarks.set(data.subarray(src, src + LANDMARKS_STRIDE), f * LANDMARKS_STRIDE)
+      const b = f * BLENDSHAPES_STRIDE
+      if (msg.hasBlendshapes) out.blendshapes.set(data.subarray(src + LANDMARKS_STRIDE, src + LANDMARKS_STRIDE + BLENDSHAPES_STRIDE), b)
+      else out.blendshapes.fill(0, b, b + BLENDSHAPES_STRIDE)
+      if (!estimateFacePose(out, f, out.matrices)) out.matrices.fill(0, f * MATRIX_STRIDE, (f + 1) * MATRIX_STRIDE)
+    }
+    out.count = count
   }
 
   /** Adds this result's steps to the moving averages (the first result sets them). */

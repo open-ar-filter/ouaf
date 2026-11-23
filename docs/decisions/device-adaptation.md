@@ -161,8 +161,8 @@ engine page shows both sources side by side (`/engine.html?signals`) to check th
 ## Backend benchmark (spec §16.4)
 
 Built-in tracker (`defaultFaceTracker`, #165): three backends, our LiteRT.js pipeline in a worker (`LiteRT`) and
-MediaPipe's `GPU` and `CPU` delegates on the main thread (only MediaPipe with `maxFaces` > 1: LiteRT.js tracks one
-face). Without a cached choice it starts on LiteRT.js (MediaPipe GPU, then CPU, if it cannot start) and, on the first
+MediaPipe's `GPU` and `CPU` delegates on the main thread (any `maxFaces`: LiteRT.js tracks several faces since #165's
+second PR). Without a cached choice it starts on LiteRT.js (MediaPipe GPU, then CPU, if it cannot start) and, on the first
 frames of a **live** source, opens the others; then each backend runs on consecutive frames, one after the other,
 3 results left out, then 12 measured (time from the call to its result). The lowest median wins, on frames with a face
 when each backend has at least 6 of them; MediaPipe's medians are multiplied by `MAIN_THREAD_WEIGHT` (1.15) for the

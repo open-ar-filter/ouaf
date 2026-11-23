@@ -11,6 +11,7 @@
  */
 import { supportsFeature } from '@litertjs/core'
 import { createPipeline, createPipelineResult, type Pipeline } from './pipeline.ts'
+import { BLENDSHAPE_COUNT, LANDMARK_COUNT } from '../face.ts'
 import { RESULT_FLOATS, type FrameMessage, type FromWorker, type InitMessage, type StreamMessage, type ToWorker } from './protocol.ts'
 
 /** The dedicated worker global scope, typed loosely (the project compiles against the DOM lib only). */
@@ -27,7 +28,8 @@ const errorText = (err: unknown): string => (err instanceof Error ? (err.cause ?
 let pipeline: Pipeline | undefined
 /** Warnings not reported yet: sent with `ready`, then with the next result (WebGL context lost). */
 const pending: string[] = []
-const result = createPipelineResult()
+let result = createPipelineResult()
+const LANDMARK_FLOATS = LANDMARK_COUNT * 3
 
 scope.addEventListener('message', (e) => {
   const msg = e.data
@@ -151,7 +153,8 @@ async function init(msg: InitMessage): Promise<void> {
     }
     const loader = await prepareLoader(msg.assetsBaseUrl)
     try {
-      pipeline = await createPipeline({ assetsBaseUrl: msg.assetsBaseUrl, crop, readback: msg.readback, liteRtUrl: loader.url }, (w) => pending.push(w))
+      pipeline = await createPipeline({ assetsBaseUrl: msg.assetsBaseUrl, crop, readback: msg.readback, maxFaces: msg.maxFaces, liteRtUrl: loader.url }, (w) => pending.push(w))
+      result = createPipelineResult(pipeline.capacity)
     } finally {
       loader.restore()
     }
@@ -191,8 +194,8 @@ function drop(msg: FrameMessage): void {
       type: 'result',
       id: msg.id,
       buffer: msg.buffer,
-      found: false,
       hasBlendshapes: false,
+      count: 0,
       frame: msg.id,
       dropped: true,
       timings: { detectMs: NaN, uploadMs: NaN, cropMs: NaN, readMs: NaN, convertMs: NaN, landmarksMs: NaN, blendshapesMs: NaN },
@@ -210,7 +213,7 @@ async function run(msg: FrameMessage, receivedAt: number): Promise<void> {
   running = true
   const startedAt = wallNow()
   const idleMs = startedAt - Math.max(lastPostedAt, receivedAt)
-  const out = new Float32Array(msg.buffer, 0, RESULT_FLOATS)
+  const out = new Float32Array(msg.buffer)
   let error: string | undefined
   let unusable: string | undefined
   const frame = msg.frame ?? (await nextStreamFrame())
@@ -220,14 +223,14 @@ async function run(msg: FrameMessage, receivedAt: number): Promise<void> {
     if (!msg.frame) unusable = streamMismatch(frame as VideoFrame, msg.width, msg.height)
     if (unusable) {
       closeStream()
-      result.found = false
+      result.count = 0
       result.hasBlendshapes = false
     } else {
       if (msg.reset) pipeline.reset()
-      await pipeline.run(frame, msg.width, msg.height, msg.blendshapes, result, msg.id, msg.exact ?? false)
+      await pipeline.run(frame, msg.width, msg.height, msg.blendshapes, result, msg.id, msg.exact ?? false, msg.maxFaces)
     }
   } catch (err) {
-    result.found = false
+    result.count = 0
     result.hasBlendshapes = false
     result.frame = msg.id
     error = errorText(err)
@@ -235,9 +238,12 @@ async function run(msg: FrameMessage, receivedAt: number): Promise<void> {
     frame?.close()
   }
   if (unusable) result.frame = msg.id
-  if (result.found) {
-    out.set(result.landmarks, 0)
-    out.set(result.blendshapes, result.landmarks.length)
+  // Face by face: landmarks, then blendshapes (`RESULT_FLOATS` each), as many as fit the buffer.
+  const faces = Math.min(result.count, Math.floor(out.length / RESULT_FLOATS))
+  const L = LANDMARK_FLOATS
+  for (let f = 0; f < faces; f++) {
+    out.set(result.landmarks.subarray(f * L, (f + 1) * L), f * RESULT_FLOATS)
+    out.set(result.blendshapes.subarray(f * BLENDSHAPE_COUNT, (f + 1) * BLENDSHAPE_COUNT), f * RESULT_FLOATS + L)
   }
   lastPostedAt = wallNow()
   post(
@@ -246,7 +252,7 @@ async function run(msg: FrameMessage, receivedAt: number): Promise<void> {
       id: msg.id,
       frame: result.frame,
       buffer: msg.buffer,
-      found: result.found,
+      count: faces,
       hasBlendshapes: result.hasBlendshapes,
       timings: { ...(pipeline?.timings ?? { detectMs: NaN, uploadMs: NaN, cropMs: NaN, readMs: NaN, convertMs: NaN, landmarksMs: NaN, blendshapesMs: NaN }) },
       warnings: pending.splice(0),

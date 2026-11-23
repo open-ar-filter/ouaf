@@ -53,14 +53,14 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-async function open(options: { crop?: 'gpu' | 'canvas'; warnings?: string[] } = {}) {
+async function open(options: { crop?: 'gpu' | 'canvas'; warnings?: string[]; maxFaces?: number } = {}) {
   vi.stubGlobal('Worker', function Worker() {})
   vi.stubGlobal('VideoFrame', FakeVideoFrame)
   const worker = new FakeWorker()
   const warnings: string[] = []
   const env = { assetsBaseUrl: 'https://example.test/app/', warn: (m: string) => void warnings.push(m) }
-  const opening = openLiteRtTracker(CONFIG, env, { createWorker: () => worker as unknown as Worker })
-  expect(worker.posted[0]!.message).toEqual({ type: 'init', assetsBaseUrl: 'https://example.test/app/', crop: 'gpu', readback: 'async' })
+  const opening = openLiteRtTracker({ ...CONFIG, maxFaces: options.maxFaces ?? 1 }, env, { createWorker: () => worker as unknown as Worker })
+  expect(worker.posted[0]!.message).toEqual({ type: 'init', assetsBaseUrl: 'https://example.test/app/', crop: 'gpu', readback: 'async', maxFaces: options.maxFaces ?? 1 })
   worker.reply({ type: 'ready', crop: options.crop ?? 'gpu', readback: 'sync', warnings: options.warnings ?? [] })
   const tracker = await opening
   return { tracker, worker, warnings }
@@ -80,7 +80,7 @@ function answer(frame: FrameMessage, options: { found?: boolean; blendshapes?: b
     id: frame.id,
     frame: frame.id,
     buffer: frame.buffer,
-    found: options.found ?? true,
+    count: (options.found ?? true) ? 1 : 0,
     hasBlendshapes: options.blendshapes ?? frame.blendshapes,
     timings: { detectMs: Number.NaN, uploadMs: 2, cropMs: 3, readMs: 2.5, convertMs: 0.4, landmarksMs: 7, blendshapesMs: 1 },
     warnings: [],
@@ -314,6 +314,42 @@ describe('LiteRtFrameTracker (page side of the worker)', () => {
     worker.reply(answer(worker.frames[2]!))
     await exact
     expect(out.mediaTime).toBe(0.3)
+  })
+
+  it('several faces: the buffer holds them face by face, each with its matrix; extra faces shed when dropped', async () => {
+    const { tracker, worker } = await open({ maxFaces: 2 })
+    expect(tracker.sheds).toEqual(['blendshapes', 'extraFaces'])
+    const video = { videoWidth: 640, videoHeight: 480 } as HTMLVideoElement
+    const out = createFaceFrame(2)
+    const done = tracker.track(video, 1, 0.1, out)
+    const frame = worker.frames[0]!
+    expect(frame).toMatchObject({ maxFaces: 2 })
+    expect(frame.buffer.byteLength).toBe(RESULT_FLOATS * 4 * 2)
+    // Two faces: a synthetic one, then the same moved to the right.
+    const a = createFaceFrame(1)
+    a.width = 640
+    a.height = 480
+    writeSyntheticFace(a, 0, { yaw: 10, t: [-6, 0, -50] })
+    const b = createFaceFrame(1)
+    b.width = 640
+    b.height = 480
+    writeSyntheticFace(b, 0, { yaw: -10, t: [6, 0, -50] })
+    const data = new Float32Array(frame.buffer)
+    data.set(a.landmarks.subarray(0, LANDMARKS_STRIDE), 0)
+    data.set(b.landmarks.subarray(0, LANDMARKS_STRIDE), RESULT_FLOATS)
+    data[RESULT_FLOATS + LANDMARKS_STRIDE + 9] = 0.75 // eyeBlinkLeft of face 1
+    worker.reply({ ...answer(frame), count: 2 }) // `answer` writes face 0 (and its blendshapes) over `a`
+    await done
+    expect(out.count).toBe(2)
+    expect(out.landmarks.subarray(LANDMARKS_STRIDE, 2 * LANDMARKS_STRIDE)).toEqual(b.landmarks.subarray(0, LANDMARKS_STRIDE))
+    expect(out.blendshapes[BLENDSHAPES_STRIDE + 9]).toBeCloseTo(0.75, 6)
+    const m = new Float32Array(16)
+    estimateFacePose(b, 0, m, 0)
+    expect(out.matrices.subarray(16, 32)).toEqual(m)
+    // The governor drops the extra faces: the next frame asks for one.
+    tracker.configure({ ...CONFIG, maxFaces: 1 })
+    void tracker.track(video, 2, 0.2, out)
+    expect(worker.frames[1]).toMatchObject({ maxFaces: 1 })
   })
 
   it('reports a failed run once as a warning; a dead worker fails the call and every later one', async () => {

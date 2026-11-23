@@ -66,7 +66,7 @@ GPU and CPU delegates by measuring them ([`device-adaptation.md`](device-adaptat
   replaces `importScripts` during the load by an indirect `eval` of it; `Module.locateFile` (Emscripten's own hook)
   points at the `.wasm`. No pthreads, so no `Worker` wrapper. A classic worker would need no shim, but bundlers
   (Vite in dev) only serve module workers with imports.
-- **One face**: with `maxFaces` > 1 only MediaPipe is a candidate (multi-face is the next step of #165).
+- **Several faces** (#165, second PR): see [Multi-face](#multi-face-165-pr-2).
 - Blendshapes are skipped while the engine does not want them (governor, spec §16.2; checked by a browser test: the
   model's time falls to 0); the analysis resolution is ignored (crops come from the full frame on the GPU), so the
   tracker tells the governor not to drop it (`FrameTracker.sheds`).
@@ -87,6 +87,45 @@ Same results as MediaPipe (`e2e/litert-tracker.spec.ts`, every third frame of fo
 landmark distance 0.6–1.2 % of the face size (90th percentile 1.0–2.5 %), blendshapes 0.01–0.02 mean |Δ|, the matrix
 within 1.1–1.8° and 0.5–0.9 cm (median), and both find a face on 90–100 % of the same frames. `estimateFacePose` on
 MediaPipe's own landmarks gives MediaPipe's matrix exactly (≤ 0.01 cm).
+
+## Multi-face (#165, PR 2)
+
+The LiteRT.js tracker tracks up to `maxFaces` faces; the backend choice no longer reserves `maxFaces` > 1 to MediaPipe.
+
+- **One slot per face** (`litert/slots.ts`), cropped at the ROI from its previous landmarks (MediaPipe's policy). A
+  face keeps its slot from result to result: faces do not swap when they cross, and their order in `FaceFrame` stays
+  the slot order. A face lost (presence < 0.5) frees its slot; two ROIs that converge on one face (overlap > 0.5) keep
+  the more confident.
+- **The detector** looks for the missing faces only: every frame while no face is tracked; at most every 500 ms
+  (`DETECT_INTERVAL_MS`) while some are but fewer than wanted, so that an empty slot (the usual case: `maxFaces` above
+  the faces in view) does not add the detector to every result. A detection that overlaps a tracked face (> 0.3) is
+  that face. A new face the landmark model does not confirm (a detection ROI a little off: the second face of
+  `two-faces-stacked` on its first frame) makes the detector look again on the next frames, three times at most.
+- **One readback for every face**: the crops are drawn side by side on one canvas (`256 × maxFaces` wide) and read
+  back at once, synchronously or async (pixel buffer); the landmark and blendshapes models run face by face.
+- **Extra faces** (spec §16.2): the tracker sheds them (`FrameTracker.sheds`). Dropping them keeps the faces tracked
+  at that moment and stops the detector looking for more; the faces in view keep their landmark runs.
+- Single face: unchanged (the comparison with MediaPipe gives the same figures as before, sync and async).
+
+Desktop (headless Chromium 159, RTX 5080 laptop, `adapt=0`, async readback for LiteRT.js; `lmk` and `bs` are sums
+over the faces, ms):
+
+| Faces (clip) | LiteRT.js Hz | pipeline | lmk | bs | MediaPipe CPU Hz | pipeline (main thread) | MediaPipe GPU Hz |
+|---|---|---|---|---|---|---|---|
+| 1 (`pesquet-closeup`) | 25.8–27.5 | 32–34 | 6.3–9.3 | 1.2–1.4 | 28.0–28.8 | 18–19 | 16.1–16.5 |
+| 2 (`two-faces-stacked`) | 27.0–27.8 | 34 | 11.6–12.2 | 2.1–2.3 | 22.1–22.6 | 26 | 10.4–10.5 |
+| 4 (`four-faces-grid`) | 22.4–22.7 | 44 | 23.6–23.9 | 4.5–4.7 | 16.9–17.1 | 41 | 6.1–6.2 |
+
+On the desktop each extra face costs ≈ 6 ms of landmark model and ≈ 1.2 ms of blendshapes; the crops (one readback)
+hardly grow. Against MediaPipe on the clips (`e2e/litert-tracker.spec.ts`, every second frame, faces matched by
+landmark centroid): same number of faces on 46/47 (2 faces) and 47/47 (4 faces) frames, no slot swap, landmarks
+0.5–0.7 % of the face size (median, p90 1.0–1.7 %), blendshapes 0.014–0.021, matrix 1.0–1.1° / 0.3–0.4 cm.
+
+**Redmi Note 11S, expected** (to measure): per extra face, the landmark model (34–35 ms) and blendshapes (6.8 ms
+when kept), the crops sharing one readback: ≈ 48 ms for one face (async readback, 20 Hz) → ≈ 85–90 ms for two
+(≈ 11–12 Hz) and ≈ 160 ms for four (≈ 6 Hz). Below the 12 Hz floor with more than one face in view, as MediaPipe
+(which costs about the same per face on the main thread); dropping blendshapes is the governor's only lever there, as
+extra faces keep the faces in view.
 
 ## Question
 
