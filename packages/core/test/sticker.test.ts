@@ -8,7 +8,7 @@ import type { AssetRequest } from '../src/engine/assets.ts'
 import { createSticker, stickerRefs } from '../src/layers/sticker/layer.ts'
 import { BLEND_FACTORS, StickerMaterial } from '../src/layers/sticker/material.ts'
 import { clockStep, frameRect, spriteFrame, videoDrift, videoTarget } from '../src/layers/sticker/playback.ts'
-import { instanceCount, pickIndex, selectFaces } from '../src/layers/sticker/select.ts'
+import { pickIndex } from '../src/layers/sticker/select.ts'
 import type { BindingDataSource } from '../src/bindings/index.ts'
 import type { TParams } from '@ouaf/spec'
 import { bindingParams } from '../src/engine/filter.ts'
@@ -54,28 +54,7 @@ describe('sticker playback math', () => {
   })
 })
 
-describe('sticker face selection and pick', () => {
-  const out = new Int32Array(4)
-  const ids = [7, 3, 0, 5]
-  const sizes = [0.1, 0.2, 0.5, 0.3]
-
-  it('sizes the instances for `faces`', () => {
-    expect(instanceCount('all', 4)).toBe(4)
-    expect(instanceCount('first', 4)).toBe(1)
-    expect(instanceCount('largest', 4)).toBe(1)
-    expect(instanceCount(2, 4)).toBe(2)
-    expect(instanceCount(9, 4)).toBe(4)
-  })
-
-  it('selects every face, the oldest, the largest, or the n oldest', () => {
-    expect([...out.subarray(0, selectFaces('all', 3, ids, sizes, out))]).toEqual([0, 1, 2])
-    expect([...out.subarray(0, selectFaces('first', 4, ids, sizes, out))]).toEqual([1]) // id 3
-    expect([...out.subarray(0, selectFaces('largest', 4, ids, sizes, out))]).toEqual([2])
-    expect([...out.subarray(0, selectFaces(2, 4, ids, sizes, out))]).toEqual([1, 3]) // ids 3, 5
-    expect([...out.subarray(0, selectFaces(4, 4, ids, sizes, out))]).toEqual([1, 3, 0, 2]) // no id last
-    expect(selectFaces('all', 0, ids, sizes, out)).toBe(0)
-  })
-
+describe('sticker pick', () => {
   it('picks per face id (stable, successive faces get successive assets) or from a random draw', () => {
     expect([1, 2, 3, 4].map((id) => pickIndex('face', id, 3, 0))).toEqual([0, 1, 2, 0])
     expect(pickIndex('face', 0, 3, 0)).toBe(0)

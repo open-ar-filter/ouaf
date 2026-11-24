@@ -33,7 +33,8 @@ import { compileScale } from '../scale.ts'
 import { isStickerAsset, type StickerAsset } from './assets.ts'
 import { StickerMaterial, type BlendMode } from './material.ts'
 import { clockStep, spriteFrame, videoDrift, videoTarget } from './playback.ts'
-import { instanceCount, pickIndex, selectFaces, type FacesSelector, type PickMode } from './select.ts'
+import { instanceCount, selectFaces, type FacesSelector } from '../faces.ts'
+import { pickIndex, type PickMode } from './select.ts'
 
 /** Drift (s) between a video and the layer clock beyond which the video is seeked back to the clock. */
 export const VIDEO_SYNC_TOLERANCE = 0.2

@@ -21,7 +21,7 @@ import { compileBinding, compileNumberBinding } from '../../bindings/compile.ts'
 import { NO_FACE } from '../../bindings/types.ts'
 import { FULLSCREEN_VERTEX } from '../../engine/compositor.ts'
 import type { LayerContext, LayerDecl, PassLayer } from '../../engine/layer-type.ts'
-import { parseFacesSelector, selectFaces } from './select-faces.ts'
+import { parseFacesSelector, selectFaces } from '../faces.ts'
 import { warpFragment } from './shader.ts'
 import { MAX_CENTRES, WARP_KINDS, WarpPacker, type WarpKind } from './warp-math.ts'
 
