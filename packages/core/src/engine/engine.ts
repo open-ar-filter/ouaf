@@ -1014,8 +1014,14 @@ export class Engine {
 
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
-      if (!filter.active) continue
       const layers = filter.layers
+      if (!filter.active) {
+        // Disabled or hidden: its videos stop playing until it is drawn again.
+        if (filter.layersRunning) for (let l = 0; l < layers.length; l++) layers[l]!.instance.suspend?.()
+        filter.layersRunning = false
+        continue
+      }
+      filter.layersRunning = true
       for (let l = 0; l < layers.length; l++) layers[l]!.instance.update(frame)
     }
     for (let i = 0; i < this.#renderPasses.length; i++) this.#renderPasses[i]!.update(frame)

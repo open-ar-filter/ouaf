@@ -127,8 +127,14 @@ interface LayerInstanceBase {
    * the engine disables the filters whose author code was drawn just before (spec §11, §15.5).
    */
   readonly authorShader?: boolean
-  /** Called once per rendered frame before rendering. */
+  /** Called once per rendered frame before rendering, while the filter is drawn. */
   update(frame: FrameContext): void
+  /**
+   * The filter stopped being drawn (disabled, or hidden by the device governor, spec §16.3): `update` is not called
+   * until it is drawn again. Stop the work that runs on its own meanwhile, such as video playback; the next `update`
+   * resumes it.
+   */
+  suspend?(): void
   /** Frees GPU and other resources. Called once, when the filter is removed or the engine disposed. */
   dispose(): void
 }

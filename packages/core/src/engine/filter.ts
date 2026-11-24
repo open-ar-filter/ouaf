@@ -171,6 +171,8 @@ export class FilterInstance {
    * drawn nor given events or script calls, but face tracking keeps running for it.
    */
   suspended = false
+  /** Its layers were updated at the last frame drawn: they get `suspend()` at the first frame the filter is not. */
+  layersRunning = false
   disposed = false
 
   constructor(init: {

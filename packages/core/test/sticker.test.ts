@@ -420,24 +420,41 @@ describe('sticker layer', () => {
     shownData = true
   })
 
+  /** A video element as far as `VideoPlayback` uses it. */
+  const fakeVideo = () => ({
+    loop: false,
+    duration: 10,
+    currentTime: 0,
+    paused: true,
+    seeking: false,
+    playbackRate: 1,
+    plays: 0,
+    play() {
+      this.paused = false
+      this.plays++
+      return Promise.resolve()
+    },
+    pause() {
+      this.paused = true
+    },
+  })
+
+  it('pauses its videos while the filter is not drawn, and plays them again at the clock', () => {
+    const video = fakeVideo()
+    const clip = asset('video', 100, 100, { video: video as unknown as HTMLVideoElement })
+    const layer = createSticker({ type: 'sticker', src: 'clip' } as LayerDecl, context({ clip }, 1))
+    const anchors = fakeAnchors([1])
+    layer.update(frameAt(0, anchors))
+    expect([video.paused, video.plays]).toEqual([false, 1])
+    layer.suspend!() // disabled: no update until it is enabled again
+    expect(video.paused).toBe(true)
+    layer.update(frameAt(5, anchors))
+    expect([video.paused, video.plays]).toEqual([false, 2])
+    layer.dispose()
+  })
+
   it('re-synchronizes a video paused while hidden by `visible` to the running clock', () => {
-    const video = {
-      loop: false,
-      duration: 10,
-      currentTime: 0,
-      paused: true,
-      seeking: false,
-      playbackRate: 1,
-      plays: 0,
-      play() {
-        this.paused = false
-        this.plays++
-        return Promise.resolve()
-      },
-      pause() {
-        this.paused = true
-      },
-    }
+    const video = fakeVideo()
     const clip = asset('video', 100, 100, { video: video as unknown as HTMLVideoElement })
     const layer = createSticker({ type: 'sticker', src: 'clip', visible: { bind: 'test.shown' } } as LayerDecl, context({ clip }, 1))
     const anchors = fakeAnchors([1])

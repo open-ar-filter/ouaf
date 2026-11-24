@@ -121,6 +121,23 @@ With a CSP: the Draco decoder runs in a worker created from a `blob:` URL (`work
 allows it) and compiles WebAssembly (`'wasm-unsafe-eval'`); glTF textures are decoded from `blob:` URLs (`img-src
 blob:`), as sticker images are.
 
+## Hosts with a strict CSP
+
+What the engine needs from a page's Content-Security-Policy, directive by directive (each detailed above):
+
+| Directive | Needs | For |
+|---|---|---|
+| `connect-src` | the origin of `assetsBaseUrl`, and of the filter packages you load | tracking wasm and models, built-in fonts and LUTs, Draco decoder, `.ouaf` files |
+| `script-src` | `'wasm-unsafe-eval'` | face tracking (both backends) and the Draco decoder compile WebAssembly |
+| `script-src` | `'unsafe-inline' blob:` | the script sandbox (a `srcdoc` iframe inherits the page's policy) |
+| `worker-src` | `blob:`, and the origin of the tracker worker's script | the script sandbox and the Draco decoder (`blob:`), the LiteRT.js tracker |
+| `img-src` | `blob:` | SVG stickers and glTF textures, decoded from `blob:` URLs |
+| `media-src` | `blob:` | video stickers (and shader video textures), played from `blob:` URLs; a video file source you pass as a `blob:` URL |
+
+The LiteRT.js tracker's worker follows the policy of its own script's response, not the page's (see the notes above):
+it needs `'unsafe-eval'` there. Without `img-src blob:` or `media-src blob:`, those assets fail to load, with an
+`AssetError` naming the file.
+
 ## Reference
 
 The playground (`apps/playground/index.html`) blocks the metrics with

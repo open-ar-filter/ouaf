@@ -125,6 +125,12 @@ class VideoPlayback {
     if (video.paused && !this.#playFailed) video.play().catch(this.#onPlayError)
   }
 
+  /** The filter is not drawn: pause now (the next `sync` of a shown quad plays again, at the clock). */
+  suspend(): void {
+    if (!this.video.paused) this.video.pause()
+    this.#hiddenSince = -1
+  }
+
   release(): void {
     this.video.pause()
     this.asset.owner = undefined
@@ -339,6 +345,9 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
       }
       for (let p = 0; p < players.length; p++) players[p]!.sync(play, players[p]!.shown, frame)
       hadFace = selected > 0
+    },
+    suspend() {
+      for (let p = 0; p < players.length; p++) players[p]!.suspend()
     },
     dispose() {
       for (const p of players) p.release()
