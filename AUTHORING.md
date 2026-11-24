@@ -463,7 +463,8 @@ browser cannot load fonts in the script's Worker, the platform font is used and 
 - The script runs in a sandboxed Worker: no DOM, no network (`fetch`, `XMLHttpRequest`, `WebSocket`…), no storage,
   no `import()`; it cannot see the page or other filters. `ouaf pack` bundles imports, so `script.js` has none.
 - Commands apply at the next frame at the earliest (one frame of latency); a slow script skips frames (`frame.dt`
-  covers them) but never slows the rendering. Events are queued, never dropped.
+  covers them) but never slows the rendering. Events are queued, never dropped, except while the filter is disabled or
+  hidden: past 256 waiting events, only the last `message:<name>` of each name and `paramChange` of each parameter stay.
 - **Watchdog**: a script that does not answer within **1 s** (`setup` included) is stopped (`SCRIPT_STOPPED`); the
   layers, bindings and running animations go on. An exception in a function is reported as a warning and the script
   keeps running.

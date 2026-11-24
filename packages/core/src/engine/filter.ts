@@ -83,7 +83,8 @@ export interface FilterHandle {
   /**
    * Sends a message to this filter's script, received as the `message:<name>` event (spec §13). `data` must be
    * structured-cloneable; it is copied now. Ignored when the filter has no script, its script does not handle the
-   * event or was stopped, or the filter was removed. Throws `OuafError('invalid-message')` (see `Engine.send`).
+   * event or was stopped, or the filter was removed. While the filter is disabled, its queue is bounded (see
+   * `Engine.send`). Throws `OuafError('invalid-message')` (see `Engine.send`).
    */
   send(name: string, data?: unknown): void
   /** Moves the filter to `index` in the stack (clamped). */
@@ -170,6 +171,8 @@ export class FilterInstance {
    * drawn nor given events or script calls, but face tracking keeps running for it.
    */
   suspended = false
+  /** Its layers were updated at the last frame drawn: they get `suspend()` at the first frame the filter is not. */
+  layersRunning = false
   disposed = false
 
   constructor(init: {

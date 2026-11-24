@@ -702,7 +702,10 @@ The sandbox runs the script off the rendering thread: a slow script makes its ow
 - An engine MUST NOT block rendering on a script with a live source.
 - **One frame in flight**: an engine MUST NOT send frame N+1 to the script before it has answered frame N. Frames
   produced in between are not sent to the script (the next `frame.dt` covers them); events are queued and delivered
-  in order, never dropped.
+  in order, never dropped, except that the queue of a script that gets no frames (its filter disabled, or hidden as
+  in 16.3) MUST be bounded: once it is full, an engine keeps only the last `message:<name>` of each name and the last
+  `paramChange` of each parameter (with the `previous` of the first change it replaces), then drops the oldest events.
+  The reference engine bounds it at 256 events and warns once.
 - **Watchdog**: a script that does not answer within **1 s** (`setup` included) MUST be stopped (the reference
   engine terminates its Worker). The second is the script's: an engine SHOULD NOT count its own preparation of the
   sandbox (canvases, fonts) before `script.js` is evaluated, nor the time a host thread too busy to receive the

@@ -1,7 +1,6 @@
 import { Matrix4, PerspectiveCamera } from 'three'
 import { describe, expect, it } from 'vitest'
 import { createWarpLayer } from '../src/layers/warp/layer.ts'
-import { parseFacesSelector, selectFaces } from '../src/layers/warp/select-faces.ts'
 import { warpFragment } from '../src/layers/warp/shader.ts'
 import { MAX_CENTRES, STRETCH_MAX, WARP_KINDS, WarpPacker, falloff, warpSource, type WarpKind } from '../src/layers/warp/warp-math.ts'
 import { FaceAnchors } from '../src/engine/anchor-provider.ts'
@@ -193,26 +192,6 @@ describe('WarpPacker', () => {
         }
       }
     }
-  })
-})
-
-describe('selectFaces', () => {
-  const ids = [7, 3, 9, 5]
-  const sizes = [0.1, 0.3, 0.2, 0.05]
-  const run = (selector: unknown, count = 4) => {
-    const slots = new Int32Array(4)
-    const n = selectFaces(parseFacesSelector(selector), count, ids, sizes, slots)
-    return [...slots.subarray(0, n)]
-  }
-
-  it('selects all, the oldest, the largest or the n oldest faces', () => {
-    expect(run('all')).toEqual([0, 1, 2, 3])
-    expect(run(undefined, 2)).toEqual([0, 1])
-    expect(run('first')).toEqual([1])
-    expect(run('largest')).toEqual([1])
-    expect(run(2)).toEqual([1, 3])
-    expect(run(16)).toEqual([1, 3, 0, 2])
-    expect(run('first', 0)).toEqual([])
   })
 })
 

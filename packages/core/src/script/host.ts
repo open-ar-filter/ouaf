@@ -4,7 +4,9 @@
  *
  * - **One frame in flight** (spec §12.7): a frame goes to the script only once it has answered the previous one;
  *   the frames rendered in between are not sent (the next `frame.dt` covers them). Events are queued and delivered
- *   with the next frame sent, in order, never dropped.
+ *   with the next frame sent, in order. A script that gets no frames (its filter disabled or hidden by the governor)
+ *   keeps a bounded queue: at `MAX_QUEUED_EVENTS`, only the last `message:<name>` of each name and the last
+ *   `paramChange` of each parameter are kept (then the oldest event is dropped if still full), with a warning.
  * - **Live sources** (spec §12.1): the engine never waits. An answer is applied at the start of the first frame
  *   rendered after it arrives (`beginFrame`), so commands take effect with at least one frame of latency.
  *   (Waiting for the answer with file sources needs the offline sources of #32.)
@@ -29,6 +31,45 @@ import { estimateSize } from './size.ts'
 import type { FrameDataBuilder, FrameDataSource } from './frame-data.ts'
 import type { OverrideValue, ScriptOverrides } from './overrides.ts'
 import type { WireCanvas, WireCommand, WireDone, WireEvent, WireFont, WireFrame, WireInit } from './runtime.ts'
+
+/**
+ * Events queued for a script before the queue is bounded (spec §12.7). A running script empties it with each frame
+ * it is sent, so only a script that gets no frames (filter disabled or hidden, or not answering for up to the 1 s of
+ * the watchdog) reaches it: a host that sends a message every frame would otherwise grow it forever.
+ */
+export const MAX_QUEUED_EVENTS = 256
+
+/** Key of the events a later one makes obsolete: a host message by its name, a `paramChange` by its parameter. */
+function supersedeKey(e: WireEvent): string | undefined {
+  if (e.name.startsWith('message:')) return e.name
+  if (e.name === 'paramChange') return `paramChange:${String((e.payload as { name?: unknown } | undefined)?.name)}`
+  return undefined
+}
+
+/**
+ * Keeps only the last event of each key (`supersedeKey`), in order; a kept `paramChange` takes the `previous` of the
+ * first change it replaces, so the script still learns the value before the changes it missed.
+ */
+function compactEvents(events: WireEvent[]): WireEvent[] {
+  const kept = new Map<string, WireEvent>()
+  const out: WireEvent[] = []
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!
+    const key = supersedeKey(e)
+    if (key === undefined) out.push(e)
+    else {
+      const later = kept.get(key)
+      if (!later) {
+        const copy = e.name === 'paramChange' ? { ...e, payload: { ...(e.payload as object) } } : e
+        kept.set(key, copy)
+        out.push(copy)
+      } else if (e.name === 'paramChange') {
+        ;(later.payload as { previous?: unknown }).previous = (e.payload as { previous?: unknown }).previous
+      }
+    }
+  }
+  return out.reverse()
+}
 
 export { estimateSize } from './size.ts'
 
@@ -193,6 +234,14 @@ export class ScriptHost {
   queue(event: WireEvent): void {
     if (this.#state === 'stopped' || this.#state === 'disposed') return
     if (!this.#on.has(event.name)) return
+    if (this.#events.length >= MAX_QUEUED_EVENTS) {
+      this.#events = compactEvents(this.#events)
+      if (this.#events.length >= MAX_QUEUED_EVENTS) this.#events.shift()
+      this.#warnOnce(
+        'queue',
+        `more than ${MAX_QUEUED_EVENTS} events wait for the script (its filter is disabled or hidden?): only the last message of each name and the last change of each parameter are kept.`,
+      )
+    }
     this.#events.push(event)
   }
 
