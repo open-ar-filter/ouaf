@@ -13,3 +13,5 @@ dist/
 /filters/**/*.ouaf
 # Screenshots of `ouaf preview` (default output folder)
 /ouaf-preview/
+# Unit test coverage reports (`npm run test:coverage`)
+/coverage/

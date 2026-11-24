@@ -1,10 +1,25 @@
-import { Matrix4, PerspectiveCamera, Texture } from 'three'
-import { describe, expect, it } from 'vitest'
-import { wrapShader } from '@ouaf/spec'
+import {
+  BufferGeometry,
+  DoubleSide,
+  Matrix4,
+  Mesh,
+  NoColorSpace,
+  PerspectiveCamera,
+  RawShaderMaterial,
+  RepeatWrapping,
+  Scene,
+  Texture,
+  VideoTexture,
+  type WebGLRenderer,
+  type WebGLRenderTarget,
+} from 'three'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { SHADER_INTERNALS as I, wrapShader } from '@ouaf/spec'
 import { checkProgram, type CompileContext } from '../src/layers/shader/compile.ts'
 import { ShaderFaceInputs, projectToUv, projectedUnit } from '../src/layers/shader/inputs.ts'
 import { createShaderLayer } from '../src/layers/shader/layer.ts'
-import { createStickerAsset } from '../src/layers/sticker/assets.ts'
+import { createStickerAsset, type StickerAsset } from '../src/layers/sticker/assets.ts'
+import { OuafError } from '../src/engine/errors.ts'
 import { ShaderUniforms, UniformTypeError, resolveUniformType } from '../src/layers/shader/uniforms.ts'
 import { FaceAnchors } from '../src/engine/anchor-provider.ts'
 import {
@@ -219,7 +234,18 @@ describe('shader layer', () => {
 
   async function setup(
     decl: Record<string, unknown>,
-    options: { source?: string; assets?: Record<string, unknown>; log?: string; params?: Record<string, unknown>; types?: Record<string, string>; requiresFace?: boolean; warnings?: string[] } = {},
+    options: {
+      source?: string
+      log?: string
+      params?: Record<string, unknown>
+      types?: Record<string, string>
+      requiresFace?: boolean
+      warnings?: string[]
+      /** Loaded assets by reference (textures); any other reference gives the source. */
+      assets?: Record<string, unknown>
+      /** The GPU context is lost. */
+      lost?: boolean
+    } = {},
   ) {
     const faces: FaceFrame = createFaceFrame(2)
     const anchors: AnchorProvider = {
@@ -228,11 +254,13 @@ describe('shader layer', () => {
       id: (face) => (face < faces.count ? face + 1 : 0),
     }
     const { gl } = stubGl(options.log)
+    if (options.lost) (gl as { isContextLost: () => boolean }).isContextLost = () => true
+    const assets = options.assets ?? {}
     const ctx = {
       filterId: 'test',
       renderer: { getContext: () => gl } as unknown as LayerContext['renderer'],
       view: { camera: objectsCamera(1280, 720, 1280, 720) },
-      assets: { get: <T,>(ref: string) => (options.assets?.[ref] ?? options.source ?? EFFECT) as T, has: () => true },
+      assets: { get: <T,>(ref: string) => (ref in assets ? assets[ref] : (options.source ?? EFFECT)) as T, has: () => true },
       params: {} as LayerContext['params'],
       bindings: bindingEnv(options.params ?? {}, options.types ?? {}, faces),
       maxFaces: 2,
@@ -361,5 +389,208 @@ describe('shader layer', () => {
     )
     faces.count = 2
     expect(bytesPerCall(() => layer.update(frame))).toBeLessThan(1)
+  })
+
+  /** A renderer that records its calls: targets, clears and draws (by material: effect, copy or mask). */
+  function recorder() {
+    const calls: string[] = []
+    const names = new Map<unknown, string>()
+    const name = (target: unknown) => {
+      if (target === null) return 'canvas'
+      if (!names.has(target)) names.set(target, (target as { name?: string }).name || `t${names.size}`)
+      return names.get(target)!
+    }
+    const kind = (scene: Scene) => {
+      const m = (scene.children[0] as Mesh<BufferGeometry, RawShaderMaterial>).material
+      return 'ouaf_src' in m.uniforms ? 'copy' : I.input in m.uniforms ? 'effect' : 'mask'
+    }
+    const effects: RawShaderMaterial[] = []
+    const copies: RawShaderMaterial[] = []
+    let current: WebGLRenderTarget | null = null
+    const renderer = {
+      setRenderTarget: (t: WebGLRenderTarget | null) => void (current = t),
+      clear: () => void calls.push(`clear ${name(current)}${current ? ` ${current.width}×${current.height}` : ''}`),
+      render: (scene: Scene) => {
+        const k = kind(scene)
+        const m = (scene.children[0] as Mesh<BufferGeometry, RawShaderMaterial>).material
+        if (k === 'effect' && !effects.includes(m)) effects.push(m)
+        if (k === 'copy' && !copies.includes(m)) copies.push(m)
+        calls.push(`${k} → ${name(current)}`)
+      },
+    }
+    return { renderer: renderer as unknown as WebGLRenderer, calls, effects, copies }
+  }
+
+  const OUTPUT = { name: 'out' } as unknown as WebGLRenderTarget
+  const INPUT = new Texture()
+
+  it('renders a full-screen pass into the output, with the engine inputs of the frame (spec §11.1)', async () => {
+    const params: Record<string, unknown> = { o: 2 }
+    const { layer, frame, faces } = await setup({ opacity: { param: 'o' } }, { params, types: { o: 'number' } })
+    faces.count = 1
+    layer.update(frame)
+    const r = recorder()
+    layer.render({ renderer: r.renderer, input: INPUT, output: OUTPUT, drawFullscreen: () => {} })
+    expect(r.calls).toEqual(['effect → out'])
+    const u = r.effects[0]!.uniforms
+    expect(u[I.input]!.value).toBe(INPUT)
+    expect([...(u[I.frame]!.value as Float32Array)]).toEqual([1.5, Math.fround(0.02), 1280, 720]) // time (s), dt (s), size (px)
+    expect(u[I.opacity]!.value).toBe(1) // clamped to 0–1
+    expect(u.ouaf_faceCount!.value).toBe(1)
+    params.o = 0.5
+    layer.update(frame)
+    expect(u[I.opacity]!.value).toBe(0.5)
+    params.o = -1
+    layer.update(frame)
+    expect(layer.active).toBe(false)
+    layer.dispose()
+  })
+
+  it('on the face stage, copies the image then draws the effect over it on the face mesh', async () => {
+    const { layer, frame, faces } = await setup({ stage: 'face' })
+    faces.count = 2
+    writeSyntheticFace(faces, 0, { t: [-8, 0, -60] })
+    writeSyntheticFace(faces, 1, { t: [8, 0, -60] })
+    layer.update(frame)
+    const r = recorder()
+    layer.render({ renderer: r.renderer, input: INPUT, output: null, drawFullscreen: () => {} })
+    expect(r.calls).toEqual(['copy → canvas', 'effect → canvas'])
+    expect(r.copies[0]!.uniforms.ouaf_src!.value).toBe(INPUT)
+    expect(r.effects[0]!.side).toBe(DoubleSide)
+    layer.dispose()
+  })
+
+  it('keeps the previous output for ouaf_prevFrame: black at the first frame and after a resize, then swapped each frame', async () => {
+    const { layer, frame } = await setup({}, { source: 'vec4 effect(vec2 uv) { return mix(ouaf_sample(uv), ouaf_prevFrame(uv), 0.5); }' })
+    const r = recorder()
+    const pass = { renderer: r.renderer, input: INPUT, output: OUTPUT, drawFullscreen: () => {} }
+    layer.update(frame)
+    layer.render(pass)
+    // Both buffers cleared at the render size, the effect into the first, then copied to the output.
+    expect(r.calls).toEqual(['clear t0 1280×720', 'clear t1 1280×720', 'effect → t0', 'copy → out'])
+    const u = r.effects[0]!.uniforms
+    const copied = r.copies[0]!.uniforms.ouaf_src!.value
+    const before = u[I.prev]!.value // the other buffer
+    expect(before).toBeInstanceOf(Texture)
+    expect(before).not.toBe(copied)
+    r.calls.length = 0
+    layer.render(pass)
+    expect(r.calls).toEqual(['effect → t1', 'copy → out'])
+    // Now the previous frame is the one drawn first, and the copy reads the other buffer.
+    expect(u[I.prev]!.value).toBe(copied)
+    expect(r.copies[0]!.uniforms.ouaf_src!.value).toBe(before)
+    r.calls.length = 0
+    layer.update({ ...frame, width: 640, height: 360 })
+    layer.render(pass)
+    expect(r.calls).toEqual(['clear t0 640×360', 'clear t1 640×360', 'effect → t0', 'copy → out'])
+    layer.dispose()
+  })
+
+  it('draws the face ovals into a half-resolution mask for ouaf_faceMask, only when a face is tracked', async () => {
+    const { layer, frame, faces } = await setup({}, { source: 'vec4 effect(vec2 uv) { return ouaf_sample(uv) * ouaf_faceMask(uv); }' })
+    const r = recorder()
+    const pass = { renderer: r.renderer, input: INPUT, output: OUTPUT, drawFullscreen: () => {} }
+    layer.update({ ...frame, width: 1281, height: 721 })
+    layer.render(pass)
+    expect(r.calls).toEqual(['clear t0 641×361', 'effect → out']) // no face: an empty mask
+    faces.count = 1
+    writeSyntheticFace(faces, 0, { t: [0, 0, -60] })
+    r.calls.length = 0
+    layer.update(frame)
+    layer.render(pass)
+    expect(r.calls).toEqual(['clear t0 640×360', 'mask → t0', 'effect → out'])
+    expect(r.effects[0]!.uniforms[I.mask]!.value).toBeInstanceOf(Texture)
+    layer.dispose()
+  })
+
+  describe('textures', () => {
+    afterEach(() => vi.unstubAllGlobals())
+
+    const image = (width: number, height: number) => ({ width, height, close: vi.fn() })
+    const asset = (kind: StickerAsset['kind'], source: unknown, video?: HTMLVideoElement): StickerAsset =>
+      createStickerAsset({
+        kind,
+        texture: new Texture(source),
+        textureWidth: 8,
+        textureHeight: 8,
+        width: 8,
+        height: 8,
+        frames: undefined,
+        packed: false,
+        video,
+        owner: undefined,
+      })
+
+    it('samples an image through a flipped, straight-alpha copy, repeated, released with the layer', async () => {
+      const copies: Array<[unknown, unknown]> = []
+      const copy = image(8, 8)
+      vi.stubGlobal('createImageBitmap', async (source: unknown, options: unknown) => (copies.push([source, options]), copy))
+      const original = image(8, 8)
+      const { layer, frame } = await setup({ textures: { u_logo: 'logo' } }, { source: 'vec4 effect(vec2 uv) { return texture(u_logo, uv); }', assets: { logo: asset('image', original) } })
+      expect(copies).toEqual([[original, { imageOrientation: 'flipY', premultiplyAlpha: 'none' }]])
+      const r = recorder()
+      layer.update(frame)
+      layer.render({ renderer: r.renderer, input: INPUT, output: OUTPUT, drawFullscreen: () => {} })
+      const t = r.effects[0]!.uniforms.u_logo!.value as Texture
+      expect(t.image).toBe(copy)
+      expect([t.flipY, t.premultiplyAlpha, t.wrapS, t.wrapT, t.generateMipmaps, t.colorSpace]).toEqual([false, false, RepeatWrapping, RepeatWrapping, true, NoColorSpace])
+      layer.dispose()
+      expect(copy.close).toHaveBeenCalledOnce()
+      expect(original.close).not.toHaveBeenCalled() // the asset's own bitmap stays with the asset
+    })
+
+    it('plays a video in a loop, driven by the first layer that uses it, and stops it when that layer goes', async () => {
+      const video = { loop: false, play: vi.fn(() => Promise.reject(new Error('not allowed'))), pause: vi.fn() } as unknown as HTMLVideoElement
+      const clip = asset('video', video, video)
+      const source = 'vec4 effect(vec2 uv) { return texture(u_clip, uv); }'
+      const first = await setup({ textures: { u_clip: 'clip' } }, { source, assets: { clip } })
+      expect(clip.owner).toBeDefined()
+      expect(video.loop).toBe(true)
+      expect(video.play).toHaveBeenCalledOnce() // a refused play() is ignored
+      const second = await setup({ textures: { u_clip: 'clip' } }, { source, assets: { clip } })
+      expect(video.play).toHaveBeenCalledOnce()
+      const r = recorder()
+      first.layer.update(first.frame)
+      first.layer.render({ renderer: r.renderer, input: INPUT, output: OUTPUT, drawFullscreen: () => {} })
+      const t = r.effects[0]!.uniforms.u_clip!.value as VideoTexture
+      expect(t).toBeInstanceOf(VideoTexture)
+      expect(t.image).toBe(video)
+      expect([t.flipY, t.wrapS, t.generateMipmaps]).toEqual([true, RepeatWrapping, false])
+      second.layer.dispose() // not the owner: the video plays on
+      expect(video.pause).not.toHaveBeenCalled()
+      first.layer.dispose()
+      expect(video.pause).toHaveBeenCalledOnce()
+      expect(clip.owner).toBeUndefined()
+    })
+
+    it('rejects a texture that is not an image or a video, releasing the ones made before', async () => {
+      const copy = image(8, 8)
+      vi.stubGlobal('createImageBitmap', async () => copy)
+      const error = await setup(
+        { textures: { u_a: 'logo', u_b: 'grade' } },
+        { source: 'vec4 effect(vec2 uv) { return texture(u_a, uv) + texture(u_b, uv); }', assets: { logo: asset('image', image(8, 8)), grade: { size: 17 } } },
+      ).catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(ShaderCompileError)
+      expect((error as ShaderCompileError).details).toEqual([{ severity: 'error', message: 'texture "u_b" ("grade") is not an image or a video.' }])
+      expect(copy.close).toHaveBeenCalledOnce()
+    })
+
+    it('passes on any other error of a texture as it is', async () => {
+      const failure = new OuafError('asset', 'no asset "logo"')
+      const assets = {}
+      Object.defineProperty(assets, 'logo', { enumerable: true, get: () => { throw failure } })
+      const error = await setup({ textures: { u_a: 'logo' } }, { source: 'vec4 effect(vec2 uv) { return texture(u_a, uv); }', assets }).catch((e: unknown) => e)
+      expect(error).toBe(failure)
+    })
+  })
+
+  it('rejects a uniform and a texture of the same name, and a source compiled while the GPU context is lost', async () => {
+    const both = await setup({ uniforms: { u: 1 }, textures: { u: 'logo' } }).catch((e: unknown) => e)
+    expect(both).toBeInstanceOf(ShaderCompileError)
+    expect((both as ShaderCompileError).details).toEqual([{ severity: 'error', message: '"u" is declared both as a uniform and as a texture.' }])
+    const lost = await setup({}, { lost: true }).catch((e: unknown) => e)
+    expect(lost).toBeInstanceOf(OuafError)
+    expect((lost as OuafError).code).toBe('gpu-context-lost')
+    expect((lost as OuafError).message).toBe('Filter "test": shader "assets/fx.frag" cannot be compiled while the GPU context is lost.')
   })
 })

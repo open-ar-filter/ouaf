@@ -46,6 +46,39 @@ jobs:
           git diff --exit-code -- docs/spec packages/spec/schema \
             || (echo "::error::The JSON Schema is out of date: run 'npm run build:schema' and commit the result." && exit 1)
 
+  coverage:
+    name: Unit test coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Tests with coverage
+        run: npm run test:coverage
+
+      - name: Coverage summary
+        run: |
+          node -e '
+            const total = require("./coverage/coverage-summary.json").total
+            const rows = ["lines", "statements", "functions", "branches"]
+              .map((k) => `| ${k} | ${total[k].pct} % | ${total[k].covered} / ${total[k].total} |`)
+            console.log(["### Unit test coverage", "", "| | % | covered |", "|---|---|---|", ...rows].join("\n"))
+          ' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14
+
   browser:
     name: Browser tests (Chromium, test clips, shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
