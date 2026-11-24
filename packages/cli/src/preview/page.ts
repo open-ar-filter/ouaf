@@ -4,10 +4,9 @@
  * every frame pushed with `engine.pushFrame`, each one waiting for its own tracking result, with media time and a
  * fixed seed, so that the image does not depend on the machine's speed.
  *
- * Scripts: the engine does not wait for a filter's script with file sources yet (#26, spec §12.1), so a script's
- * answer to frame N lands at a frame that depends on timing. As in the browser tests, the run leaves the script time
- * to answer after each frame and ends by rendering the last frame again a few times, 1 ms apart, so that whatever the
- * script was still doing is applied.
+ * Scripts: with file sources the engine waits for a script's answer to frame N before rendering frame N + 1 (spec
+ * §12.1). As in the browser tests, the run ends by rendering the last frame again a few times, 1 ms apart, so that the
+ * script's answers to the last frames are applied.
  *
  * Browser code only: no Node API. Talks to Node through `window.ouafPreview` (`protocol.ts`).
  */
@@ -16,16 +15,12 @@ import type { PreviewJob, PreviewPageOutcome, PreviewTiming } from './protocol.t
 
 /** Media time step between the copies of a still image (s). */
 const IMAGE_STEP = 1 / 30
-/** Time given to a script to answer each frame (ms); then the settling frames, 1 ms of media time apart. */
-const SCRIPT_FRAME_MS = 15
+/** Settling frames: the last frame again, 1 ms of media time apart. */
 const SETTLE_FRAMES = 4
-const SETTLE_MS = 100
 /** A pixel "changed" by the filter differs from the raw frame by more than this on a channel (0–255). */
 const CHANGED = 24
 /** Matching the engine's frame times: frames are kept from `from - EPS` to `time + EPS`. */
 const EPS = 1e-4
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** The built-in face tracker, its LiteRT.js worker loaded from the bundle's own entry (`face-worker.js`, preview.ts). */
 const facePlugin: OuafPlugin = {
@@ -142,7 +137,6 @@ async function render(job: PreviewJob): Promise<PreviewPageOutcome> {
       if (e.name === 'faceEnter') faces++
       else if (e.name === 'faceLeave') faces--
     })
-    const scripted = engine.filters.some((f) => f.manifest.script !== undefined)
 
     const frameMs: number[] = []
     let pushed = 0
@@ -156,17 +150,12 @@ async function render(job: PreviewJob): Promise<PreviewPageOutcome> {
       await push(frame.image, frame.time)
       if (last && last.image !== frame.image) last.close()
       last = frame
-      if (scripted) await sleep(SCRIPT_FRAME_MS)
     }
     if (!last) {
       const f = job.frames
       throw new Error(f.kind === 'video' ? `No frame of ${f.url} between ${f.from} and ${f.time} s.` : `No frame in ${f.url}.`)
     }
-    for (let i = 1; i <= SETTLE_FRAMES; i++) {
-      await push(last.image, last.time + i / 1000)
-      await sleep(scripted ? SETTLE_MS : 0)
-    }
-    await push(last.image, last.time + (SETTLE_FRAMES + 1) / 1000)
+    for (let i = 1; i <= SETTLE_FRAMES + 1; i++) await push(last.image, last.time + i / 1000)
 
     // Read in the same task as the render: the drawing buffer is not preserved.
     const sw = engine.canvas.width

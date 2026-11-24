@@ -3,8 +3,8 @@ import { expect, test, type Page } from '@playwright/test'
 /**
  * Scripts (#26) on `/engine.html`, in the real sandbox (sandboxed iframe, CSP, Worker): host messages reach the
  * script, its `.set()` / `.animate()` drive a color layer, `f.emit` reaches the host, the sandbox blocks the ways out,
- * an endless loop is stopped by the watchdog while rendering goes on, and a busy page does not stop a script that
- * answers (#158).
+ * an endless loop is stopped by the watchdog while rendering goes on, a busy page does not stop a script that
+ * answers (#158), and with a file source each frame waits for the script's answer to the previous one (spec §12.1).
  */
 
 const FILTER = '/filters/fixtures/script-grade/'
@@ -115,8 +115,8 @@ test('an endless loop is stopped by the watchdog; rendering never stops', async 
  * at 30 and 15 fps) on a busy page: 4 × CDP CPU throttling of the page, software WebGL, frames pushed one after the
  * other as in the demo test (`e2e/demos.spec.ts`), each one tracked and rendered in a long task.
  *
- * The script never loops: it is never stopped, and it answers each frame before the next one is rendered, so that
- * every frame reaches it (one frame in flight: a frame rendered while the script is busy is not sent). Before #158
+ * The script never loops: it is never stopped, and since the engine waits for its answer to each frame before
+ * rendering the next one (file regime, spec §12.1), every frame reaches it. Before #158
  * its canvases were GPU-backed and each `transferToImageBitmap` waited on the GPU process, busy with the engine's
  * rendering: 250 ms per draw here (less than half of the frames reached the script), about 1 s with 2 cores, which
  * tripped the watchdog on CI.
@@ -143,10 +143,9 @@ test('a busy page does not stop a script that answers: the stress demo under CPU
     for (; pushed < 20; pushed++) {
       const frame = await source.read()
       if (!frame) break
+      // File regime (spec §12.1): the engine waits for the script's answer to each frame before rendering the next.
       await engine.pushFrame(frame.image, frame.time)
       frame.close()
-      // Time for the script to answer before the next frame, much less than a GPU-bound draw took before #158.
-      await new Promise((resolve) => setTimeout(resolve, 50))
     }
     source.dispose()
     return { pushed, sent: window.scriptFrames!, errors: window.ouaf!.errors, warnings: window.ouaf!.warnings }
@@ -156,6 +155,38 @@ test('a busy page does not stop a script that answers: the stress demo under CPU
   expect(result.errors).toEqual([])
   expect(result.warnings).toEqual([])
   expect(result.pushed).toBe(20)
-  // It kept up (a little slack for a hiccup of a CI runner).
-  expect(result.sent).toBeGreaterThanOrEqual(18)
+  // Every frame reached the script, none stopped it.
+  expect(result.sent).toBe(20)
+})
+
+test('with a file source, each frame waits for the answer to the previous one (spec §12.1)', async ({ page }) => {
+  await page.goto('/engine.html?maxFaces=1')
+  await page.waitForFunction(() => !!window.ouaf)
+  const result = await page.evaluate(async () => {
+    const { engine, core } = window.ouaf!
+    // Its update() turns a black-and-white grade off and on at every frame: frames 0, 2… gray, 1, 3… in color.
+    await engine.addFilter('/filters/fixtures/script-frames/')
+    const source = await core.OfflineVideoSource.open('/test-media/pesquet-talk.mp4')
+    const W = 90
+    const H = 160
+    const ctx = new OffscreenCanvas(W, H).getContext('2d', { willReadFrequently: true })!
+    const chroma: number[] = []
+    for (let i = 0; i < 12; i++) {
+      const frame = (await source.read())!
+      // No pause between frames: whatever the timing, the engine applies the script's answer to frame N at N + 1.
+      await engine.pushFrame(frame.image, frame.time)
+      frame.close()
+      ctx.drawImage(engine.canvas, 0, 0, W, H)
+      const d = ctx.getImageData(0, 0, W, H).data
+      let sum = 0
+      for (let p = 0; p < d.length; p += 4) sum += Math.max(d[p]!, d[p + 1]!, d[p + 2]!) - Math.min(d[p]!, d[p + 1]!, d[p + 2]!)
+      chroma.push(sum / (d.length / 4))
+    }
+    source.dispose()
+    return { chroma, errors: window.ouaf!.errors, warnings: window.ouaf!.warnings }
+  })
+  expect(result.errors).toEqual([])
+  expect(result.warnings).toEqual([])
+  const gray = result.chroma.map((c) => c < 2)
+  expect(gray).toEqual(result.chroma.map((_, i) => i % 2 === 0))
 })

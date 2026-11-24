@@ -16,7 +16,8 @@
  * - **live**: a camera, a playing `<video>` (`VideoFileSource`), a canvas the host draws into. Frames are rendered as
  *   they come, with the latest tracking result; random choices are seeded randomly.
  * - **file**: a still image, an `OfflineVideoSource`, frames given with `pushFrame`. Every frame waits for its own
- *   tracking result, time is the media time, and the seed is fixed: every run gives the same images.
+ *   tracking result and for the scripts' answers to the previous one, time is the media time, and the seed is fixed:
+ *   every run gives the same images.
  */
 import { resolveBuiltin } from '@ouaf/builtins'
 import { DEFAULT_SCRIPT_USES, createRegistry, extendRegistry, type ScriptUse, type SpecRegistry, type Stage } from '@ouaf/spec'
@@ -523,7 +524,8 @@ export class Engine {
 
   /**
    * Regime of the current source (spec §12.1): `live` (camera, playing video, canvas: frames are rendered as they
-   * come) or `file` (still image, offline video, `pushFrame`: each frame waits for its tracking, seeds are fixed).
+   * come) or `file` (still image, offline video, `pushFrame`: each frame waits for its tracking and for the scripts'
+   * answers, seeds are fixed).
    */
   get regime(): SourceRegime {
     return this.#regime
@@ -854,8 +856,8 @@ export class Engine {
 
   /**
    * A still image (file regime): tracked once (IMAGE mode), again when the tracking configuration changes, and
-   * rendered on every animation frame so that animations and transitions play. Time is the time since the source
-   * was set.
+   * rendered on every animation frame so that animations and transitions play, each frame once the scripts have
+   * answered the previous one (spec §12.1). Time is the time since the source was set.
    */
   async #runStill(feed: Extract<Feed, { kind: 'still' }>): Promise<void> {
     let tracked = -1
@@ -869,6 +871,11 @@ export class Engine {
       if (tracking.active && tracking.configVersion !== tracked) {
         tracked = tracking.configVersion
         await tracking.track(feed.image, now, t0 < 0 ? 0 : (now - t0) / 1000, true)
+        if (this.#feed !== feed) return
+      }
+      const scripts = this.#scriptsSettled()
+      if (scripts) {
+        await scripts
         if (this.#feed !== feed) return
       }
       // The clock starts with the first frame shown (switching the tracker to IMAGE mode can take a while).
@@ -933,7 +940,8 @@ export class Engine {
   }
 
   /**
-   * One frame of a file source: waits for the tracker, tracks this very frame, then renders it (spec §12.1). A time
+   * One frame of a file source: waits for the tracker, tracks this very frame, waits for the scripts' answers to the
+   * previous frame, then renders it (spec §12.1). A time
    * earlier than the previous frame's starts a new run: faces and the tracker's temporal state are reset, and seeds
    * restart, so that every run gives the same images (spec §12.5).
    */
@@ -956,8 +964,14 @@ export class Engine {
     const now = time * 1000
     this.#compositor.setFrame(image)
     this.#compositor.beginFrame()
+    // The scripts answer the previous frame while this one is tracked.
+    const scripts = this.#scriptsSettled()
     if (tracking.active) {
       await tracking.track(image, now, time)
+      if (this.#feed !== feed || this.#disposed) return
+    }
+    if (scripts) {
+      await scripts
       if (this.#feed !== feed || this.#disposed) return
     }
     try {
@@ -966,6 +980,20 @@ export class Engine {
       if (isSecurityError(error)) throw taintedError(describeImage(image), error)
       throw error
     }
+  }
+
+  /**
+   * File regime (spec §12.1): resolves once every script has answered `setup` and the last frame it was sent, so that
+   * the answer to frame N is applied at frame N + 1 on every run; `undefined` when none is busy. The watchdog (spec
+   * §12.7) bounds the wait: a script that does not answer is stopped, and the frame is rendered without it.
+   */
+  #scriptsSettled(): Promise<unknown> | undefined {
+    let waits: Array<Promise<void>> | undefined
+    for (let i = 0; i < this.#stack.length; i++) {
+      const settled = this.#stack[i]!.host?.settled()
+      if (settled) (waits ??= []).push(settled)
+    }
+    return waits && Promise.all(waits)
   }
 
   /** The source cannot be read any more (tainted canvas, decoding error): reported, and the source is cleared. */
