@@ -31,7 +31,7 @@ import {
   Vector3,
 } from 'three'
 import { compileScale } from '../scale.ts'
-import { selectFaces, type FacesSelector } from './faces.ts'
+import { selectFaces, type FacesSelector } from '../faces.ts'
 import { compileContent } from '../../engine/content.ts'
 import { isLoadedFont, type LoadedFont } from './font-loader.ts'
 import type { TextAlign } from './layout.ts'
@@ -151,6 +151,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
   const maxFaces = ctx.maxFaces
   const anchorMatrices = Array.from({ length: maxFaces }, () => new Matrix4())
   const ok = new Uint8Array(maxFaces)
+  const ids = new Int32Array(maxFaces)
   const apparent = new Float64Array(maxFaces)
   const selected = new Int32Array(instances)
   const num = new Float64Array(5) // opacity, size, scale x, y, z
@@ -162,7 +163,6 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
   const plane = new Matrix4()
   const screenMatrix = new Matrix4()
   let frameRef: FrameContext | undefined
-  const idOf = (slot: number) => frameRef!.anchors.id(slot)
 
   /** Redraws the slot's texture if needed; false when there is nothing to draw. */
   const refresh = (slot: Slot, face: number, sizeValue: number): boolean => {
@@ -228,11 +228,12 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
         for (let i = 0; i < count; i++) {
           const m = anchorMatrices[i]!
           ok[i] = frame.anchors.face(i, anchor, follow, m) ? 1 : 0
+          ids[i] = frame.anchors.id(i)
           // Apparent size: scale of the anchor frame over its distance to the camera.
           const e = m.elements
           apparent[i] = ok[i] ? Math.hypot(e[0]!, e[1]!, e[2]!) / Math.max(1e-6, -e[14]!) : 0
         }
-        n = selectFaces(faces, count, ok, idOf, apparent, selected)
+        n = selectFaces(faces, count, ids, apparent, selected, ok)
       }
       for (let k = 0; k < meshes.length; k++) {
         const mesh = meshes[k]!

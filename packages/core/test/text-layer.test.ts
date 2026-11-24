@@ -2,7 +2,6 @@ import type { ParamTypeName } from '@ouaf/spec'
 import { Matrix4, Vector3, type Mesh } from 'three'
 import { describe, expect, it } from 'vitest'
 import { createFaceFrame, type AnchorProvider, type FrameContext, type LayerContext, type LayerDecl, type ParamsReader } from '../src/index.ts'
-import { selectFaces } from '../src/layers/text/faces.ts'
 import { layoutBox, wrapText, type MeasureEm } from '../src/layers/text/layout.ts'
 import { TextRaster, splitAlpha, type TextContext, type TextStyle, type TextSurface } from '../src/layers/text/raster.ts'
 import { createTextLayer } from '../src/layers/text/text-layer.ts'
@@ -170,25 +169,6 @@ describe('TextRaster', () => {
     expect(splitAlpha('#00000080')).toEqual({ rgb: '#000000', alpha: 128 / 255 })
     expect(splitAlpha('#f00')).toEqual({ rgb: '#ff0000', alpha: 1 })
     expect(splitAlpha('#f008')).toEqual({ rgb: '#ff0000', alpha: 0x88 / 255 })
-  })
-})
-
-describe('selectFaces', () => {
-  const out = new Int32Array(4)
-  const ids = [5, 2, 9, 0]
-  const id = (i: number) => ids[i]!
-  const ok = [1, 1, 0, 1]
-  const size = [0.1, 0.3, 0.9, 0.2]
-
-  it('selects all, the first seen, the n first seen or the largest', () => {
-    expect([...out.subarray(0, selectFaces('all', 4, ok, id, size, out))]).toEqual([0, 1, 3])
-    expect([...out.subarray(0, selectFaces('first', 4, ok, id, size, out))]).toEqual([1])
-    // Slot 3 has no id yet: after the identified faces.
-    expect([...out.subarray(0, selectFaces(3, 4, ok, id, size, out))]).toEqual([1, 0, 3])
-    expect([...out.subarray(0, selectFaces(2, 4, ok, id, size, out))]).toEqual([1, 0])
-    // Slot 2 is the largest but its anchor is not available.
-    expect([...out.subarray(0, selectFaces('largest', 4, ok, id, size, out))]).toEqual([1])
-    expect(selectFaces('all', 0, ok, id, size, out)).toBe(0)
   })
 })
 

@@ -695,8 +695,8 @@ export class Engine {
    * `message:<name>` event (spec §13) by the scripts that list it in `script.on`; `handle.send` targets one filter.
    * `name`: a letter, then letters, digits, `_` or `-`. `data` must be structured-cloneable: it is copied now, so
    * changing it afterwards changes nothing. Delivered with the next frame sent to each script, after the events
-   * queued before it. Throws `OuafError('invalid-message')` (bad name, data that cannot be cloned) or
-   * `OuafError('disposed')`.
+   * queued before it; a disabled filter keeps a bounded queue (the last message of each name, spec §12.7). Throws
+   * `OuafError('invalid-message')` (bad name, data that cannot be cloned) or `OuafError('disposed')`.
    */
   send(name: string, data?: unknown): void {
     this.#assertAlive()
@@ -1014,8 +1014,14 @@ export class Engine {
 
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
-      if (!filter.active) continue
       const layers = filter.layers
+      if (!filter.active) {
+        // Disabled or hidden: its videos stop playing until it is drawn again.
+        if (filter.layersRunning) for (let l = 0; l < layers.length; l++) layers[l]!.instance.suspend?.()
+        filter.layersRunning = false
+        continue
+      }
+      filter.layersRunning = true
       for (let l = 0; l < layers.length; l++) layers[l]!.instance.update(frame)
     }
     for (let i = 0; i < this.#renderPasses.length; i++) this.#renderPasses[i]!.update(frame)

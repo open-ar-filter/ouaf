@@ -135,6 +135,9 @@ function makeTarget(): WebGLRenderTarget {
 /** A texture of the layer, built from a loaded image or video asset, and how to release it. */
 interface LayerTexture {
   texture: Texture
+  /** The filter is not drawn: a video the layer plays is paused until `resume`. */
+  suspend?(): void
+  resume?(): void
   dispose(): void
 }
 
@@ -157,11 +160,18 @@ async function layerTexture(name: string, ref: string, asset: unknown, owner: ob
       a.video.loop = true
       void a.video.play().catch(() => {})
     }
+    const playing = () => owns && a.owner === owner
     return {
       texture,
+      suspend() {
+        if (playing() && !a.video!.paused) a.video!.pause()
+      },
+      resume() {
+        if (playing() && a.video!.paused) void a.video!.play().catch(() => {})
+      },
       dispose() {
         texture.dispose()
-        if (owns && a.owner === owner) {
+        if (playing()) {
           a.video!.pause()
           a.owner = undefined
         }
@@ -257,7 +267,7 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
     ...uniforms.uniforms,
   }
   anchors.forEach((name, i) => (uniformMap[`ouaf_anchor_${name}`] = { value: inputs!.positions[i]! }))
-  const owned: Array<{ dispose(): void }> = []
+  const owned: LayerTexture[] = []
   const owner = {}
   try {
     for (const [name, ref] of Object.entries(decl.textures ?? {})) {
@@ -328,6 +338,8 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
   let width = 0
   let height = 0
   let active = false
+  /** `suspend()` was called: the next `update` plays the videos again. */
+  let suspended = false
 
   const draw = (renderer: WebGLRenderer, input: Texture, output: WebGLRenderTarget | null) => {
     if (stage === 'face') {
@@ -348,6 +360,10 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
       return active
     },
     update(frame) {
+      if (suspended) {
+        suspended = false
+        for (const t of owned) t.resume?.()
+      }
       faceCount = Math.min(frame.faces.count, ctx.maxFaces)
       const slot = faceCount > 0 ? 0 : NO_FACE
       opacity.write(slot, values, 0)
@@ -406,6 +422,10 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
       renderer.setRenderTarget(pass.output)
       renderer.render(copyScene, camera)
       history.current = history.current === 0 ? 1 : 0
+    },
+    suspend() {
+      suspended = true
+      for (const t of owned) t.suspend?.()
     },
     dispose() {
       effect.dispose()

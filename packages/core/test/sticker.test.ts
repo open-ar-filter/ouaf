@@ -8,7 +8,7 @@ import type { AssetRequest } from '../src/engine/assets.ts'
 import { createSticker, stickerRefs } from '../src/layers/sticker/layer.ts'
 import { BLEND_FACTORS, StickerMaterial } from '../src/layers/sticker/material.ts'
 import { clockStep, frameRect, spriteFrame, videoDrift, videoTarget } from '../src/layers/sticker/playback.ts'
-import { instanceCount, pickIndex, selectFaces } from '../src/layers/sticker/select.ts'
+import { pickIndex } from '../src/layers/sticker/select.ts'
 import type { BindingDataSource } from '../src/bindings/index.ts'
 import type { TParams } from '@ouaf/spec'
 import { bindingParams } from '../src/engine/filter.ts'
@@ -54,28 +54,7 @@ describe('sticker playback math', () => {
   })
 })
 
-describe('sticker face selection and pick', () => {
-  const out = new Int32Array(4)
-  const ids = [7, 3, 0, 5]
-  const sizes = [0.1, 0.2, 0.5, 0.3]
-
-  it('sizes the instances for `faces`', () => {
-    expect(instanceCount('all', 4)).toBe(4)
-    expect(instanceCount('first', 4)).toBe(1)
-    expect(instanceCount('largest', 4)).toBe(1)
-    expect(instanceCount(2, 4)).toBe(2)
-    expect(instanceCount(9, 4)).toBe(4)
-  })
-
-  it('selects every face, the oldest, the largest, or the n oldest', () => {
-    expect([...out.subarray(0, selectFaces('all', 3, ids, sizes, out))]).toEqual([0, 1, 2])
-    expect([...out.subarray(0, selectFaces('first', 4, ids, sizes, out))]).toEqual([1]) // id 3
-    expect([...out.subarray(0, selectFaces('largest', 4, ids, sizes, out))]).toEqual([2])
-    expect([...out.subarray(0, selectFaces(2, 4, ids, sizes, out))]).toEqual([1, 3]) // ids 3, 5
-    expect([...out.subarray(0, selectFaces(4, 4, ids, sizes, out))]).toEqual([1, 3, 0, 2]) // no id last
-    expect(selectFaces('all', 0, ids, sizes, out)).toBe(0)
-  })
-
+describe('sticker pick', () => {
   it('picks per face id (stable, successive faces get successive assets) or from a random draw', () => {
     expect([1, 2, 3, 4].map((id) => pickIndex('face', id, 3, 0))).toEqual([0, 1, 2, 0])
     expect(pickIndex('face', 0, 3, 0)).toBe(0)
@@ -441,24 +420,41 @@ describe('sticker layer', () => {
     shownData = true
   })
 
+  /** A video element as far as `VideoPlayback` uses it. */
+  const fakeVideo = () => ({
+    loop: false,
+    duration: 10,
+    currentTime: 0,
+    paused: true,
+    seeking: false,
+    playbackRate: 1,
+    plays: 0,
+    play() {
+      this.paused = false
+      this.plays++
+      return Promise.resolve()
+    },
+    pause() {
+      this.paused = true
+    },
+  })
+
+  it('pauses its videos while the filter is not drawn, and plays them again at the clock', () => {
+    const video = fakeVideo()
+    const clip = asset('video', 100, 100, { video: video as unknown as HTMLVideoElement })
+    const layer = createSticker({ type: 'sticker', src: 'clip' } as LayerDecl, context({ clip }, 1))
+    const anchors = fakeAnchors([1])
+    layer.update(frameAt(0, anchors))
+    expect([video.paused, video.plays]).toEqual([false, 1])
+    layer.suspend!() // disabled: no update until it is enabled again
+    expect(video.paused).toBe(true)
+    layer.update(frameAt(5, anchors))
+    expect([video.paused, video.plays]).toEqual([false, 2])
+    layer.dispose()
+  })
+
   it('re-synchronizes a video paused while hidden by `visible` to the running clock', () => {
-    const video = {
-      loop: false,
-      duration: 10,
-      currentTime: 0,
-      paused: true,
-      seeking: false,
-      playbackRate: 1,
-      plays: 0,
-      play() {
-        this.paused = false
-        this.plays++
-        return Promise.resolve()
-      },
-      pause() {
-        this.paused = true
-      },
-    }
+    const video = fakeVideo()
     const clip = asset('video', 100, 100, { video: video as unknown as HTMLVideoElement })
     const layer = createSticker({ type: 'sticker', src: 'clip', visible: { bind: 'test.shown' } } as LayerDecl, context({ clip }, 1))
     const anchors = fakeAnchors([1])

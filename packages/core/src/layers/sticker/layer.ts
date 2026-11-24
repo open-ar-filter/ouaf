@@ -33,7 +33,8 @@ import { compileScale } from '../scale.ts'
 import { isStickerAsset, type StickerAsset } from './assets.ts'
 import { StickerMaterial, type BlendMode } from './material.ts'
 import { clockStep, spriteFrame, videoDrift, videoTarget } from './playback.ts'
-import { instanceCount, pickIndex, selectFaces, type FacesSelector, type PickMode } from './select.ts'
+import { instanceCount, selectFaces, type FacesSelector } from '../faces.ts'
+import { pickIndex, type PickMode } from './select.ts'
 
 /** Drift (s) between a video and the layer clock beyond which the video is seeked back to the clock. */
 export const VIDEO_SYNC_TOLERANCE = 0.2
@@ -122,6 +123,12 @@ class VideoPlayback {
     if (Math.abs(video.playbackRate - rate) > 0.01 * rate) video.playbackRate = rate
     if (Math.abs(drift) > VIDEO_SYNC_TOLERANCE && !video.seeking && Number.isFinite(duration)) video.currentTime = target
     if (video.paused && !this.#playFailed) video.play().catch(this.#onPlayError)
+  }
+
+  /** The filter is not drawn: pause now (the next `sync` of a shown quad plays again, at the clock). */
+  suspend(): void {
+    if (!this.video.paused) this.video.pause()
+    this.#hiddenSince = -1
   }
 
   release(): void {
@@ -338,6 +345,9 @@ export function createSticker(decl: LayerDecl, ctx: LayerContext, options: Stick
       }
       for (let p = 0; p < players.length; p++) players[p]!.sync(play, players[p]!.shown, frame)
       hadFace = selected > 0
+    },
+    suspend() {
+      for (let p = 0; p < players.length; p++) players[p]!.suspend()
     },
     dispose() {
       for (const p of players) p.release()

@@ -283,6 +283,40 @@ describe('shader layer', () => {
     }
   })
 
+  it('plays its video textures, paused while the filter is not drawn', async () => {
+    const video = {
+      loop: false,
+      paused: true,
+      play() {
+        this.paused = false
+        return Promise.resolve()
+      },
+      pause() {
+        this.paused = true
+      },
+    }
+    const clip = createStickerAsset({
+      kind: 'video',
+      texture: new Texture(),
+      textureWidth: 64,
+      textureHeight: 64,
+      width: 64,
+      height: 64,
+      frames: undefined,
+      packed: false,
+      video: video as unknown as HTMLVideoElement,
+      owner: undefined,
+    })
+    const { layer, frame } = await setup({ textures: { u_clip: 'clip' } }, { assets: { clip } })
+    expect([video.paused, video.loop]).toEqual([false, true])
+    layer.suspend!()
+    expect(video.paused).toBe(true)
+    layer.update(frame)
+    expect(video.paused).toBe(false)
+    layer.dispose()
+    expect([video.paused, clip.owner]).toEqual([true, undefined])
+  })
+
   it('is active unless hidden or transparent; on the face stage, only with a face', async () => {
     const params: Record<string, unknown> = { o: 1, on: true }
     const post = await setup({ opacity: { param: 'o' }, visible: { param: 'on' } }, { params, types: { o: 'number', on: 'boolean' } })
