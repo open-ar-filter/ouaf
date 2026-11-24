@@ -25,15 +25,11 @@
       </li>
       <li><a href="../?maxFaces=1">Multi-face cost (#8): maxFaces=1</a> · <a href="../?maxFaces=2">2</a> · <a href="../?maxFaces=4">4</a></li>
       <li>
-        Face models on another runtime (#83):
-        <a href="runtime.html?runtime=mediapipe">MediaPipe GPU</a> ·
-        <a href="runtime.html?runtime=mediapipe&amp;delegate=CPU">MediaPipe CPU</a> ·
-        <a href="runtime.html?threads=1">LiteRT wasm, 1 thread</a> ·
-        <a href="runtime.html">LiteRT wasm, threads</a> ·
-        <a href="runtime.html?accel=webgpu">LiteRT WebGPU</a> ·
-        <a href="runtime.html?crop=gpu">LiteRT, GPU crops</a> ·
-        <a href="runtime.html?crop=gpu&amp;mode=worker">… in a worker</a> ·
-        <a href="runtime.html?crop=gpu&amp;mode=worker&amp;schedule=eager">… worker, eager</a>
+        Face models on another runtime (#83): the spike page was removed once its pipeline moved into the engine
+        (#165); the engine page compares the backends:
+        <a href="../engine.html?source=pesquet-closeup&amp;autostart&amp;backend=litert">LiteRT.js worker</a> ·
+        <a href="../engine.html?source=pesquet-closeup&amp;autostart&amp;backend=GPU">MediaPipe GPU</a> ·
+        <a href="../engine.html?source=pesquet-closeup&amp;autostart&amp;backend=CPU">MediaPipe CPU</a>
       </li>
       <li><a href="gl-share.html?path=shared">Shared WebGL context, GPU-side masks (#7): shared</a> · <a href="gl-share.html?path=cpu">cpu</a> · <a href="gl-share.html?path=webgpu">webgpu</a></li>
     </ul>

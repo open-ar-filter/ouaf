@@ -6,10 +6,12 @@ import {
   DETECTOR_SIZE,
   LANDMARKS_SIZE,
   decodeDetections,
+  dedupeRois,
   detectionToRoi,
   landmarksToRoi,
   letterbox,
   projectLandmarks,
+  roiOverlap,
 } from '../src/litert/geometry.ts'
 import { fixDynamicBatch } from '../src/litert/pipeline.ts'
 
@@ -124,6 +126,31 @@ describe('LiteRT.js face geometry (MediaPipe graph calculators)', () => {
     expect(BLENDSHAPE_LANDMARKS).toHaveLength(146)
     expect(new Set(BLENDSHAPE_LANDMARKS).size).toBe(146)
     expect(BLENDSHAPE_LANDMARKS.slice(-10)).toEqual([468, 469, 470, 471, 472, 473, 474, 475, 476, 477])
+  })
+})
+
+describe('ROI association (several faces)', () => {
+  const roi = (cx: number, cy: number, size: number, rotation = 0) => ({ cx, cy, size, rotation })
+
+  it('measures the overlap of two ROIs as the IoU of their squares, rotation aside', () => {
+    expect(roiOverlap(roi(100, 100, 50), roi(100, 100, 50, 0.4))).toBe(1)
+    // Shifted by half a side: 25×50 in common, 2 × 2500 − 1250 in all.
+    expect(roiOverlap(roi(100, 100, 50), roi(125, 100, 50))).toBeCloseTo(1250 / 3750, 9)
+    expect(roiOverlap(roi(100, 100, 50), roi(200, 100, 50))).toBe(0)
+    // Nested: the small one's area over the large one's.
+    expect(roiOverlap(roi(100, 100, 100), roi(100, 100, 50))).toBeCloseTo(0.25, 9)
+  })
+
+  it('drops the ROIs that overlap an earlier one by more than half, keeping the order', () => {
+    const items = [
+      { id: 'a', roi: roi(100, 100, 50) },
+      { id: 'b', roi: roi(300, 100, 50) },
+      { id: 'a2', roi: roi(105, 102, 52) },
+      { id: 'c', roi: roi(125, 100, 50) }, // overlaps `a` by a third only: another face
+      { id: 'b2', roi: roi(300, 100, 48) },
+    ]
+    expect(dedupeRois(items, (i) => i.roi).map((i) => i.id)).toEqual(['a', 'b', 'c'])
+    expect(items).toHaveLength(3)
   })
 })
 

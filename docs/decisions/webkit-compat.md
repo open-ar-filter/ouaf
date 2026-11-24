@@ -62,7 +62,7 @@ has none, so the worker variants that need it (#6 worker, #83 GPU crops in the w
 | `path=webgpu` | ❌ expected | `pipeline unavailable: WebGPU is not available in this browser (navigator.gpu missing).` |
 | `path=shared&face=shared` (and `face=own`) | ✅ after fix | 1 face tracked on the shared canvas (and on its own context with `face=own`); alignment `top-first … (correct)`. |
 | `path=shared&reset=none` | ❌ expected | Breaks as designed: `WebGL: INVALID_OPERATION: texImage2D: no texture`, `glDrawElements: Must have element array buffer bound`. |
-| **#83** `/spikes/runtime.html` isolation | ✅ | `crossOriginIsolated yes · SharedArrayBuffer yes · 8 cores · WebGPU no`. |
+| **#83** `/spikes/runtime.html` (removed in #165) isolation | ✅ | `crossOriginIsolated yes · SharedArrayBuffer yes · 8 cores · WebGPU no`. |
 | `threads=1`, `threads=4` | ✅ | Face tracked; landmark model 6.4 ms on 1 thread, 2.9 ms on 4 (9 pthreads started). |
 | `crop=gpu`, `detcrop=gpu` (main thread) | ✅ | Same detector ROI as the 2D canvas within 0.6 px, landmarks within 0.07 % of the ROI. |
 | **Check vs MediaPipe** (LiteRT ×4, `crop=gpu`) | ✅ | `landmarks: mean 0.7 %, max 1.9 % of the face size` (frontal, 2 s of `pesquet-talk`); 1.8 % / 12.4 % on the 4 s frame (head turned). Same in the worker. |
@@ -82,7 +82,8 @@ has none, so the worker variants that need it (#6 worker, #83 GPU crops in the w
    module a worker imports, not only of the worker script: `Refused to load '…/litert-pipeline.ts' worker because of
    Cross-Origin-Embedder-Policy`. The dev server now sends COOP/COEP/CORP on worker imports (`Sec-Fetch-Dest:
    worker` from a module). The build bundles each worker into one script, so it was not affected (checked with
-   `vite preview`).
+   `vite preview`). Removed with the spike in #165: no playground page is cross-origin isolated any more (wasm
+   threads for the engine's tracker: #169).
 3. **`crossOriginIsolated` in a worker of a non-isolated page.** WebKit reports `true` there (from the worker
    script's own headers) while `SharedArrayBuffer` is missing, so the worker tried the threaded build. The worker now
    requires both before using threads.

@@ -2,14 +2,17 @@
  * Messages between the LiteRT.js face tracker (`tracker.ts`, page side) and its worker (`face.worker.ts`).
  *
  * The page transfers each frame (`VideoFrame`, or `ImageBitmap` where `VideoFrame` is missing) with a result buffer
- * from a small pool; the worker closes the frame and sends the buffer back filled (`RESULT_FLOATS`: landmarks, then
- * blendshapes). A frame that comes while the worker runs waits for the run to end; a newer one replaces it (its
+ * from a small pool; the worker closes the frame and sends the buffer back filled (`RESULT_FLOATS` per face: landmarks,
+ * then blendshapes). A frame that comes while the worker runs waits for the run to end; a newer one replaces it (its
  * buffer comes back with `dropped`).
  */
 import { BLENDSHAPE_COUNT, LANDMARK_COUNT } from '../face.ts'
 import type { Crop, Readback, StageTimings } from './pipeline.ts'
 
-/** Floats of a result buffer: 478 × xyz landmarks (normalized, as in `FaceFrame`), then 52 blendshape scores. */
+/**
+ * Floats per face in a result buffer: 478 × xyz landmarks (normalized, as in `FaceFrame`), then 52 blendshape scores.
+ * Face `i` starts at `i * RESULT_FLOATS`.
+ */
 export const RESULT_FLOATS = LANDMARK_COUNT * 3 + BLENDSHAPE_COUNT
 
 export interface InitMessage {
@@ -29,11 +32,13 @@ export interface FrameMessage {
   height: number
   /** Run the blendshapes model. */
   blendshapes: boolean
+  /** Faces to track at most; the buffer holds at least this many. */
+  maxFaces: number
   /** Forget the tracked face first (still image, new run of a file source). */
   reset: boolean
   /** The result must be this frame's (file source): no async readback for it. */
   exact?: boolean
-  /** Free result buffer (`RESULT_FLOATS` floats, transferred), sent back in the `result` message. */
+  /** Free result buffer (`maxFaces × RESULT_FLOATS` floats or more, transferred), sent back in the `result` message. */
   buffer: ArrayBuffer
   /** When it was posted: `performance.timeOrigin + performance.now()` of the page (ms). */
   sentAt: number
@@ -65,7 +70,8 @@ export interface ResultMessage {
   /** The frame the result describes: `id`, or an earlier frame with the async readback. */
   frame: number
   buffer: ArrayBuffer
-  found: boolean
+  /** Faces found, written in `buffer`. */
+  count: number
   hasBlendshapes: boolean
   timings: StageTimings
   /** Warnings raised during this run (crop fallback after a context loss). */
@@ -86,7 +92,7 @@ export interface ResultMessage {
    * captures frames from the element again.
    */
   streamUnusable?: string
-  /** The run failed: `found` is false. */
+  /** The run failed: `count` is 0. */
   error?: string
 }
 

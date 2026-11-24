@@ -9,7 +9,7 @@ built-in tracker, see [`face-runtime.md`](face-runtime.md#in-the-engine-165)). A
 Run face tracking in a Web Worker (frames transferred from the page, models on an `OffscreenCanvas` in the worker),
 or on the main thread next to rendering? Protocol: [`phase0-measurement-protocol.md`](phase0-measurement-protocol.md#6--tracking-in-a-worker-vs-main-thread),
 page `/spikes/worker.html` (MediaPipe tasks-vision) and `mode=worker` of `/spikes/runtime.html` (our own LiteRT.js
-pipeline, [`face-runtime.md`](face-runtime.md)).
+pipeline, [`face-runtime.md`](face-runtime.md); removed in #165, history up to commit `3bae26b`).
 
 ## Results
 

@@ -20,11 +20,11 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
     files: /^vision_wasm(_module)?_internal\.(js|wasm)$/,
   },
   {
-    // LiteRT.js runtime (#83 spike): single-threaded, threaded (pthreads, cross-origin isolated pages only) and JSPI
-    // builds; `loadLiteRt()` picks one from this directory.
+    // LiteRT.js runtime of the face tracker's worker (#165): the single-threaded build, with relaxed SIMD or without
+    // (`_compat_`), picked by the worker (packages/core/src/litert/face.worker.ts).
     prefix: 'litert/wasm/',
     dir: dirname(require.resolve('@litertjs/core/wasm/litert_wasm_internal.wasm')),
-    files: /^litert_wasm(_threaded|_jspi|_compat)?_internal\.(js|wasm)$/,
+    files: /^litert_wasm(_compat)?_internal\.(js|wasm)$/,
   },
   {
     // Draco decoder of the model layer (#21), fetched by the engine from `<assetsBaseUrl>draco/` the first time a
@@ -172,57 +172,10 @@ function pages(): Record<string, string> {
  */
 const HEADERS = { 'Content-Security-Policy': "connect-src 'self' ws: wss:" }
 
-/**
- * Cross-origin isolation (`crossOriginIsolated`, hence `SharedArrayBuffer` and wasm threads) for the pages that need
- * it, not the whole playground: the #83 runtime spike, the LiteRT.js files it loads (its pthread workers run
- * `litert_wasm_threaded_internal.js`, whose response must carry the same embedder policy) and the MediaPipe wasm
- * it uses as the reference. `?coi=0` on the page turns it off, to measure what isolation itself changes.
- * The page's LiteRT.js worker (`mode=worker`) too: a dedicated worker of an isolated page only loads, and only gets
- * `crossOriginIsolated` (hence threads), when its own script response carries the embedder policy
- * (`/src/spikes/runtime/litert.worker.ts` in dev, `/assets/litert.worker-<hash>.js` in the build).
- *
- * WebKit also checks the embedder policy of every module the worker imports (Chromium and Firefox only check the
- * worker script): without the header on them it refuses `litert-pipeline.ts`, `protocol.ts` and Vite's `env.mjs`
- * ("Worker load was blocked by Cross-Origin-Embedder-Policy") and the pipeline falls back to the main thread. Those
- * requests are told apart by `Sec-Fetch-Dest: worker` with a module, not a page, as referrer (dev server only: the
- * build bundles the worker into one script). The header on an imported module does not change the worker's own
- * policy in the other browsers, so the #6 spike's worker, whose modules match too, is unaffected.
- */
-const ISOLATED = [/\/spikes\/runtime(\.html)?$/, /\/litert\/wasm\//, /\/mediapipe\/wasm\//, /\/models\//, /\/test-media\//, /\/litert\.worker[\w-]*\.(ts|js)$/]
-
-type Request = { url?: string; headers?: Record<string, string | string[] | undefined> }
-
-/** A static import inside a module worker: fetched as a worker script, from another module (not from a page). */
-function isWorkerImport(req: Request): boolean {
-  const referer = req.headers?.referer
-  if (req.headers?.['sec-fetch-dest'] !== 'worker' || typeof referer !== 'string') return false
-  const from = URL.canParse(referer) ? new URL(referer).pathname : ''
-  return /\.(ts|js|mjs)$/.test(from)
-}
-
-function crossOriginIsolation(): Plugin {
-  const middleware = (req: Request, res: { setHeader(name: string, value: string): void }, next: () => void) => {
-    const [path = '', query = ''] = (req.url ?? '').split('?')
-    if ((ISOLATED.some((re) => re.test(path)) && !/(^|&)coi=0(&|$)/.test(query)) || isWorkerImport(req)) {
-      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
-      res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
-      // Lets an isolated page load these files whatever its own origin policy is.
-      res.setHeader('Cross-Origin-Resource-Policy', 'same-origin')
-    }
-    next()
-  }
-  return {
-    name: 'ouaf-cross-origin-isolation',
-    // Before Vite's own middlewares (and the self-hosted assets), so every response of these paths gets the headers.
-    configureServer: (server) => void server.middlewares.use(middleware),
-    configurePreviewServer: (server) => void server.middlewares.use(middleware),
-  }
-}
-
 // getUserMedia requires a secure context: serve over HTTPS (self-signed certificate) and listen on
 // every interface so a phone on the same network can open the playground.
 export default defineConfig({
-  plugins: [basicSsl({ name: 'ouaf-playground' }), crossOriginIsolation(), selfHostedAssets()],
+  plugins: [basicSsl({ name: 'ouaf-playground' }), selfHostedAssets()],
   server: { host: true, port: 5173, headers: HEADERS },
   preview: { host: true, port: 4173, headers: HEADERS },
   build: { target: 'es2023', rolldownOptions: { input: pages() } },

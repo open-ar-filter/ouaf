@@ -129,6 +129,8 @@ check result is logged as a `note` event.
 
 ### Spike #83: face models on another runtime (`/spikes/runtime.html`)
 
+The page was removed in #165 (history up to commit `3bae26b`); the fields below describe the sessions it exported.
+
 `trackingMs` is the main-thread time spent in tracking during the frame callback (MediaPipe: the whole `detect`;
 LiteRT.js: the synchronous part of a run, the rest completes after the callback; LiteRT.js in a worker, `mode=worker`:
 capture, post and result handling of the runs completed since the previous sample) and `renderMs` the 2D canvas draw

@@ -5,7 +5,7 @@ Note 11S, Redmi Note 14 Pro 5G) ran the W runs of the
 [protocol](phase0-measurement-protocol.md#83--face-models-on-another-runtime): our own pipeline on LiteRT.js, **in a
 worker, single-threaded, crops on the GPU**, tracks at ≈ 15–18 Hz while the page keeps rendering at 29 fps, against
 ≈ 8–10 Hz for MediaPipe tasks-vision. An iPhone and a high-end Android phone still have to confirm it (#95).
-**In the engine** since #165, one face for now: see [In the engine](#in-the-engine-165).
+**In the engine** since #165, one face or several: see [In the engine](#in-the-engine-165).
 
 ## In the engine (#165)
 
@@ -66,7 +66,14 @@ GPU and CPU delegates by measuring them ([`device-adaptation.md`](device-adaptat
   replaces `importScripts` during the load by an indirect `eval` of it; `Module.locateFile` (Emscripten's own hook)
   points at the `.wasm`. No pthreads, so no `Worker` wrapper. A classic worker would need no shim, but bundlers
   (Vite in dev) only serve module workers with imports.
-- **One face**: with `maxFaces` > 1 only MediaPipe is a candidate (multi-face is the next step of #165).
+- **Several faces** (`maxFaces` > 1): one tracked ROI per face, each with its own crop, landmark run and
+  blendshapes run (one pixel buffer per face with the async readback). The detector runs while fewer faces than
+  `maxFaces` are tracked; its faces that overlap a tracked one (IoU of the ROI squares > 0.5, MediaPipe's
+  `AssociationNormRectCalculator` threshold) are dropped, and of two tracked faces that come onto the same one, the
+  older stays. One difference with MediaPipe: there, a detection replaces the tracked ROI it overlaps, so while fewer
+  faces than `maxFaces` are tracked every face is cropped from the detector's box, frame after frame; here a tracked
+  face keeps the ROI from its own landmarks, which is steadier (below). The governor can drop the extra faces
+  (`FrameTracker.sheds`): each face costs a landmark run.
 - Blendshapes are skipped while the engine does not want them (governor, spec §16.2; checked by a browser test: the
   model's time falls to 0); the analysis resolution is ignored (crops come from the full frame on the GPU), so the
   tracker tells the governor not to drop it (`FrameTracker.sheds`).
@@ -88,6 +95,13 @@ landmark distance 0.6–1.2 % of the face size (90th percentile 1.0–2.5 %), bl
 within 1.1–1.8° and 0.5–0.9 cm (median), and both find a face on 90–100 % of the same frames. `estimateFacePose` on
 MediaPipe's own landmarks gives MediaPipe's matrix exactly (≤ 0.01 cm).
 
+Several faces (same test, every second frame, async readback, `maxFaces` = the clip's face count): same face count as
+MediaPipe on 94–100 % of the frames, median landmark distance 0.5–0.9 % of the face size (90th percentile 0.8–1.6 %)
+on `two-faces-stacked`, `three-faces-grid` and `four-faces-grid`. With `maxFaces` 4 on the two- and three-face clips
+(the detector runs on every frame, see above), MediaPipe loses a face on up to 20 of 93 frames and its landmarks move
+by 2–4 % of the face size from ours on the faces it crops from its detections; ours finds every face on every frame
+there, and never one more.
+
 ## Question
 
 MediaPipe FaceLandmarker costs 75–100 ms per frame on a mid-range Android phone (≈ 10 Hz), CPU delegate slightly
@@ -106,6 +120,9 @@ would our own pipeline cost to build and maintain?
   files directly (no conversion), with XNNPACK on wasm (single-threaded, threaded and JSPI builds) and a WebGPU
   delegate. ONNX Runtime Web was not prototyped: it needs a tflite → ONNX conversion (tf2onnx, a TensorFlow
   install), and its CPU path is the same XNNPACK; it stays the fallback if LiteRT.js disappoints on devices.
+The spike's page and code (`/spikes/runtime.html`, `apps/playground/src/spikes/runtime/`, `e2e/runtime-*.spec.ts`)
+were removed in #165 once the pipeline was in `@ouaf/core`; they are in the history up to commit `3bae26b`.
+
 - Our own pipeline (`apps/playground/src/spikes/runtime/`): the geometry MediaPipe's graph does around the models
   (SSD anchors and box decoding, weighted NMS, rotated square ROI from the eyes, ROI tracked from the previous
   frame's landmarks so the detector only runs when the face is lost, rotated crop on a 2D canvas or, with
@@ -267,7 +284,7 @@ Reading:
   to 0.15 rad on a hard frame, so the letterbox keeps one tap. The worker gives **identical** landmarks to the main
   thread on frontal frames (0.000 %), with `VideoFrame` and with `ImageBitmap`; Check vs MediaPipe reads the same
   (0.6 % and 1.6–1.8 % mean of the face size at 2 s and 4 s of `pesquet-talk`, main thread and worker). Covered by
-  `e2e/runtime-worker.spec.ts`.
+  `e2e/runtime-worker.spec.ts` (removed with the spike; the engine's tracker: `e2e/litert-tracker.spec.ts`).
 - **Detector crop on the GPU: 6.3 → 2.6 ms** on every frame here (`detect=always`), the detector stage 7.8 → 4.6 ms.
   The phone's canvas letterbox cost 38–58 ms, the same software path as the landmark crop before `crop=gpu` (whose
   cost fell from ≈ 40 to ≈ 14 ms there); the GPU version should bring a lost face back several frames sooner.

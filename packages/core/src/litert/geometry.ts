@@ -186,6 +186,40 @@ export function landmarksToRoi(landmarks: Float32Array, count: number): Roi {
 }
 
 /**
+ * Overlap of two ROIs: intersection over union of their unrotated squares (center and side). Above `ROI_SAME` two ROIs
+ * are taken for the same face: MediaPipe's `AssociationNormRectCalculator` (`min_similarity_threshold: 0.5`) compares
+ * the face landmarker's tracked ROIs and new detections the same way.
+ */
+export function roiOverlap(a: Roi, b: Roi): number {
+  const x0 = Math.max(a.cx - a.size / 2, b.cx - b.size / 2)
+  const x1 = Math.min(a.cx + a.size / 2, b.cx + b.size / 2)
+  const y0 = Math.max(a.cy - a.size / 2, b.cy - b.size / 2)
+  const y1 = Math.min(a.cy + a.size / 2, b.cy + b.size / 2)
+  const inter = Math.max(0, x1 - x0) * Math.max(0, y1 - y0)
+  const union = a.size * a.size + b.size * b.size - inter
+  return union > 0 ? inter / union : 0
+}
+
+/** `roiOverlap` above which two ROIs are the same face. */
+export const ROI_SAME = 0.5
+
+/**
+ * Removes, in place, the items whose ROI overlaps an earlier item's (`roiOverlap` > `ROI_SAME`): the earlier one,
+ * tracked for longer, is kept. Returns `items`.
+ */
+export function dedupeRois<T>(items: T[], roi: (item: T) => Roi): T[] {
+  let n = 0
+  for (let i = 0; i < items.length; i++) {
+    const r = roi(items[i]!)
+    let same = false
+    for (let j = 0; j < n && !same; j++) same = roiOverlap(roi(items[j]!), r) > ROI_SAME
+    if (!same) items[n++] = items[i]!
+  }
+  items.length = n
+  return items
+}
+
+/**
  * Maps the landmark model output (`x, y, z` in `LANDMARKS_SIZE` pixels of the ROI crop) to frame pixels, in place
  * into `out`. `z` is scaled like `x` (MediaPipe's convention, before normalization by the frame width).
  */

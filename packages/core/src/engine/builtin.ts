@@ -274,8 +274,7 @@ export interface DefaultFaceTrackerOptions {
  * fastest on this device (MediaPipe must be 15 % faster than LiteRT.js to win: it also takes its time from rendering,
  * `MAIN_THREAD_WEIGHT`). Forced by `EngineOptions.trackerBackend` (`litert`, `GPU`, `CPU`); else the cached choice;
  * else LiteRT.js first, and on the first frames of a live source the three are measured and the fastest is kept and
- * cached. LiteRT.js tracks one face: with `maxFaces` > 1 only MediaPipe is a candidate (multi-face: #165). MediaPipe
- * is the fallback where the worker cannot run (no `Worker`, no `OffscreenCanvas`, worker failure).
+ * cached. MediaPipe is the fallback where the worker cannot run (no `Worker`, no `OffscreenCanvas`, worker failure).
  *
  * Files, under `assetsBaseUrl`: those of `mediaPipeFaceTracker`, and `litert/wasm/` and the `.tflite` models of
  * `createLiteRtFaceTracker`.
@@ -295,9 +294,9 @@ export function createDefaultFaceTracker(options: DefaultFaceTrackerOptions = {}
   return choosingFaceTracker({
     id: 'face',
     cost: { typicalMs: 15 },
-    candidates(config) {
+    candidates() {
       const worker = typeof Worker === 'function' && typeof OffscreenCanvas === 'function'
-      return [...(worker && config.maxFaces === 1 ? [liteRt] : []), mediaPipe('GPU'), mediaPipe('CPU')]
+      return [...(worker ? [liteRt] : []), mediaPipe('GPU'), mediaPipe('CPU')]
     },
   })
 }
