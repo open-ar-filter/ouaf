@@ -68,7 +68,14 @@ GPU and CPU delegates by measuring them ([`device-adaptation.md`](device-adaptat
   (Vite in dev) only serve module workers with imports.
 - **Several faces** (`maxFaces` > 1): one tracked ROI per face, each with its own crop, landmark run and
   blendshapes run (one pixel buffer per face with the async readback). The detector runs while fewer faces than
-  `maxFaces` are tracked; its faces that overlap a tracked one (IoU of the ROI squares > 0.5, MediaPipe's
+  `maxFaces` are tracked: on every frame while none is, at most every 500 ms while some are (`detector-schedule.ts`),
+  and again on up to three frames in a row after a face it found that the landmark model rejected (the second face of
+  `two-faces-stacked`: presence 0.07 on its first detection's crop, 1.00 on the next one). Without the 500 ms limit,
+  `maxFaces` above the faces in view (the usual case) adds the detector to every result: ≈ 25–45 ms on the Redmi Note
+  11S; in a 4-vCPU cloud container (CPU only), one face on `pesquet-closeup` with `maxFaces` 4, the detector's average per result falls
+  from 46–60 ms to 4–9 ms and the rate rises from 10.5–12 to 12.5–14 Hz. A face that comes into view is found within
+  half a second. On a file source (`exact` frames) the detector is not throttled: results must not depend on timing.
+  Its faces that overlap a tracked one (IoU of the ROI squares > 0.5, MediaPipe's
   `AssociationNormRectCalculator` threshold) are dropped, and of two tracked faces that come onto the same one, the
   older stays. One difference with MediaPipe: there, a detection replaces the tracked ROI it overlaps, so while fewer
   faces than `maxFaces` are tracked every face is cropped from the detector's box, frame after frame; here a tracked
@@ -98,7 +105,7 @@ MediaPipe's own landmarks gives MediaPipe's matrix exactly (≤ 0.01 cm).
 Several faces (same test, every second frame, async readback, `maxFaces` = the clip's face count): same face count as
 MediaPipe on 94–100 % of the frames, median landmark distance 0.5–0.9 % of the face size (90th percentile 0.8–1.6 %)
 on `two-faces-stacked`, `three-faces-grid` and `four-faces-grid`. With `maxFaces` 4 on the two- and three-face clips
-(the detector runs on every frame, see above), MediaPipe loses a face on up to 20 of 93 frames and its landmarks move
+(MediaPipe's detector runs on every frame there, see above), MediaPipe loses a face on up to 20 of 93 frames and its landmarks move
 by 2–4 % of the face size from ours on the faces it crops from its detections; ours finds every face on every frame
 there, and never one more.
 
