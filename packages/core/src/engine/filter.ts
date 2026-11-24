@@ -10,7 +10,7 @@ import { HostAssets } from './host-assets.ts'
 import { preloadAssets, resolveAssetRef, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
 import type { LayerContext, LayerDecl, LayerInstance, LayerTypeImpl, ObjectsView } from './layer-type.ts'
 import type { BindingDataSource, ParamsReader } from '../bindings/index.ts'
-import { ExpressionEventDetector, type EventSide, type ExpressionEventName } from '../expressions/index.ts'
+import { ExpressionEventDetector, PairContacts, type EventSide, type ExpressionEventName } from '../expressions/index.ts'
 import { ParamStore, type ParamChange, type ParamValue, type SelectOptions, type SetParamOptions } from '../params/index.ts'
 import { parsePluginRequirement } from './plugin.ts'
 import type { WebGLRenderer } from 'three'
@@ -153,6 +153,8 @@ export class FilterInstance {
   readonly events: Emitter<FilterEvents>
   /** Expression detectors with the filter's tuning (spec §13); only for face filters. */
   readonly expressions: ExpressionEventDetector | undefined
+  /** Contacts between faces with the filter's tuning (spec §12.4, §13): when its script asks for pair data or events. */
+  readonly pairs: PairContacts | undefined
   /** A layer runs GPU code written by the filter's author (`LayerInstance.authorShader`). */
   readonly authorShader: boolean
   /** When that code was last drawn (`performance.now()`), or added to the stack: context loss suspects (spec §11). */
@@ -205,6 +207,9 @@ export class FilterInstance {
     this.authorShader = init.layers.some((l) => l.instance.authorShader === true)
     this.events = new Emitter(init.onListenerError)
     this.expressions = this.needsFace ? new ExpressionEventDetector({ maxFaces: init.maxFaces, events: init.manifest.events }) : undefined
+    const script = init.manifest.script
+    const wantsPairs = !!script && (script.uses?.includes('pairs') || script.on?.some((e) => e === 'pairContact' || e === 'pairSeparate'))
+    this.pairs = this.needsFace && wantsPairs && init.maxFaces > 1 ? new PairContacts(init.maxFaces, init.manifest.events) : undefined
     this.random = init.random
     this.layerRandom = init.layerRandom
     this.reseed(init.seed)

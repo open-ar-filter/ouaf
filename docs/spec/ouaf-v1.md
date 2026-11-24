@@ -731,7 +731,10 @@ The sandbox runs the script off the rendering thread: a slow script makes its ow
 | `message:<name>` | Message from the host (`handle.send(name, data)` or `engine.send(name, data)`); payload `{ data }`, a structured clone of `data` (12.4). `name`: a letter, then letters, digits, `_`, `-` | — |
 
 - Pair events carry the two faces instead of one. Their threshold is the gap between the two face outlines, in face
-  units: `0` fires when the outlines touch, `0.2` slightly before.
+  units: `0` fires when the outlines touch, `0.2` slightly before. `frame.pairs[].contact` is the same state: `true`
+  from `pairContact` to `pairSeparate`. A pair missing from a frame (one face not tracked for a moment) keeps its
+  state during the grace delay of the face ids (5.4); a face that leaves while in contact ends the contact with
+  `pairSeparate`.
 - Expression events fire **once** at the start of the gesture, with **hysteresis** (no bursts on the slightest twitch).
 - Expression events MUST keep working when blendshapes are dropped (16.2): the engine then derives them from the
   landmark geometry (mouth opening, eyelid opening, eyebrow height, mouth corners…), mapped to the same 0–1 scale as
@@ -899,6 +902,10 @@ phase 1 work they depend on.
   For blinks and winks it also uses the eye geometry while blendshapes are available (the larger of the two values per
   eye): MediaPipe's `eyeBlink` peaks at 0.5–0.6 on a full blink for some people, and a blink sampled at 10–15 Hz is
   often caught half-closed. The default blink threshold stays 0.5.
+- Pair contacts (13): the reference engine releases a contact when the gap exceeds the threshold by 0.1 face unit,
+  for at least 100 ms (`events.pairSeparate.minDurationMs`); `pairContact` fires on the first frame in contact
+  (`minDurationMs` 0). Its face outline is the face oval of the landmarks; head centres and face units come from the
+  `head` frame (Appendix D), so a turned head keeps its unit. To be checked on clips of people actually touching.
 - Numeric limits (package size, dimensions, number of layers) after measurements on mobile: the phase 0 runs only
   drew a debug overlay (1–3 ms per frame), so rendering limits are measured with real layers (benchmark page,
   adaptive quality).
