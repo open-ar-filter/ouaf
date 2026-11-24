@@ -120,6 +120,9 @@ would our own pipeline cost to build and maintain?
   files directly (no conversion), with XNNPACK on wasm (single-threaded, threaded and JSPI builds) and a WebGPU
   delegate. ONNX Runtime Web was not prototyped: it needs a tflite → ONNX conversion (tf2onnx, a TensorFlow
   install), and its CPU path is the same XNNPACK; it stays the fallback if LiteRT.js disappoints on devices.
+The spike's page and code (`/spikes/runtime.html`, `apps/playground/src/spikes/runtime/`, `e2e/runtime-*.spec.ts`)
+were removed in #165 once the pipeline was in `@ouaf/core`; they are in the history up to commit `3bae26b`.
+
 - Our own pipeline (`apps/playground/src/spikes/runtime/`): the geometry MediaPipe's graph does around the models
   (SSD anchors and box decoding, weighted NMS, rotated square ROI from the eyes, ROI tracked from the previous
   frame's landmarks so the detector only runs when the face is lost, rotated crop on a 2D canvas or, with
@@ -281,7 +284,7 @@ Reading:
   to 0.15 rad on a hard frame, so the letterbox keeps one tap. The worker gives **identical** landmarks to the main
   thread on frontal frames (0.000 %), with `VideoFrame` and with `ImageBitmap`; Check vs MediaPipe reads the same
   (0.6 % and 1.6–1.8 % mean of the face size at 2 s and 4 s of `pesquet-talk`, main thread and worker). Covered by
-  `e2e/runtime-worker.spec.ts`.
+  `e2e/runtime-worker.spec.ts` (removed with the spike; the engine's tracker: `e2e/litert-tracker.spec.ts`).
 - **Detector crop on the GPU: 6.3 → 2.6 ms** on every frame here (`detect=always`), the detector stage 7.8 → 4.6 ms.
   The phone's canvas letterbox cost 38–58 ms, the same software path as the landmark crop before `crop=gpu` (whose
   cost fell from ≈ 40 to ≈ 14 ms there); the GPU version should bring a lost face back several frames sooner.

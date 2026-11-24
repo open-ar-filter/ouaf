@@ -163,6 +163,9 @@ Goal: find out whether MediaPipe's own face models (detector, 478 landmarks, ble
 `face_landmarker.task` by `npm run fetch-models`) run faster on LiteRT.js, with several wasm threads or WebGPU, than in
 MediaPipe tasks-vision 1.2.3 (single-threaded wasm, WebGL GPU delegate). Decision: [`face-runtime.md`](face-runtime.md).
 
+The page was removed in #165, once its pipeline was in the engine (`/engine.html?backend=litert`, `GPU` or `CPU`
+compares the backends); to run these measurements again, check out commit `3bae26b`.
+
 Page: `/spikes/runtime.html`, served cross-origin isolated (COOP `same-origin`, COEP `require-corp`) so that wasm
 threads exist; the **Isolation** row must read `crossOriginIsolated yes`. Options: `runtime=litert|mediapipe`,
 `accel=wasm|webgpu`, `threads=N` (default min(4, cores); `threads=1` loads the single-threaded build),
