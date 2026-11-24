@@ -695,8 +695,8 @@ export class Engine {
    * `message:<name>` event (spec §13) by the scripts that list it in `script.on`; `handle.send` targets one filter.
    * `name`: a letter, then letters, digits, `_` or `-`. `data` must be structured-cloneable: it is copied now, so
    * changing it afterwards changes nothing. Delivered with the next frame sent to each script, after the events
-   * queued before it. Throws `OuafError('invalid-message')` (bad name, data that cannot be cloned) or
-   * `OuafError('disposed')`.
+   * queued before it; a disabled filter keeps a bounded queue (the last message of each name, spec §12.7). Throws
+   * `OuafError('invalid-message')` (bad name, data that cannot be cloned) or `OuafError('disposed')`.
    */
   send(name: string, data?: unknown): void {
     this.#assertAlive()

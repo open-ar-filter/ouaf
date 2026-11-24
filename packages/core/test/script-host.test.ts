@@ -5,7 +5,7 @@ import { FaceBindingData } from '../src/bindings/face-data.ts'
 import { OuafError } from '../src/engine/errors.ts'
 import { createFaceFrame } from '../src/face.ts'
 import { FrameDataBuilder, type FrameDataSource } from '../src/script/frame-data.ts'
-import { STARTUP_MS, ScriptHost, estimateSize, type ScriptHostOptions, type ScriptPort } from '../src/script/host.ts'
+import { MAX_QUEUED_EVENTS, STARTUP_MS, ScriptHost, estimateSize, type ScriptHostOptions, type ScriptPort } from '../src/script/host.ts'
 import { ScriptOverrides } from '../src/script/overrides.ts'
 import { ShaderUniforms } from '../src/layers/shader/uniforms.ts'
 import { env, fakeImage, runtime, tick } from './script-helpers.ts'
@@ -71,6 +71,49 @@ describe('script host', () => {
     expect(s.opacity()).toBe(0.25)
     expect(s.emits).toEqual([['went', 0.25]])
     expect(s.warnings).toEqual([])
+  })
+
+  it('bounds the queue of a script that gets no frames: the last message of each name, the last change of each parameter', async () => {
+    const s = hostSetup(
+      `const log = []
+      export default {
+        on: {
+          'message:go'(f, { data }) { log.push(['go', data]) },
+          'message:stop'(f, { data }) { log.push(['stop', data]) },
+          paramChange(f, c) { log.push(['param', c]) },
+        },
+        update(f) { if (log.length > 0) f.emit('log', log.splice(0)) },
+      }`,
+      { on: ['message:go', 'message:stop', 'paramChange'] },
+    )
+    await s.host.start({}, 0)
+    await idle(s.host)
+    s.host.beginFrame()
+    // The filter is disabled: the host keeps sending, no frame goes to the script.
+    s.host.queue({ name: 'message:stop', payload: { data: 'once' } })
+    s.host.queue({ name: 'paramChange', payload: { name: 'size', value: 2, previous: 1 } })
+    s.host.queue({ name: 'paramChange', payload: { name: 'tint', value: 'red', previous: 'blue' } })
+    for (let i = 0; i < 1000; i++) s.host.queue({ name: 'message:go', payload: { data: i } })
+    for (let v = 3; v < 600; v++) s.host.queue({ name: 'paramChange', payload: { name: 'size', value: v, previous: v - 1 } })
+    expect(s.warnings).toHaveLength(1)
+    expect(s.warnings[0]).toMatch(`more than ${MAX_QUEUED_EVENTS} events wait for the script`)
+    s.host.endFrame(0, s.source)
+    await idle(s.host)
+    s.host.beginFrame()
+    // Each time the queue is full, the superseded events go: what is left is bounded, in order, ends with the last.
+    expect(s.emits).toHaveLength(1)
+    const log = s.emits[0]![1] as Array<[string, unknown]>
+    expect(log.length).toBeLessThanOrEqual(MAX_QUEUED_EVENTS)
+    const go = log.filter(([n]) => n === 'go').map(([, d]) => d as number)
+    expect(go.at(-1)).toBe(999)
+    expect(go).toEqual([...go].sort((a, b) => a - b))
+    expect(log.filter(([n]) => n === 'stop')).toEqual([['stop', 'once']])
+    const params = log.filter(([n]) => n === 'param').map(([, c]) => c as { name: string; value: unknown; previous: unknown })
+    expect(params[0]).toEqual({ name: 'tint', value: 'red', previous: 'blue' })
+    const size = params.filter((c) => c.name === 'size')
+    expect(size[0]!.previous).toBe(1) // the value before every change the script missed
+    expect(size.at(-1)!.value).toBe(599)
+    for (let k = 1; k < size.length; k++) expect(size[k]!.previous).toBe(size[k - 1]!.value)
   })
 
   it('warns about properties the script cannot set and wrong values', async () => {
