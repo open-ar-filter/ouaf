@@ -31,6 +31,7 @@ Packages export their TypeScript sources directly (`exports: ./src/index.ts`); t
 npm ci                 # install
 npm run typecheck      # tsc over all workspaces, scripts, tests, e2e
 npm test               # Vitest unit tests (packages/*/test)
+npm run test:coverage  # same with V8 coverage → coverage/index.html (skips the allocation tests)
 npm run build          # playground production build
 npm run build:schema   # regenerate the JSON Schema; commit docs/spec/ and packages/spec/schema/ changes
 npm run fetch-models   # face model into apps/playground/models/ (gitignored); needed by the browser tests

@@ -13,11 +13,13 @@
     "fetch-models": "npm run fetch-models -w @ouaf/playground",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",
     "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.1.1",
     "ajv": "^8.20.0",
     "typescript": "^7.0.2",
     "vitest": "^5.1.1"

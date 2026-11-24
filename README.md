@@ -16,6 +16,7 @@ hands and voice), designed to be embedded as a library, with an open filter form
 ```sh
 npm install
 npm test               # validator and published-schema tests
+npm run test:coverage  # unit tests with coverage report in coverage/
 npm run typecheck
 npm run build:schema   # regenerates the JSON Schema from packages/spec
 npm run fetch-models   # downloads the MediaPipe models (needed for face tracking in the playground) and extracts their TFLite files

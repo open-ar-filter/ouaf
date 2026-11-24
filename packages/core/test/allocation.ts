@@ -22,6 +22,7 @@
  */
 import { GCProfiler, getHeapSpaceStatistics, setFlagsFromString } from 'node:v8'
 import { runInNewContext } from 'node:vm'
+import { beforeEach, inject, type TestContext } from 'vitest'
 
 setFlagsFromString('--expose-gc')
 const gc = runInNewContext('gc') as () => void
@@ -30,6 +31,13 @@ setFlagsFromString('--allow-natives-syntax')
 const neverOptimize = new Function('f', '%NeverOptimizeFunction(f)') as (f: unknown) => void
 
 const FLAGS = ['--no-concurrent-recompilation', '--no-concurrent-sweeping']
+
+// Coverage instrumentation allocates in the measured code: the measures mean nothing in a coverage run, so the tests
+// that take one are skipped there rather than failed. Registered on each test file that imports this module.
+let current: TestContext | undefined
+beforeEach((context) => {
+  current = context
+})
 
 /** A fractional number boxed on the heap (no pointer compression in Node): what a call passing one allocates. */
 export const BOXED_NUMBER = 16
@@ -91,6 +99,7 @@ function measure(fn: () => void, calls: number): number | undefined {
  * arrays rather than captured variables (Node 24 boxes a fractional number stored in a closure's context).
  */
 export function bytesPerCall(fn: () => void, options: AllocationOptions = {}): number {
+  if (inject('coverage')) current?.skip('allocation measures are meaningless under coverage instrumentation')
   const { warmup = 10_000, calls = 5_000, windows = 20 } = options
   const missing = FLAGS.filter((f) => !process.execArgv.includes(f))
   if (missing.length > 0) throw new Error(`allocation tests need Node's ${missing.join(' ')} (see vitest.config.ts)`)

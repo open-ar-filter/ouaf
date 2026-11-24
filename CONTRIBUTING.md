@@ -29,6 +29,7 @@ Without `npm run fetch-models` the playground still runs, but face tracking is u
 | `npm run dev` | Playground dev server (HTTPS, all interfaces, port 5173) |
 | `npm run build` | Production build of the playground |
 | `npm test` | Unit tests (Vitest, `packages/*/test/**/*.test.ts`) |
+| `npm run test:coverage` | Unit tests with V8 coverage of `packages/*/src`: summary in the terminal, HTML report in `coverage/index.html` (also `lcov.info`) |
 | `npm run typecheck` | TypeScript type check of every workspace, scripts and tests |
 | `npm run build:schema` | Regenerates the JSON Schema from the TypeBox schemas in `packages/spec` |
 | `npm run fetch-models` | Downloads and checks the face model, extracts its TFLite files |
@@ -43,6 +44,11 @@ Linux if system libraries are missing).
 
 `npm test` needs no ffmpeg: the `pack-alpha` tests that run the real ffmpeg (`packages/cli/test/pack-alpha.ffmpeg.test.ts`)
 are skipped, with a message, when it is not installed (or point `OUAF_FFMPEG` to it).
+
+The coverage run skips the allocation tests (their measures count the allocations of the coverage counters): `npm test`
+remains the run that checks them. Coverage covers the unit tests only; code that runs only in the browser (rendering,
+camera, tracking) is exercised by `e2e/` and shows up as uncovered. CI publishes the summary on the job page and the
+HTML report as the `coverage` artifact; no threshold is enforced.
 
 ## Before opening a pull request
 
