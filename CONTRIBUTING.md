@@ -46,9 +46,11 @@ Linux if system libraries are missing).
 are skipped, with a message, when it is not installed (or point `OUAF_FFMPEG` to it).
 
 The coverage run skips the allocation tests (their measures count the allocations of the coverage counters): `npm test`
-remains the run that checks them. Coverage covers the unit tests only; code that runs only in the browser (rendering,
-camera, tracking) is exercised by `e2e/` and shows up as uncovered. CI publishes the summary on the job page and the
-HTML report as the `coverage` artifact; no threshold is enforced.
+remains the run that checks them. The run fails below **80 %** of lines, statements, functions or branches (CI too):
+add tests with new code. Modules that cannot run in Node (WebGL context, WebCodecs, tracking worker, script sandbox, the
+`ouaf preview` page) are left out of the measure, listed one by one in [`vitest.config.ts`](vitest.config.ts): the
+browser tests (`e2e/`) cover them. Do not add a module to that list to pass the threshold. CI publishes the summary on
+the job page and the HTML report as the `coverage` artifact.
 
 ## Before opening a pull request
 

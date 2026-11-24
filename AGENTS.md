@@ -31,7 +31,7 @@ Packages export their TypeScript sources directly (`exports: ./src/index.ts`); t
 npm ci                 # install
 npm run typecheck      # tsc over all workspaces, scripts, tests, e2e
 npm test               # Vitest unit tests (packages/*/test)
-npm run test:coverage  # same with V8 coverage → coverage/index.html (skips the allocation tests)
+npm run test:coverage  # same with V8 coverage → coverage/index.html; fails below 80 % (skips the allocation tests)
 npm run build          # playground production build
 npm run build:schema   # regenerate the JSON Schema; commit docs/spec/ and packages/spec/schema/ changes
 npm run fetch-models   # face model into apps/playground/models/ (gitignored); needed by the browser tests
@@ -43,8 +43,9 @@ npx ouaf preview <filter>... [--json]  # render on reference faces in headless C
 npx ouaf pack-alpha <video|png-folder> -o out.mp4   # packed-alpha H.264 MP4 (spec §10.2); needs ffmpeg
 ```
 
-Run `npm run typecheck` and `npm test` before every commit; `npm run build:schema` whenever `packages/spec/src`
-changes (CI fails on an uncommitted schema diff).
+Run `npm run typecheck` and `npm test` before every commit, and `npm run test:coverage` when adding code (CI fails
+below 80 % coverage: add tests, never exclude a module that runs in Node); `npm run build:schema` whenever
+`packages/spec/src` changes (CI fails on an uncommitted schema diff).
 
 ## Conventions
 
