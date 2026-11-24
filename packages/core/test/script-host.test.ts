@@ -5,7 +5,7 @@ import { FaceBindingData } from '../src/bindings/face-data.ts'
 import { OuafError } from '../src/engine/errors.ts'
 import { createFaceFrame } from '../src/face.ts'
 import { FrameDataBuilder, type FrameDataSource } from '../src/script/frame-data.ts'
-import { STARTUP_MS, ScriptHost, estimateSize, type ScriptHostOptions, type ScriptPort } from '../src/script/host.ts'
+import { STARTUP_MS, ScriptHost, estimateSize, type ScriptConnection, type ScriptHostOptions, type ScriptPort } from '../src/script/host.ts'
 import { ScriptOverrides } from '../src/script/overrides.ts'
 import { ShaderUniforms } from '../src/layers/shader/uniforms.ts'
 import { env, fakeImage, runtime, tick } from './script-helpers.ts'
@@ -348,5 +348,267 @@ describe('script host: canvas images', () => {
     s.host.beginFrame()
     expect(drawn).toHaveLength(1)
     expect(s.errors).toEqual([])
+  })
+})
+
+describe('script host: answers, checked and applied (spec §12.4, §12.7)', () => {
+  /** A host on a port the test answers itself; `answer(…)` replies to the message in flight. */
+  async function manual(options: Partial<ScriptHostOptions> = {}) {
+    const sent: Array<{ message: Record<string, unknown>; transfer: Transferable[] | undefined }> = []
+    const port: ScriptPort = { postMessage: (m, t) => void sent.push({ message: m as Record<string, unknown>, transfer: t }), onmessage: null }
+    let terminated = 0
+    const s = hostSetup('', { connect: async () => ({ port, terminate: () => void terminated++ }), now: () => 0, ...options })
+    await s.host.start({}, 0)
+    const reply = (data: unknown) => port.onmessage!({ data })
+    const answer = (done: Record<string, unknown> = {}) => reply({ t: 'done', seq: sent.at(-1)!.message.seq ?? 0, ...done })
+    return { ...s, port, sent, reply, answer, terminated: () => terminated }
+  }
+
+  const entry = (s: { overrides: ScriptOverrides }, name = 'opacity', layer = 0) => s.overrides.property(layer, name)!.entryFor(3)
+
+  it('takes answers without warnings, commands or messages, and ignores commands for layers that do not exist', async () => {
+    const s = await manual()
+    s.answer({ commands: [['set', 5, null, { opacity: 0.1 }], ['set', '0', null, { opacity: 0.2 }]] })
+    s.host.beginFrame()
+    expect(entry(s)).toBeUndefined()
+    expect([s.warnings, s.errors]).toEqual([[], []])
+    s.host.beginFrame() // nothing new
+  })
+
+  it('animates towards a target with the options it was given, and warns about an unknown easing', async () => {
+    const s = await manual()
+    s.answer({
+      commands: [
+        ['animate', 0, null, { opacity: 0 }, { duration: 500, delay: 200, repeat: 2, easing: 'bounce' }],
+        ['animate', 0, null, { opacity: 0 }, { duration: 500, easing: 'bounce' }],
+      ],
+    })
+    s.host.beginFrame()
+    expect(entry(s)).toMatchObject({ kind: 'tween', target: 0, keyframes: undefined, duration: 0.5, delay: 0, repeat: 0 })
+    expect(s.warnings).toEqual(['Filter "test": .animate() on "opacity" of layer "label": unknown easing "bounce", using inOutQuad.']) // once
+  })
+
+  it('ignores an animation without a valid duration, and takes only finite delays and repeats', async () => {
+    const s = await manual()
+    s.answer({
+      commands: [
+        ['animate', 0, null, { opacity: 0 }, {}],
+        ['animate', 0, null, { opacity: 0 }, { duration: -1 }],
+        ['animate', 0, null, { opacity: 0 }, { duration: Number.NaN }],
+      ],
+    })
+    s.host.beginFrame()
+    expect(entry(s)).toBeUndefined()
+    s.host.endFrame(0, s.source)
+    s.answer({ commands: [['animate', 0, 3, { opacity: 0.5 }, { duration: 100, delay: Number.POSITIVE_INFINITY, repeat: '2' }]] })
+    s.host.beginFrame()
+    expect(entry(s)).toMatchObject({ kind: 'tween', target: 0.5, delay: 0, repeat: 0, duration: 0.1 })
+    expect(s.warnings).toEqual([])
+  })
+
+  it('animates through keyframes of one type, and warns about invalid ones (spec §12.4)', async () => {
+    const s = await manual()
+    s.overrides.forLayer(0).wrap('scale', ['number', 'vec3'], { kind: 'constant', perFace: false, evaluate: () => 1 } as never)
+    s.answer({ commands: [['animate', 0, 3, { opacity: { keyframes: [0, 1, 0.5] } }, { duration: 300 }]] })
+    s.host.beginFrame()
+    expect(entry(s)).toMatchObject({ kind: 'tween', target: undefined, keyframes: [0, 1, 0.5] })
+    const invalid = [{ keyframes: [1] }, { keyframes: 'x' }, { keyframes: [0, 'a'] }]
+    for (const value of invalid) {
+      s.host.endFrame(0, s.source)
+      s.answer({ commands: [['animate', 0, null, { scale: value }, { duration: 300 }]] })
+      s.host.beginFrame()
+    }
+    s.host.endFrame(0, s.source)
+    s.answer({ commands: [['animate', 0, null, { opacity: { keyframes: [true, false] } }, { duration: 300 }], ['animate', 0, null, { scale: { keyframes: [1, [1, 2, 3]] } }, { duration: 300 }]] })
+    s.host.beginFrame()
+    expect(s.overrides.property(0, 'scale')!.entryFor(3)).toBeUndefined()
+    expect(s.warnings).toEqual([
+      'Filter "test": .animate() on "scale" of layer "label": keyframes must be at least two values of type number or vec3.',
+      'Filter "test": .animate() on "opacity" of layer "label": keyframes must be at least two values of type number.',
+    ])
+    // Mixed types warn under the same key as invalid keyframes: a fresh host shows that message.
+    const t = await manual()
+    t.overrides.forLayer(0).wrap('scale', ['number', 'vec3'], { kind: 'constant', perFace: false, evaluate: () => 1 } as never)
+    t.answer({ commands: [['animate', 0, null, { scale: { keyframes: [1, [1, 2, 3]] } }, { duration: 300 }]] })
+    t.host.beginFrame()
+    expect(t.warnings).toEqual(['Filter "test": .animate() on "scale" of layer "label": keyframes must all have the same type.'])
+  })
+
+  it('warns about an animation target that is not a number, color or vector', async () => {
+    const s = await manual()
+    s.answer({ commands: [['animate', 0, null, { opacity: true }, { duration: 1 }], ['animate', 0, null, { opacity: [1, 2] }, { duration: 1 }]] })
+    s.host.beginFrame()
+    expect(entry(s)).toBeUndefined()
+    expect(s.warnings).toEqual(['Filter "test": .animate() on "opacity" of layer "label": true is not a valid target (number).'])
+  })
+
+  it('freezes the arrays a script sets, so that it cannot change them afterwards', async () => {
+    const s = await manual()
+    s.overrides.forLayer(0).wrap('offset', ['vec3'], { kind: 'constant', perFace: false, evaluate: () => [0, 0, 0] } as never)
+    const value = [1, 2, 3]
+    s.answer({ commands: [['set', 0, 3, { offset: value }]] })
+    s.host.beginFrame()
+    const set = s.overrides.property(0, 'offset')!.entryFor(3) as unknown as { value: number[] }
+    expect(set.value).toEqual([1, 2, 3])
+    expect(set.value).not.toBe(value)
+    expect(Object.isFrozen(set.value)).toBe(true)
+  })
+
+  it('names layers without id by index, and lists no settable property when there is none', async () => {
+    const s = await manual({ layers: ['label', ''] })
+    s.answer({ commands: [['set', 1, null, { opacity: 0 }], ['set', 1, null, { opacity: 1 }]] })
+    s.host.beginFrame()
+    expect(s.warnings).toEqual(['Filter "test": layer 1 has no property "opacity" a script can set (settable: none).'])
+  })
+
+  it('warns once per layer when play() reaches a layer that is not a model, and per animation when it does not exist', async () => {
+    const plain = await manual()
+    plain.answer({ commands: [['play', 0, null, 'wave'], ['play', 0, null, 'jump']] })
+    plain.host.beginFrame()
+    expect(plain.warnings).toEqual(['Filter "test": .play() starts model animations: layer "label" is not a model layer; ignored.'])
+    const played: Array<[number, number | undefined, string]> = []
+    const model = await manual({ play: (layer, face, name) => (played.push([layer, face, name]), 'unknown') })
+    model.answer({ commands: [['play', 0, 3, 'wave'], ['play', 0, null, 'wave'], ['play', 0, null, 'jump']] })
+    model.host.beginFrame()
+    expect(played).toEqual([[0, 3, 'wave'], [0, undefined, 'wave'], [0, undefined, 'jump']])
+    expect(model.warnings).toEqual(['Filter "test": .play("wave"): layer "label" has no such animation.', 'Filter "test": .play("jump"): layer "label" has no such animation.'])
+  })
+
+  it('counts messages per second of its clock, so a new second allows 60 more', async () => {
+    let clock = 0
+    const s = await manual({ now: () => clock })
+    const emits = (n: number) => Array.from({ length: n }, (_, i): [string, unknown] => ['tick', i])
+    s.answer({ emits: emits(65) })
+    s.host.beginFrame()
+    expect(s.emits).toHaveLength(60)
+    clock = 1500
+    s.host.endFrame(0, s.source)
+    s.answer({ emits: emits(10) })
+    s.host.beginFrame()
+    expect(s.emits).toHaveLength(70)
+  })
+
+  it('warns once when the script answers more slowly than the frame rate', async () => {
+    const s = await manual()
+    s.answer()
+    s.host.endFrame(0, s.source)
+    for (let i = 0; i < 29; i++) s.host.endFrame(i / 30, s.source)
+    expect(s.warnings).toEqual([])
+    s.host.endFrame(1, s.source)
+    for (let i = 0; i < 60; i++) s.host.endFrame(1 + i / 30, s.source)
+    expect(s.warnings).toEqual(['Filter "test": the script answers more slowly than the frame rate; its commands are late (spec §12.7).'])
+    expect(s.sent).toHaveLength(2) // init and one frame
+  })
+
+  it('sends frame.dt, pairs for "pairs", the changed parameters once, and transfers the landmarks', async () => {
+    const landmarks = new Float32Array(6)
+    const frameData = { build: () => [{ id: 1, index: 0, landmarks }] } as unknown as FrameDataBuilder
+    const s = await manual({ uses: ['pairs', 'face.landmarks'], frameData })
+    s.answer()
+    s.host.paramsChanged({ size: 2 })
+    s.host.endFrame(1, s.source)
+    s.answer()
+    s.host.endFrame(1.25, s.source)
+    s.answer()
+    s.host.endFrame(1, s.source) // the media time went back (a loop)
+    const frames = s.sent.slice(1).map((m) => m.message)
+    expect(frames.map((f) => [f.seq, f.dt, f.params, f.pairs])).toEqual([[1, 0, { size: 2 }, []], [2, 0.25, undefined, []], [3, 0, undefined, []]])
+    expect(s.sent[1]!.transfer).toEqual([landmarks.buffer])
+  })
+
+  it('stops the script when a frame cannot be sent', async () => {
+    const s = await manual()
+    s.answer()
+    s.port.postMessage = () => {
+      throw new DOMException('could not be cloned', 'DataCloneError')
+    }
+    s.host.endFrame(0, s.source)
+    expect(s.host.state).toBe('stopped')
+    expect(s.errors.map((e) => e.code)).toEqual(['SCRIPT_STOPPED'])
+    expect(s.errors[0]!.message).toMatch(/the script was stopped: its frame data could not be sent \(DataCloneError: could not be cloned\)\. The rest of the filter keeps working/)
+    expect(s.terminated()).toBe(1)
+  })
+
+  it('stops with a "script" error when script.js cannot be loaded, and ignores what comes after', async () => {
+    const s = await manual()
+    s.reply({ t: 'fatal', message: 'script.js could not be loaded: SyntaxError: x' })
+    expect(s.host.state).toBe('stopped')
+    expect(s.errors.map((e) => [e.code, e.message])).toEqual([
+      ['script', 'Filter "test": the script was stopped: script.js could not be loaded: SyntaxError: x. The rest of the filter keeps working; the script restarts when the filter is added again.'],
+    ])
+    expect(s.port.onmessage).toBeNull()
+    s.host.queue({ name: 'message:go', payload: {} }) // dropped
+    s.host.endFrame(0, s.source)
+    expect(s.sent).toHaveLength(1)
+  })
+
+  it('ignores messages that are not answers to the message in flight', async () => {
+    const timers: Array<() => void> = []
+    const s = await manual({ setTimeout: (fn) => (timers.push(fn), timers.length), clearTimeout: () => {} })
+    for (const data of [null, 3, 'done', { t: 'done', seq: 7 }, { t: 'other', seq: 0 }]) s.reply(data)
+    expect(s.host.waiting).toBe(true)
+    s.answer()
+    expect(s.host.waiting).toBe(false)
+    s.reply({ t: 'started' }) // not while init is in flight: ignored
+    s.answer() // already answered
+    s.host.beginFrame()
+    // The watchdog of an answered message does nothing when it fires anyway.
+    timers[0]!()
+    expect([s.errors, s.host.state]).toEqual([[], 'running'])
+  })
+
+  it('stops, frees the sandbox and drops pending answers on dispose; does nothing once disposed', async () => {
+    const s = await manual()
+    s.answer({ commands: [['set', 0, null, { opacity: 0.5 }]] })
+    s.host.dispose()
+    s.host.beginFrame()
+    expect(entry(s)).toBeUndefined()
+    expect([s.host.state, s.terminated(), s.port.onmessage]).toEqual(['disposed', 1, null])
+    s.host.dispose()
+    expect(s.terminated()).toBe(1)
+    await s.host.start({}, 0)
+    s.host.queue({ name: 'message:go', payload: {} })
+    s.host.endFrame(0, s.source)
+    expect(s.sent).toHaveLength(1)
+    expect(s.errors).toEqual([])
+  })
+
+  it('handles only the events in script.on, and starts once', async () => {
+    const s = await manual()
+    expect([s.host.handles('message:go'), s.host.handles('smile')]).toEqual([true, false])
+    await s.host.start({}, 0)
+    expect(s.sent).toHaveLength(1)
+  })
+})
+
+describe('script host: start', () => {
+  it('closes the sandbox and the images when disposed while it starts', async () => {
+    let open!: (c: ScriptConnection) => void
+    let terminated = false
+    const closed: string[] = []
+    const s = hostSetup('', {
+      connect: () => new Promise((resolve) => (open = resolve)),
+      canvases: [{ layer: 0, width: 4, height: 4, fps: 0 }],
+      images: async () => ({ star: { close: () => void closed.push('star') } as unknown as ImageBitmap }),
+    })
+    const starting = s.host.start({}, 0)
+    expect(s.host.state).toBe('starting')
+    s.host.dispose()
+    open({ port: { postMessage: () => {}, onmessage: null }, terminate: () => void (terminated = true) })
+    await starting
+    expect([s.host.state, terminated, closed]).toEqual(['disposed', true, ['star']])
+  })
+
+  it('wraps a failure that is not an OuafError, and reports nothing when disposed meanwhile', async () => {
+    const s = hostSetup('', { connect: () => Promise.reject(new Error('blocked by the CSP')) })
+    await s.host.start({}, 0)
+    expect(s.errors.map((e) => [e.code, e.message, (e.cause as Error).message])).toEqual([['script', 'Filter "test": Error: blocked by the CSP', 'blocked by the CSP']])
+    let fail!: (e: unknown) => void
+    const t = hostSetup('', { connect: () => new Promise((_, reject) => (fail = reject)) })
+    const starting = t.host.start({}, 0)
+    t.host.dispose()
+    fail(new Error('too late'))
+    await starting
+    expect([t.errors, t.host.state]).toEqual([[], 'disposed'])
   })
 })
