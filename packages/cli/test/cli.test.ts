@@ -58,7 +58,7 @@ describe('ouaf validate', () => {
   })
 
   it('--json prints a machine-readable report', async () => {
-    const r = await cli('validate', '--json', join(fixtures, 'broken'))
+    const r = await cli('validate', '--json', '--no-glsl', join(fixtures, 'broken'))
     expect(r.code).toBe(EXIT.FAILED)
     const report = JSON.parse(r.out)
     expect(report).toMatchObject({ format: 1, kind: 'folder', ok: false })
@@ -72,7 +72,6 @@ describe('ouaf validate', () => {
       message: 'Unknown anchor "nose". Did you mean "noseTip"?',
       hint: expect.stringContaining('Available anchors'),
     })
-    expect(report.skipped[0].check).toBe('glsl-compile')
   })
 
   it('usage errors exit with 2: no input, too many inputs, unknown option, missing path', async () => {

@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { SourceError, memorySource, type PackageSource } from '../src/source.ts'
+import type { ProgramLog } from '../src/glsl.ts'
 import { validatePackage, type PackageIssue } from '../src/validate.ts'
 import { bytes, concat, cube, glb, mp4, png, webm } from './helpers.ts'
 
@@ -260,14 +261,26 @@ describe('LUTs and shaders', () => {
     expect(late.errors).toEqual([expect.objectContaining({ code: 'encoding', message: '"assets/fx.frag" is not valid UTF-8 text.' })])
   })
 
-  it('compiler diagnostics without a position are reported at the file; warnings stay warnings', async () => {
-    const r = await validatePackage(memorySource({
+  it('compiler logs: author lines, warnings stay warnings, the wrapper\'s lines and the engine\'s steps without a line', async () => {
+    const compile = (log: ProgramLog) => validatePackage(memorySource({
       'manifest.json': JSON.stringify({ ...base, requires: {}, assets: { fx: 'assets/fx.frag' }, layers: [{ type: 'shader', src: 'fx' }] }),
       'assets/fx.frag': 'vec4 effect(vec2 uv) { return ouaf_sample(uv); }\n',
-    }), { compileShader: async () => [{ severity: 'warning', message: 'slow loop', hint: 'Unroll it.' }, { severity: 'error', line: 1, message: 'bad' }] })
-    expect(r.warnings).toEqual([expect.objectContaining({ code: 'glsl', file: 'assets/fx.frag', path: '/assets/fx', message: 'slow loop', hint: 'Unroll it.' })])
-    expect(r.warnings[0]).not.toHaveProperty('line')
-    expect(r.errors).toEqual([expect.objectContaining({ code: 'glsl', line: 1, message: 'bad' })])
+    }), { compileShaders: async (programs) => programs.map(() => log) })
+    const r = await compile({
+      fragment: "WARNING: 0:1: 'for' : slow loop\nERROR: 0:1: 'x' : bad\nERROR: 0:40: 'effect' : no matching overload\nERROR: 2 compilation errors.  No code generated.",
+    })
+    expect(r.warnings).toEqual([expect.objectContaining({ code: 'glsl', file: 'assets/fx.frag', path: '/layers/0/src', line: 1, message: "'for' : slow loop" })])
+    expect(r.errors.map((e) => [e.line, e.message])).toEqual([
+      [1, "'x' : bad"],
+      [undefined, "'effect' : no matching overload (in the engine's main(), which calls vec4 effect(vec2 uv))"],
+    ])
     expect(r.errors[0]).not.toHaveProperty('column')
+    const silent = await compile({ fragment: '' })
+    expect(silent.errors.map((e) => e.message)).toEqual(['The shader does not compile.'])
+    const engine = await compile({ vertex: 'bad vertex', link: 'bad link' })
+    expect(engine.errors.map((e) => e.message)).toEqual([
+      "The engine's vertex shader does not compile here: bad vertex",
+      'The program does not link: bad link',
+    ])
   })
 })

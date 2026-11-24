@@ -7,11 +7,13 @@
  */
 import {
   assetKind, checkPackageEntries, checkPackageSize, checkShaderSource, closest, createRegistry, formatBytes, kindFromPath, missingManifestHint,
-  PACKAGE_RECOMMENDED_BYTES, validateManifest,
+  PACKAGE_RECOMMENDED_BYTES, parseShaderLog, ShaderDeclarationError, shaderUniformType, shaderVertex, validateManifest, wrapShader,
 } from '@ouaf/spec'
-import type { Issue, Severity, SpecRegistry, TAssetEntry, TAssetKind } from '@ouaf/spec'
+import type { Issue, Severity, ShaderStage, ShaderUniformType, SpecRegistry, TAssetEntry, TAssetKind, WrappedShader } from '@ouaf/spec'
 import type { TSchema } from 'typebox'
 import { Value } from 'typebox/value'
+import { BrowserSetupError } from './browser.ts'
+import type { GlslCompiler } from './glsl.ts'
 import { jsonLocator, jsonSyntaxError, type JsonLocator } from './json-locate.ts'
 import { sniff, type Format, type MediaInfo } from './media.ts'
 import { openPackage, SourceError, type PackageSource } from './source.ts'
@@ -69,26 +71,20 @@ export interface PackageReport {
   }
 }
 
-/** Diagnostic of a shader compiler, with lines in the author's file (wrapper lines already subtracted). */
-export interface ShaderDiagnostic {
-  severity: Severity
-  line?: number
-  column?: number
-  message: string
-  hint?: string
-}
-
 /**
- * Compiles the `effect()` source of a shader asset (spec §11). Hook for a GLSL ES 3.00 compiler: none ships yet, as
- * Node has no WebGL. A compiler wraps the source with `wrapShader` (`@ouaf/spec`, the engine's own wrapper) and maps
- * its log with `parseShaderLog`, which gives lines in the author's file.
+ * `OUAF_MAX_FACES` of the programs `ouaf validate` compiles: the engine's default `maxFaces`. A host may raise it (up to
+ * 16); a shader that only reads face arrays below `ouaf_faceCount` compiles the same for any value.
  */
-export type ShaderCompiler = (source: string, file: string) => ShaderDiagnostic[] | Promise<ShaderDiagnostic[]>
+export const GLSL_MAX_FACES = 1
 
 export interface ValidateOptions {
   /** Vocabulary of loaded plugins (defaults to the built-in registry). */
   registry?: SpecRegistry
-  compileShader?: ShaderCompiler
+  /**
+   * Compiles the shader layers' programs (`chromiumCompiler()` for `ouaf validate`). Without it, or when it throws a
+   * `BrowserSetupError`, GLSL compilation is reported as a skipped check.
+   */
+  compileShaders?: GlslCompiler
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -158,7 +154,6 @@ interface Ctx {
   referenced: Set<string>
   locate: JsonLocator
   options: ValidateOptions
-  shaders: string[]
 }
 
 interface Loc {
@@ -557,17 +552,99 @@ async function checkShader(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array) 
     const message = issue.code === 'shader-no-effect' ? `"${path}" does not define vec4 effect(vec2 uv).` : issue.message
     add(ctx, 'error', issue.code, issue.line !== undefined ? { ...loc, line: issue.line } : loc, message, issue.hint)
   }
-  if (!ctx.options.compileShader) {
-    ctx.shaders.push(path)
-    return
+}
+
+/** One shader layer's program, as the engine builds it. */
+interface ShaderJob {
+  file: string
+  pointer: string
+  wrapped: WrappedShader
+  stage: ShaderStage
+}
+
+/**
+ * The program of each shader layer whose source passed the static checks, built as the engine does (spec §11):
+ * uniform types from the values, parameters and binding data, then `wrapShader`. A uniform without a type is reported
+ * here: the engine would reject the filter. Only run on a valid manifest.
+ */
+function shaderJobs(ctx: Ctx, m: Record<string, unknown>, reg: SpecRegistry, sources: Map<string, string>): ShaderJob[] {
+  const params = (m.params ?? {}) as Record<string, { type?: unknown } | undefined>
+  const lookup = {
+    param: (name: string) => (typeof params[name]?.type === 'string' ? (params[name]!.type as string) : undefined),
+    data: (path: string) => reg.data.get(path)?.type,
   }
-  for (const d of await ctx.options.compileShader(src, path)) {
-    add(ctx, d.severity, 'glsl', {
-      ...loc,
-      ...(d.line !== undefined ? { line: d.line } : {}),
-      ...(d.column !== undefined ? { column: d.column } : {}),
-    }, d.message, d.hint)
+  const jobs: ShaderJob[] = []
+  const layers = Array.isArray(m.layers) ? (m.layers as Array<Record<string, unknown>>) : []
+  layers.forEach((layer, i) => {
+    if (layer.type !== 'shader' || typeof layer.src !== 'string') return
+    const file = shaderFile(m, layer.src)
+    const source = file === undefined ? undefined : sources.get(file)
+    if (file === undefined || source === undefined || checkShaderSource(source).length > 0) return
+    const pointer = `/layers/${i}`
+    const uniforms: Array<readonly [string, ShaderUniformType]> = []
+    let typed = true
+    for (const [name, value] of Object.entries((layer.uniforms ?? {}) as Record<string, unknown>)) {
+      const r = shaderUniformType(name, value, lookup)
+      if ('type' in r) uniforms.push([name, r.type])
+      else {
+        typed = false
+        add(ctx, 'error', 'shader-uniform', at(ctx, `${pointer}/uniforms/${name.replace(/~/g, '~0').replace(/\//g, '~1')}`), `${r.problem} The engine would reject the filter.`,
+          'A uniform is a number, boolean, vec2, vec3 or color: bind it to a parameter or data of one of these types, or add "map".')
+      }
+    }
+    if (!typed) return
+    const stage = (layer.stage ?? 'post') as ShaderStage
+    try {
+      const wrapped = wrapShader(source, {
+        stage,
+        maxFaces: GLSL_MAX_FACES,
+        uniforms,
+        textures: Object.keys((layer.textures ?? {}) as Record<string, unknown>),
+        anchors: (layer.anchors ?? []) as string[],
+      })
+      jobs.push({ file, pointer: `${pointer}/src`, wrapped, stage })
+    } catch (e) {
+      if (!(e instanceof ShaderDeclarationError)) throw e // names: reported by the manifest checks
+    }
+  })
+  return jobs
+}
+
+/** Package path of a shader layer's `src`: an `assets/…` path, or the `src` of a declared asset. */
+function shaderFile(m: Record<string, unknown>, ref: string): string | undefined {
+  if (ref.startsWith('assets/')) return ref
+  const entry = ((m.assets ?? {}) as Record<string, unknown>)[ref]
+  const src = typeof entry === 'string' ? entry : entry && typeof entry === 'object' ? (entry as { src?: unknown }).src : undefined
+  return typeof src === 'string' && src.startsWith('assets/') ? src : undefined
+}
+
+/** Compiles the jobs and reports the compiler's errors and warnings, at lines of the author's file. */
+async function compileShaders(ctx: Ctx, jobs: ShaderJob[]) {
+  const files = [...new Set(jobs.map((j) => j.file))]
+  const skip = (reason: string) => ctx.skipped.push({ check: 'glsl-compile', files, reason })
+  if (!ctx.options.compileShaders) {
+    return skip('GLSL compilation was not run (`--no-glsl`, or `ouaf pack`): only the static checks of spec §11 ran.')
   }
+  let logs
+  try {
+    logs = await ctx.options.compileShaders(jobs.map((j) => ({ vertex: shaderVertex(j.stage), fragment: j.wrapped.fragment })))
+  } catch (e) {
+    if (!(e instanceof BrowserSetupError)) throw e
+    return skip(`${e.message}${e.hint ? ` ${e.hint}` : ''} Only the static checks of spec §11 ran.`)
+  }
+  jobs.forEach((job, i) => {
+    const log = logs[i] ?? {}
+    const loc = (line?: number): Loc => ({ file: job.file, path: job.pointer, ...(line !== undefined ? { line } : {}) })
+    if (log.fragment !== undefined) {
+      // ANGLE ends its log with a count ("ERROR: 1 compilation errors.  No code generated."): not a problem of its own.
+      const diagnostics = parseShaderLog(log.fragment, job.wrapped).filter((d) => !/^ERROR: \d+ compilation errors?\./i.test(d.message))
+      for (const d of diagnostics) add(ctx, d.severity, 'glsl', loc(d.line), d.message)
+      if (diagnostics.length === 0) add(ctx, 'error', 'glsl', loc(), log.fragment.trim() || 'The shader does not compile.')
+    }
+    // The engine's vertex shader and the link step fail only with an engine bug or a broken driver: say so.
+    if (log.vertex !== undefined) add(ctx, 'error', 'glsl', loc(), `The engine's vertex shader does not compile here: ${log.vertex.trim()}`)
+    if (log.link !== undefined) add(ctx, 'error', 'glsl', loc(), `The program does not link: ${log.link.trim()}`)
+  })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -594,17 +671,10 @@ function checkBudget(ctx: Ctx) {
 export async function validatePackage(source: PackageSource, options: ValidateOptions = {}): Promise<PackageReport> {
   const reg = options.registry ?? createRegistry()
   const ctx: Ctx = {
-    source, errors: [], warnings: [], skipped: [], files: new Map(), referenced: new Set(), options, shaders: [],
+    source, errors: [], warnings: [], skipped: [], files: new Map(), referenced: new Set(), options,
     locate: () => ({ line: 1, column: 1 }),
   }
   const report = (): PackageReport => {
-    if (ctx.shaders.length) {
-      ctx.skipped.push({
-        check: 'glsl-compile',
-        files: ctx.shaders,
-        reason: 'GLSL compilation is not available yet: Node has no GLSL compiler (the engine compiles shaders when it loads the filter). Only static checks ran.',
-      })
-    }
     return {
       input: source.label,
       kind: source.kind,
@@ -671,6 +741,12 @@ export async function validatePackage(source: PackageSource, options: ValidateOp
   } else if (m.script === undefined && ctx.files.has('script.js')) {
     add(ctx, 'warning', 'unused-script', { file: 'script.js' }, 'script.js is ignored: the manifest has no "script" section.',
       '`ouaf pack` fills in "script"; otherwise remove script.js.')
+  }
+
+  // GLSL (spec §11), once the manifest is valid: the programs depend on the layers' declarations.
+  if (result.errors.length === 0) {
+    const jobs = shaderJobs(ctx, m, reg, shaders)
+    if (jobs.length > 0) await compileShaders(ctx, jobs)
   }
 
   for (const path of ctx.files.keys()) {

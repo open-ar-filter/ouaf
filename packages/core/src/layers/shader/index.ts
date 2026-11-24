@@ -7,7 +7,7 @@ import { createShaderLayer, shaderAssets } from './layer.ts'
 
 export { checkProgram, type CompileContext } from './compile.ts'
 export { ShaderFaceInputs, projectToUv, projectedUnit } from './inputs.ts'
-export { SHADER_FACE_VERTEX, SHADER_FULLSCREEN_VERTEX, createShaderLayer, shaderAssets } from './layer.ts'
+export { createShaderLayer, shaderAssets } from './layer.ts'
 export { ShaderUniforms, UniformTypeError, resolveUniformType } from './uniforms.ts'
 
 export const shaderPlugin: OuafPlugin = {

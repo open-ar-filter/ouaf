@@ -7,8 +7,8 @@
  * face is tracked), as for the `color` layer. `update` does not allocate: vectors and colors are written into the
  * typed arrays three.js uploads, floats are assigned only when they change.
  */
-import { uniformTypeOf, uniformTypeOfParam, type ShaderUniformType } from '@ouaf/spec'
-import { compileBinding, compileNumberBinding, isBinding } from '../../bindings/compile.ts'
+import { shaderUniformType, type ShaderUniformType } from '@ouaf/spec'
+import { compileBinding, compileNumberBinding } from '../../bindings/compile.ts'
 import type { BindingEnv, CompiledBinding, NumberBinding } from '../../bindings/types.ts'
 import { writeColor } from '../../params/values.ts'
 
@@ -17,33 +17,11 @@ export class UniformTypeError extends Error {
   override name = 'UniformTypeError'
 }
 
-/** GLSL type of a `uniforms` value: fixed, `{ param }`, or `{ bind }` (from `map`, `default` or the data type). */
+/** GLSL type of a `uniforms` value: fixed, `{ param }`, or `{ bind }` (`shaderUniformType` of `@ouaf/spec`). */
 export function resolveUniformType(name: string, value: unknown, env: BindingEnv): ShaderUniformType {
-  if (!isBinding(value)) {
-    const type = uniformTypeOf(value)
-    if (!type) throw new UniformTypeError(`uniform "${name}": ${JSON.stringify(value)} is not a number, boolean, vec2, vec3 or color.`)
-    return type
-  }
-  if ('param' in value) {
-    const paramType = env.params.type(value.param)
-    if (paramType === undefined) throw new UniformTypeError(`uniform "${name}": unknown parameter "${value.param}".`)
-    const type = uniformTypeOfParam(paramType)
-    if (!type) throw new UniformTypeError(`uniform "${name}": parameter "${value.param}" has type "${paramType}", which cannot be a uniform.`)
-    return type
-  }
-  const b = value as { bind: string; map?: Record<string, unknown>; default?: unknown; to?: unknown }
-  if (b.map) {
-    const types = new Set(Object.values(b.map).map(uniformTypeOf))
-    const type = types.size === 1 ? [...types][0] : undefined
-    if (!type) throw new UniformTypeError(`uniform "${name}": the values of "map" must all be numbers, booleans, vec2, vec3 or colors of one type.`)
-    return type
-  }
-  if (b.to !== undefined) return 'float'
-  const reader = env.data.resolve(b.bind)
-  if (reader?.type === 'number') return 'float'
-  if (reader?.type === 'boolean') return 'bool'
-  if (reader === undefined && b.default !== undefined && uniformTypeOf(b.default)) return uniformTypeOf(b.default)!
-  throw new UniformTypeError(`uniform "${name}": data "${b.bind}" ${reader ? 'is a string: add "map"' : 'is unknown'}.`)
+  const r = shaderUniformType(name, value, { param: (p) => env.params.type(p), data: (path) => env.data.resolve(path)?.type })
+  if ('problem' in r) throw new UniformTypeError(r.problem)
+  return r.type
 }
 
 /**

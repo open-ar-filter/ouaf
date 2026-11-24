@@ -28,6 +28,9 @@ import {
   checkShaderSource,
   ShaderDeclarationError,
   wrapShader,
+  shaderVertex,
+  SHADER_FACE_VERTEX,
+  SHADER_FULLSCREEN_VERTEX,
   SHADER_INTERNALS as I,
   type ShaderStage,
   type TShaderLayer,
@@ -68,31 +71,6 @@ import { isStickerAsset, type StickerAsset } from '../sticker/assets.ts'
 import { checkProgram, type CompileContext } from './compile.ts'
 import { ShaderFaceInputs } from './inputs.ts'
 import { ShaderUniforms, UniformTypeError } from './uniforms.ts'
-
-/** Vertex shader of full-screen passes: `position` in clip space (the compositor's triangle, or ours). */
-export const SHADER_FULLSCREEN_VERTEX = /* glsl */ `
-precision highp float;
-in vec2 position;
-out vec2 ${I.uv};
-void main() {
-  ${I.uv} = position * 0.5 + 0.5;
-  gl_Position = vec4(position, 0.0, 1.0);
-}
-`
-
-/** Vertex shader of the face mesh (`face` stage, face mask): clip-space positions and the mask value (`face-mask.ts`). */
-export const SHADER_FACE_VERTEX = /* glsl */ `
-precision highp float;
-in vec2 position;
-in float mask;
-out vec2 ${I.uv};
-out float ${I.meshMask};
-void main() {
-  ${I.uv} = position * 0.5 + 0.5;
-  ${I.meshMask} = mask;
-  gl_Position = vec4(position, 0.0, 1.0);
-}
-`
 
 const MASK_FRAGMENT = /* glsl */ `
 precision highp float;
@@ -221,7 +199,7 @@ function prepare(decl: TShaderLayer, ctx: LayerContext, uniforms: ShaderUniforms
     throw cause
   }
   const gl = ctx.renderer.getContext() as unknown as CompileContext
-  const errors = checkProgram(gl, stage === 'face' ? SHADER_FACE_VERTEX : SHADER_FULLSCREEN_VERTEX, wrapped)
+  const errors = checkProgram(gl, shaderVertex(stage), wrapped)
   if (errors === undefined) throw new OuafError('gpu-context-lost', `Filter "${ctx.filterId}": shader "${decl.src}" cannot be compiled while the GPU context is lost.`)
   if (errors.length) fail(errors)
   return wrapped
@@ -306,7 +284,7 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
   triangle.setAttribute('position', new BufferAttribute(new Float32Array([-1, -1, 3, -1, -1, 3]), 2))
   triangle.boundingSphere = new Sphere(new Vector3(), Infinity)
 
-  const effect = rawMaterial(stage === 'face' ? SHADER_FACE_VERTEX : SHADER_FULLSCREEN_VERTEX, wrapped.fragment, uniformMap)
+  const effect = rawMaterial(shaderVertex(stage), wrapped.fragment, uniformMap)
   if (stage === 'face') effect.side = DoubleSide // the oval's winding flips with mirroring
   const effectScene = sceneOf(effect, stage === 'face' ? geometry! : triangle)
   const uCopy: { value: Texture | null } = { value: null }
