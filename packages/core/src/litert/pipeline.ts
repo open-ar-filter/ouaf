@@ -5,9 +5,11 @@
  *
  * Per frame: one ROI per tracked face, predicted from its previous landmarks, and the detector (letterboxed 128×128
  * input) while fewer faces than asked are tracked, its new faces added to those (MediaPipe's face landmarker does the
- * same: detections overlapping a tracked face are dropped, `geometry.ts` `dedupeRois`); per face, a rotated crop to
- * 256×256, the landmark model (478 points and a face presence score), and the blendshapes model on 146 of the points
- * when asked.
+ * same: detections overlapping a tracked face are dropped, `geometry.ts` `dedupeRois`). The detector runs on every
+ * frame while no face is tracked, at most every `DETECT_INTERVAL_MS` while some are (`detector-schedule.ts`; MediaPipe
+ * runs it on every frame, and so do we on a file source's frames, whose results must not depend on timing). Per face,
+ * a rotated crop to 256×256, the landmark model (478 points and a face presence score), and the blendshapes model on
+ * 146 of the points when asked.
  *
  * Crops on WebGL2 (`gpu-crop.ts`: only the crop is read back) or on a 2D canvas (the whole frame goes through the
  * CPU: slow on phones, the fallback where a worker has no WebGL2, see docs/decisions/webkit-compat.md).
@@ -17,6 +19,7 @@
  */
 import { loadAndCompile, loadLiteRt, Tensor, type CompiledModel } from '@litertjs/core'
 import { BLENDSHAPES_STRIDE, LANDMARK_COUNT, LANDMARKS_STRIDE } from '../face.ts'
+import { DetectorSchedule } from './detector-schedule.ts'
 import {
   BLENDSHAPE_LANDMARKS,
   DETECTOR_SIZE,
@@ -37,7 +40,7 @@ import { createGpuCropper, type GpuCropper } from './gpu-crop.ts'
 /** What a run accepts: a frame transferred to the worker. */
 export type FrameSource = VideoFrame | ImageBitmap
 
-/** Below this presence score the face is lost, and the detector runs again on the next frame. */
+/** Below this presence score the face is lost (the detector runs again on the next frame once no face is left). */
 export const MIN_PRESENCE = 0.5
 
 /** Faces a run tracks at most (the engine's `maxFaces` limit). */
@@ -236,6 +239,7 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
   }
   /** The tracked faces, oldest first. */
   let tracks: Track[] = []
+  const schedule = new DetectorSchedule()
   let uploaded = false
   const asyncReadback = options.readback === 'async'
   /** Async readback: the crops read back for the next run (one pixel buffer per entry), and the frame they are of. */
@@ -408,9 +412,13 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
     out.blendshapes.set(last.blendshapes.subarray(0, out.count * BLENDSHAPES_STRIDE))
   }
 
-  /** Each frame's crops read back before its models run. */
-  async function runSync(source: FrameSource, width: number, height: number, max: number, withBlendshapes: boolean, out: PipelineResult): Promise<void> {
-    if (tracks.length < max) await addDetected(source, width, height, max, tracks.map((t) => t.roi))
+  /** Each frame's crops read back before its models run; `exact`: a file source's frame (detector not throttled). */
+  async function runSync(source: FrameSource, width: number, height: number, max: number, withBlendshapes: boolean, exact: boolean, out: PipelineResult): Promise<void> {
+    const now = performance.now()
+    if (exact ? tracks.length < max : schedule.due(tracks.length, max, now)) {
+      await addDetected(source, width, height, max, tracks.map((t) => t.roi))
+      schedule.ran(now)
+    }
     const kept: Track[] = []
     for (const track of tracks) {
       if (out.count >= max) break
@@ -418,7 +426,10 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
       crop(source, width, height, track.roi)
       time('cropMs', performance.now() - t)
       const roi = await infer(track.roi, width, height, withBlendshapes, out)
-      if (!roi) continue
+      if (!roi) {
+        if (track.detected) schedule.unconfirmed()
+        continue
+      }
       follow(track, roi)
       kept.push(track)
     }
@@ -447,9 +458,10 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
     // A face lost since its crop of the previous frame was started is not lost yet: that crop may find it again.
     let inFlight = 0
     for (const e of previous?.entries ?? []) if (!tracks.includes(e.track)) inFlight++
-    if (entries.length + inFlight < max) {
-      const detectStart = performance.now()
+    const detectStart = performance.now()
+    if (schedule.due(entries.length + inFlight, max, detectStart)) {
       for (const track of await addDetected(source, width, height, max, entries.map((e) => e.roi))) entries.push({ track, roi: track.roi })
+      schedule.ran(detectStart)
       t += performance.now() - detectStart // counted in `detectMs`
     }
     if (entries.length > 0) {
@@ -473,6 +485,8 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
       const roi = await infer(used, previous.width, previous.height, withBlendshapes, out)
       const at = tracks.indexOf(track)
       if (!roi) {
+        // A new face not confirmed: the detector looks again (one frame later than with the sync readback).
+        if (track.detected) schedule.unconfirmed()
         if (at >= 0) tracks.splice(at, 1)
         continue
       }
@@ -493,6 +507,7 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
     timings,
     reset() {
       tracks = []
+      schedule.reset()
       pending = undefined
       last.count = 0
     },
@@ -510,7 +525,7 @@ export async function createPipeline(options: PipelineOptions, warn: (message: s
       if (exact) pending = undefined
       const g = asyncReadback && !exact ? gpuCropper() : undefined
       if (g && (tracks.length > 0 || pending)) return runAsync(g, source, width, height, max, withBlendshapes, frame, out)
-      return runSync(source, width, height, max, withBlendshapes, out)
+      return runSync(source, width, height, max, withBlendshapes, exact, out)
     },
     dispose() {
       detector.delete()
