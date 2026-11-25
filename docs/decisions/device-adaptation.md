@@ -70,8 +70,9 @@ the engine yet.
 1. Blendshapes, unless an enabled filter sets `requires.blendshapes`. Bindings take their `default`, scripts get no
    `blendshapes`, expression events come from the landmark geometry (below). The MediaPipe tracker keeps computing
    them: switching them needs a graph rebuild (`setOptions`) that stalled the main thread for about a second on the
-   desktop, for no measurable gain (#83: 35.6 against 35.7 ms on the CPU delegate). The LiteRT.js tracker skips the
-   model (≈ 1–6 ms).
+   desktop, for no measurable gain (#83: 35.6 against 35.7 ms on the CPU delegate), and says so
+   (`FrameTracker.sheds`: extra faces and resolution only): the governor does not drop them with it. The LiteRT.js
+   tracker skips the model (≈ 1–6 ms).
 2. Extra faces, when `maxFaces` > 1: the tracker looks for the faces tracked at that moment (at least one).
    MediaPipe: `numFaces` through `setOptions` (one stall per transition, rare thanks to the hysteresis).
 3. Analysis resolution: the frame is drawn at half size into a canvas before tracking (landmarks are normalized, so

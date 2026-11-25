@@ -264,6 +264,24 @@ describe('TrackingHub (file sources)', () => {
     expect(h.results).toBe(2)
   })
 
+  it('measures the rate on the clock of the results, whatever the media time of the frames', async () => {
+    const { tracker } = asyncTracker()
+    const { h } = await hub(tracker)
+    let clock = 50_000
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    try {
+      // Frames 1/30 s apart in media time, each tracked in 10 ms: 100 results a second.
+      for (let i = 0; i < 20; i++) {
+        clock += 10
+        await h.track(input, (i * 1000) / 30, i / 30, true)
+      }
+      expect(h.rateHz).toBeCloseTo(100, 5)
+      expect(h.pipelineMs).toBe(0)
+    } finally {
+      now.mockRestore()
+    }
+  })
+
   it('tracks still images with trackImage and resets the tracker on demand', async () => {
     const { tracker, calls } = asyncTracker()
     const { h } = await hub(tracker)
