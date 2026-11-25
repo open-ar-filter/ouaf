@@ -47,8 +47,6 @@ export class ShaderFaceInputs {
   readonly sizes: Float32Array
   /** `ouaf_anchor_<name>`, one array of `maxFaces` vec2 per declared anchor, in `anchors` order. */
   readonly positions: readonly Float32Array[]
-  /** `ouaf_faceCount`. */
-  count = 0
   readonly #sizes: boolean
   #m = new Matrix4()
 
@@ -64,11 +62,10 @@ export class ShaderFaceInputs {
   /**
    * Updates the inputs for the `faceCount` tracked faces (slot order). `projection` is the objects camera's
    * projection matrix (cover crop included). A face or anchor that cannot be placed reads as size 0 at (0, 0); slots
-   * from `count` on are left as they are (only meaningful for `i < ouaf_faceCount`, spec §11.1).
+   * from `faceCount` on are left as they are (only meaningful for `i < ouaf_faceCount`, spec §11.1).
    */
   update(anchors: AnchorProvider, faceCount: number, projection: ArrayLike<number>): void {
     const count = Math.min(faceCount, this.maxFaces)
-    this.count = count
     const m = this.#m
     const e = m.elements
     for (let f = 0; f < count; f++) {

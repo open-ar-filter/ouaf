@@ -43,7 +43,6 @@ import {
   ClampToEdgeWrapping,
   CustomBlending,
   DoubleSide,
-  DynamicDrawUsage,
   GLSL3,
   LinearFilter,
   LinearMipmapLinearFilter,
@@ -66,7 +65,7 @@ import { BindingError, compileBinding, compileNumberBinding } from '../../bindin
 import { NO_FACE } from '../../bindings/types.ts'
 import { OuafError, ShaderCompileError } from '../../engine/errors.ts'
 import type { LayerContext, LayerDecl, PassContext, PassLayer } from '../../engine/layer-type.ts'
-import { MASK_INDICES, MASK_VERTICES, faceMaskIndices, faceMaskValues, writeFaceMask } from '../color/face-mask.ts'
+import { FaceMaskMesh } from '../color/face-mask-mesh.ts'
 import { isStickerAsset, type StickerAsset } from '../sticker/assets.ts'
 import { checkProgram, type CompileContext } from './compile.ts'
 import { ShaderFaceInputs } from './inputs.ts'
@@ -261,17 +260,7 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
 
   // Face mesh: the `face` stage draws on it, `ouaf_faceMask` draws it into the mask texture.
   const camera = new Camera()
-  const needsMesh = stage === 'face' || wrapped.faceMask
-  let positions: BufferAttribute | undefined
-  let geometry: BufferGeometry | undefined
-  if (needsMesh) {
-    geometry = new BufferGeometry()
-    positions = new BufferAttribute(new Float32Array(ctx.maxFaces * MASK_VERTICES * 2), 2).setUsage(DynamicDrawUsage)
-    geometry.setAttribute('position', positions)
-    geometry.setAttribute('mask', new BufferAttribute(faceMaskValues(ctx.maxFaces), 1))
-    geometry.setIndex(new BufferAttribute(faceMaskIndices(ctx.maxFaces), 1))
-    geometry.boundingSphere = new Sphere(new Vector3(), Infinity)
-  }
+  const faceMesh = stage === 'face' || wrapped.faceMask ? new FaceMaskMesh(ctx.maxFaces) : undefined
   const sceneOf = (material: Material, geo: BufferGeometry): Scene => {
     const mesh = new Mesh(geo, material)
     mesh.frustumCulled = false
@@ -286,7 +275,7 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
 
   const effect = rawMaterial(shaderVertex(stage), wrapped.fragment, uniformMap)
   if (stage === 'face') effect.side = DoubleSide // the oval's winding flips with mirroring
-  const effectScene = sceneOf(effect, stage === 'face' ? geometry! : triangle)
+  const effectScene = sceneOf(effect, stage === 'face' ? faceMesh!.geometry : triangle)
   const uCopy: { value: Texture | null } = { value: null }
   const copy = rawMaterial(SHADER_FULLSCREEN_VERTEX, COPY_FRAGMENT, { ouaf_src: uCopy })
   const copyScene = sceneOf(copy, triangle)
@@ -301,7 +290,7 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
     material.blendDst = OneFactor
     const target = makeTarget()
     target.texture.wrapS = target.texture.wrapT = ClampToEdgeWrapping
-    mask = { target, material, scene: sceneOf(material, geometry!) }
+    mask = { target, material, scene: sceneOf(material, faceMesh!.geometry) }
     uniformMap[I.mask] = { value: target.texture }
   }
   let history: { targets: [WebGLRenderTarget, WebGLRenderTarget]; current: 0 | 1; width: number; height: number } | undefined
@@ -360,12 +349,7 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
       uFaceCount.value = faceCount
       const projection = ctx.view.camera.projectionMatrix.elements
       inputs?.update(frame.anchors, faceCount, projection)
-      if (positions && geometry) {
-        const out = positions.array as Float32Array
-        for (let i = 0; i < faceCount; i++) writeFaceMask(frame.faces, i, i, frame.mirrored, projection, out)
-        positions.needsUpdate = true
-        geometry.setDrawRange(0, faceCount * MASK_INDICES)
-      }
+      faceMesh?.update(frame.faces, faceCount, frame.mirrored, projection)
     },
     render(pass: PassContext) {
       const renderer = pass.renderer
@@ -409,7 +393,7 @@ export async function createShaderLayer(layer: LayerDecl, ctx: LayerContext): Pr
       effect.dispose()
       copy.dispose()
       triangle.dispose()
-      geometry?.dispose()
+      faceMesh?.dispose()
       if (mask) {
         mask.material.dispose()
         mask.target.dispose()
