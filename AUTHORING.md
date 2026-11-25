@@ -393,13 +393,15 @@ Expression events fire **once** at the start of a gesture, with hysteresis (§13
 | `eyebrowRaise` | `browInnerUp` | 0.5 |
 | `kiss` | `mouthPucker` | 0.7 |
 | `nod`, `shake` | head "yes" / "no" (0.5 ≈ 10° each way) | 0.5 |
+| `pairContact`, `pairSeparate` | two face outlines touch on screen / move apart (`faces`: the two faces); threshold: the gap, in face units | 0 |
 | `paramChange` | a parameter changed: `{ name, value, previous }` | — |
 | `message:<name>` | message from the host page (`engine.send(name, data)`): `{ data }`, a copy, ≤ 64 KB; `name`: a letter, then letters, digits, `_`, `-` | — |
 
 Tune them in the manifest: `"events": { "smile": { "threshold": 0.6, "minDurationMs": 150 } }` (`threshold` 0–1,
 only for events that have one; `minDurationMs` 0–5000). Face events need `requires.face`. They keep working when the
 engine drops blendshapes. Blinks and winks also use the shape of the eyelids, so a person whose `eyeBlink` score stays
-low still blinks; keep the default blink threshold unless you have measured otherwise. `pairContact` / `pairSeparate` are specified but not emitted yet (section 14).
+low still blinks; keep the default blink threshold unless you have measured otherwise. Pair events need at least two
+faces (the engine's `maxFaces`); a threshold of `0.2` fires slightly before the faces touch.
 
 ## 10. Scripts
 
@@ -448,6 +450,7 @@ default `inOutQuad`.
 | `face.blendshapes` (default) | `blendshapes: { jawOpen: 0.3, … }`; absent when the engine dropped them |
 | `face.anchors` | `anchors: { noseTip: [x, y], … }`, 0–1 over the displayed image, origin top left, **y down** |
 | `face.landmarks` | `landmarks`: `Float32Array` of 478 × (x, y, z), same space |
+| `pairs` | (on `frame`) `pairs`: `{ a, b, distance, contact }` per pair of faces: `distance` between the head centres in face units, `contact` as `pairContact` |
 
 Declare only what the script reads: `script: { uses: [] }` when it reads nothing but ids; `face.*` uses need
 `requires.face`. Without `uses`, the script gets pose and blendshapes. Positions are normalized over the width and
@@ -535,7 +538,6 @@ is back above 14 Hz. Give blendshape bindings a sensible `default`. To see it on
 
 Specified, or reserved, but not working in the reference engine today. Do not rely on them:
 
-- `pairContact` / `pairSeparate` and `frame.pairs` (`uses: ["pairs"]`): no detector yet, `frame.pairs` is empty (#116).
 - Lowering the rendering resolution when the frame budget is exceeded (#34): the engine only adapts face tracking
   (§16) and warns about heavy stacks.
 - A host file as a video or spritesheet sticker (only images), or as a shader texture: `textures` take assets only.

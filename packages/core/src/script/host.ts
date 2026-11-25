@@ -138,6 +138,11 @@ export interface ScriptHostOptions {
    * length is the callee's to check). The callee owns them from then on.
    */
   drawn?(layer: number, pixels: Uint8ClampedArray): void
+  /**
+   * `frame.pairs` of the frame being sent (`uses: ["pairs"]`, spec §12.4): one entry per pair of faces, by face id.
+   * Default: none.
+   */
+  pairs?(): NonNullable<WireFrame['pairs']>
   /** Clock for the watchdog (ms); default `performance.now`. */
   now?(): number
   setTimeout?(fn: () => void, ms: number): unknown
@@ -301,7 +306,7 @@ export class ScriptHost {
       faces: this.#o.frameData.build(source),
       events: this.#events,
     }
-    if (this.#o.uses.includes('pairs')) frame.pairs = []
+    if (this.#o.uses.includes('pairs')) frame.pairs = this.#o.pairs?.() ?? []
     if (this.#params) frame.params = this.#params
     if (this.#seed !== undefined) frame.seed = this.#seed
     this.#events = []

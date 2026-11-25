@@ -29,7 +29,8 @@ import { assertReadable, describeImage, isCanvas, isFrameImage, isSecurityError,
 import { checkSeed, deriveSeed, FILE_SOURCE_SEED, randomSeed, SeededRandom } from '../random.ts'
 import type { FitMode } from '../viewport.ts'
 import { FaceIdentityTracker, FaceSmoother } from '../anchoring/index.ts'
-import { GeometrySignals, blendshapeSignals, createSignals, maxEyeSignals, readExpressionSignals } from '../expressions/index.ts'
+import { GeometrySignals, PairGeometry, blendshapeSignals, createSignals, maxEyeSignals, readExpressionSignals } from '../expressions/index.ts'
+import { Matrix4 } from 'three'
 import { DeviceGovernor, type Capability, type GovernorMeasures, type GovernorTuning, type PerformanceState } from './governor.ts'
 import { BACKEND_STORE_PREFIX, localBackendStore } from './backend-choice.ts'
 import { FaceAnchors } from './anchor-provider.ts'
@@ -298,6 +299,9 @@ export class Engine {
   /** Expression signals from the landmark geometry while blendshapes are dropped (spec §13, §16.2). */
   #geometry: GeometrySignals
   #geometrySignals: Float32Array
+  /** Pairs of faces of the displayed frame (spec §12.4), measured when a filter's script asks for them. */
+  #pairs: PairGeometry
+  #pairMatrix = new Matrix4()
   #bindingData = new FaceBindingData(createFaceFrame(1))
   #tracking: TrackingHub
   #fetch: typeof fetch
@@ -378,6 +382,7 @@ export class Engine {
     this.#signals = createSignals(maxFaces)
     this.#geometry = new GeometrySignals(maxFaces)
     this.#geometrySignals = createSignals(maxFaces)
+    this.#pairs = new PairGeometry(maxFaces)
     for (const loader of CORE_LOADERS) for (const kind of loader.kinds) this.#loaders.set(kind, loader)
 
     for (const plugin of options.builtins === false ? [] : builtinPlugins()) this.use(plugin)
@@ -780,6 +785,7 @@ export class Engine {
     this.#tracking.clear()
     this.#identity.reset()
     this.#geometry.reset()
+    for (const f of this.#stack) f.pairs?.reset()
   }
 
   /** Seed of a filter activation (spec §12.5). */
@@ -1031,6 +1037,7 @@ export class Engine {
     this.#lastNow = now
 
     this.#drawnFaces = faces
+    this.#detectPairs(faces, time)
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
       if (!filter.script) continue
@@ -1065,6 +1072,42 @@ export class Engine {
     const end = performance.now()
     this.#recordStats(end, end - start, faces.count)
     if (this.#regime === 'live') this.#govern(now)
+  }
+
+  /**
+   * Measures the pairs of displayed faces, once, when an active filter's script asks for pair data or events, then
+   * steps each such filter's contacts and queues their events (spec §12.4, §13). Media time drives the durations.
+   */
+  #detectPairs(faces: Readonly<FaceFrame>, time: number): void {
+    let measured = false
+    for (let i = 0; i < this.#stack.length; i++) {
+      const filter = this.#stack[i]!
+      const contacts = filter.pairs
+      if (!contacts || !filter.active || !filter.host) continue
+      if (!measured) {
+        measured = true
+        const c = this.#compositor
+        const aspect = c.width > 0 && c.height > 0 ? c.width / c.height : 1
+        this.#pairs.update(faces, this.#anchors, c.camera.projectionMatrix, c.videoToClip, aspect, this.#pairMatrix)
+      }
+      const out = contacts.update(time * 1000, this.#pairs)
+      for (let e = 0; e < out.count; e++) {
+        const ev = out.items[e]!
+        filter.host.queue({ name: ev.name, faces: [ev.a, ev.b] })
+      }
+    }
+  }
+
+  /** `frame.pairs` for `filter`'s script: the pairs measured this frame, with its contact states (spec §12.4). */
+  #pairData(filter: FilterInstance): Array<{ a: number; b: number; distance: number; contact: boolean }> {
+    const g = this.#pairs
+    const contacts = filter.pairs
+    const out: Array<{ a: number; b: number; distance: number; contact: boolean }> = []
+    if (!contacts) return out
+    for (let q = 0; q < g.pairCount; q++) {
+      out.push({ a: g.id[g.a[q]!]!, b: g.id[g.b[q]!]!, distance: g.distance[q]!, contact: contacts.contact[q] === 1 })
+    }
+    return out
   }
 
   /** Records which filters draw author shader code this frame (context loss suspects, spec §11). */
@@ -1293,7 +1336,6 @@ export class Engine {
     if (!script || !decl || filter.host || filter.disposed) return
     const id = filter.manifest.id
     const uses = (decl.uses ?? DEFAULT_SCRIPT_USES) as readonly ScriptUse[]
-    if (uses.includes('pairs')) this.#warn(`Filter "${id}": pair data (uses: "pairs") is not computed by this engine version yet: frame.pairs stays empty.`, id)
     const anchors = [...this.registry.anchors.values()].filter((a) => a.subject === 'face').map((a) => a.name)
     const host = new ScriptHost({
       filterId: id,
@@ -1306,6 +1348,7 @@ export class Engine {
       // The filter's seed (spec §12.5): fixed for file sources, random per activation when live, or the host's.
       seed: scriptSeed(filter.seed),
       connect: () => this.#openSandbox(`Filter "${id}"`),
+      pairs: () => this.#pairData(filter),
       warn: (message) => this.#warn(message, id),
       error: (error) => this.#error(error),
       // Canvas layers drawn by the script (spec §12.6), and the image assets it draws them with.

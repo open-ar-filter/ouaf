@@ -1,0 +1,19 @@
+{
+  "ouaf": "1",
+  "id": "script-pairs",
+  "name": "Script pairs (pair data fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Script fixture (spec §12.4, §13): emits frame.pairs and the pair events; contact threshold of 1 face unit.",
+  "requires": { "face": true },
+  "events": { "pairContact": { "threshold": 1 } },
+  "layers": [
+    { "id": "grade", "type": "color", "saturation": -1, "opacity": 0 }
+  ],
+  "script": {
+    "entry": "script.js",
+    "update": true,
+    "on": ["pairContact", "pairSeparate"],
+    "uses": ["pairs"]
+  }
+}
