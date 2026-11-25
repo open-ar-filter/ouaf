@@ -1,0 +1,16 @@
+{
+  "ouaf": "1",
+  "id": "evil-loop-setup",
+  "name": "Evil: endless setup (malicious filter)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Malicious filter (#27): its setup never returns. The watchdog must stop the script after 1 s (setup included, spec §12.7) while the filter's layers still render.",
+  "requires": {},
+  "layers": [
+    { "id": "grade", "type": "color", "saturation": 0 }
+  ],
+  "script": {
+    "entry": "script.js",
+    "setup": true
+  }
+}

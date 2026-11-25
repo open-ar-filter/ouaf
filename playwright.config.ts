@@ -17,12 +17,31 @@ export default defineConfig({
   use: {
     baseURL: `https://localhost:${port}`,
     ignoreHTTPSErrors: true,
-    ...devices['Desktop Chrome'],
-    launchOptions: {
-      // Software WebGL (SwiftShader) when no GPU is available, e.g. in CI.
-      args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'],
-    },
   },
+  projects: [
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: {
+          // Software WebGL (SwiftShader) when no GPU is available, e.g. in CI.
+          args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'],
+        },
+      },
+    },
+    // The malicious filters (#27) also run on the other engines: `npm run test:security`.
+    {
+      name: 'firefox',
+      testMatch: 'evil.spec.ts',
+      use: {
+        ...devices['Desktop Firefox'],
+        // Headless Firefox has no WebGL on Linux: there it runs headed, under `xvfb-run` without a display (CI).
+        headless: process.platform !== 'linux',
+        launchOptions: { firefoxUserPrefs: { 'webgl.force-enabled': true, 'media.autoplay.default': 0 } },
+      },
+    },
+    { name: 'webkit', testMatch: 'evil.spec.ts', use: { ...devices['Desktop Safari'] } },
+  ],
   webServer: {
     command: `npm run dev -w @ouaf/playground -- --port ${port} --strictPort`,
     url: `https://localhost:${port}`,

@@ -1,0 +1,17 @@
+{
+  "ouaf": "1",
+  "id": "evil-loop",
+  "name": "Evil: endless loops (malicious filter)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Malicious filter (#27): never answers again (a synchronous loop, or endless microtasks). The watchdog must stop the script after 1 s while rendering goes on.",
+  "requires": {},
+  "layers": [
+    { "id": "grade", "type": "color", "saturation": 0 }
+  ],
+  "script": {
+    "entry": "script.js",
+    "update": true,
+    "on": ["message:sync", "message:microtasks"]
+  }
+}

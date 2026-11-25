@@ -515,7 +515,7 @@ alpha 0 leaves the image unchanged.
 | Images | ≤ 4096 px per side |
 | Videos | ≤ 1080p (720p recommended), at most 2 playing at once on phones |
 | Text | 500 characters per layer; inline SVG 100 000 characters |
-| Shader | 32 uniforms, 4 textures, 16 anchors |
+| Shader | 32 uniforms, 4 textures, 16 anchors; a shader that keeps the GPU busy over 3 s a frame is disabled |
 | Canvas | 16–2048 px per side, ≤ 60 fps |
 | Script | 1 s watchdog; `f.emit` ≤ 64 KB and ≤ 60 per second; host messages ≤ 64 KB; top level of `filter.ts` ≤ 2 s at pack time |
 
@@ -535,6 +535,9 @@ is back above 14 Hz. Give blendshape bindings a sensible `default`. To see it on
 - A script only gets the data of `script.uses`: ask for the least.
 - Face ids are ephemeral; a filter MUST NOT try to recognize people. Events describe expressions, not emotions.
 - `overlay` layers are drawn in the image: a filter cannot create input fields.
+- The engine defends itself against a filter that tries anyway (a script that loops or exhausts its memory, one
+  that rewrites the runtime's messages, a shader that stalls the GPU, a zip bomb): the browser tests run a suite of
+  malicious filters on Chromium, Firefox and WebKit ([`filters/evil/`](filters/evil/), [`SECURITY.md`](SECURITY.md)).
 - Use only assets you may redistribute, credit them, and never use photos or videos of people who have not agreed
   (test with the clips of `test-media/`).
 

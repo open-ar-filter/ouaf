@@ -153,6 +153,38 @@ function selfHostedAssets(): Plugin {
   }
 }
 
+/**
+ * The malicious filters' sink (#27, `e2e/evil.spec.ts`): records every request that reaches `/__evil__/…` (HTTP, or a
+ * WebSocket upgrade) and answers it as a willing accomplice (200, any origin allowed), so a request that gets out of
+ * the sandbox both succeeds and is seen here. `GET /__evil-sink__?token=<t>` lists the hits whose URL contains `t`.
+ * Dev server only: the build has no sink.
+ */
+function evilSink(): Plugin {
+  const hits: Array<{ method: string; url: string }> = []
+  return {
+    name: 'ouaf-evil-sink',
+    configureServer(server) {
+      server.httpServer?.on('upgrade', (req) => {
+        if (req.url?.startsWith('/__evil__/')) hits.push({ method: 'UPGRADE', url: req.url })
+      })
+      server.middlewares.use((req, res, next) => {
+        const url = req.url ?? ''
+        if (url.startsWith('/__evil-sink__')) {
+          const token = new URL(url, 'https://localhost').searchParams.get('token') ?? ''
+          res.setHeader('Content-Type', 'application/json')
+          res.end(JSON.stringify(hits.filter((h) => h.url.includes(token))))
+          return
+        }
+        if (!url.startsWith('/__evil__/')) return next()
+        hits.push({ method: req.method ?? '', url })
+        res.setHeader('Access-Control-Allow-Origin', '*')
+        res.setHeader('Content-Type', 'text/javascript')
+        res.end('export default 1\n')
+      })
+    },
+  }
+}
+
 /** Extra pages: the engine and built-ins pages, and every `spikes/*.html` as a separate entry (one page per phase 0 spike). */
 function pages(): Record<string, string> {
   const input: Record<string, string> = {
@@ -175,7 +207,7 @@ const HEADERS = { 'Content-Security-Policy': "connect-src 'self' ws: wss:" }
 // getUserMedia requires a secure context: serve over HTTPS (self-signed certificate) and listen on
 // every interface so a phone on the same network can open the playground.
 export default defineConfig({
-  plugins: [basicSsl({ name: 'ouaf-playground' }), selfHostedAssets()],
+  plugins: [basicSsl({ name: 'ouaf-playground' }), selfHostedAssets(), evilSink()],
   server: { host: true, port: 5173, headers: HEADERS },
   preview: { host: true, port: 4173, headers: HEADERS },
   build: { target: 'es2023', rolldownOptions: { input: pages() } },

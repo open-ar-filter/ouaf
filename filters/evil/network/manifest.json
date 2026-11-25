@@ -1,0 +1,16 @@
+{
+  "ouaf": "1",
+  "id": "evil-network",
+  "name": "Evil: network (malicious filter)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Malicious filter (#27): tries every network API of a Worker to send data out, to the host's origin and to another one. Every attempt must fail.",
+  "requires": {},
+  "layers": [
+    { "id": "grade", "type": "color", "saturation": 0 }
+  ],
+  "script": {
+    "entry": "script.js",
+    "on": ["message:attack"]
+  }
+}

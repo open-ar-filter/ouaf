@@ -34,13 +34,14 @@ Without `npm run fetch-models` the playground still runs, but face tracking is u
 | `npm run build:schema` | Regenerates the JSON Schema from the TypeBox schemas in `packages/spec` |
 | `npm run fetch-models` | Downloads and checks the face model, extracts its TFLite files |
 | `npm run test:browser` | Browser tests on the test clips (Playwright, Chromium; needs `fetch-models`) |
+| `npm run test:security` | The malicious filters suite ([`SECURITY.md`](SECURITY.md)) on Chromium, Firefox and WebKit; on Linux without a display, run it under `xvfb-run -a` (headless Firefox has no WebGL there) |
 | `npx ouaf validate <folder\|file.ouaf>` | Checks a filter (manifest, files, formats, limits); `--json` for tools |
 | `npx ouaf pack <folder> [-o out.ouaf]` | Builds a `.ouaf` package from `filter.ts` / `filter.js` and `assets/` (bundled with Rolldown, validated before it is written) |
 | `npx ouaf preview <filter>... [--json]` | Renders filters (stacked) on reference frames of the test clips in headless Chromium: one screenshot per reference in `ouaf-preview/`, perf stats; needs the face model and Playwright's Chromium |
 | `npx ouaf pack-alpha <input> -o out.mp4` | Converts a video with transparency (WebM, ProRes 4444, PNG frames) into a packed-alpha MP4; needs [ffmpeg](https://ffmpeg.org) |
 
 The first time you run the browser tests or `ouaf preview`, install Chromium: `npx playwright install chromium` (add `--with-deps` on
-Linux if system libraries are missing).
+Linux if system libraries are missing); `npm run test:security` also needs `firefox webkit`.
 
 `npm test` needs no ffmpeg: the `pack-alpha` tests that run the real ffmpeg (`packages/cli/test/pack-alpha.ffmpeg.test.ts`)
 are skipped, with a message, when it is not installed (or point `OUAF_FFMPEG` to it).
@@ -62,6 +63,7 @@ npm test
 npm run build
 npm run build:schema   # then commit any change under docs/spec/ and packages/spec/schema/
 npm run test:browser   # when you touched tracking, rendering, the playground or e2e/
+npm run test:security  # when you touched the script sandbox, the package reader or the shader layer
 ```
 
 CI fails if the generated JSON Schema is not committed: never edit `ouaf-v1.schema.json` by hand, change the TypeBox

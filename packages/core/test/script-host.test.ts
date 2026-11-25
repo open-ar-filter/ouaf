@@ -5,7 +5,7 @@ import { FaceBindingData } from '../src/bindings/face-data.ts'
 import { OuafError } from '../src/engine/errors.ts'
 import { createFaceFrame } from '../src/face.ts'
 import { FrameDataBuilder, type FrameDataSource } from '../src/script/frame-data.ts'
-import { MAX_QUEUED_EVENTS, STARTUP_MS, ScriptHost, estimateSize, type ScriptConnection, type ScriptHostOptions, type ScriptPort } from '../src/script/host.ts'
+import { MAX_ANSWER_WARNINGS, MAX_QUEUED_EVENTS, MAX_SCRIPT_WARNINGS, MAX_WARNING_LENGTH, STARTUP_MS, ScriptHost, estimateSize, type ScriptConnection, type ScriptHostOptions, type ScriptPort } from '../src/script/host.ts'
 import { ScriptOverrides } from '../src/script/overrides.ts'
 import { ShaderUniforms } from '../src/layers/shader/uniforms.ts'
 import { env, fakeImage, runtime, tick } from './script-helpers.ts'
@@ -439,6 +439,64 @@ describe('script host: canvas images', () => {
     s.host.beginFrame()
     expect(drawn).toHaveLength(1)
     expect(s.errors).toEqual([])
+  })
+})
+
+describe('script host: forged answers (#27)', () => {
+  /** A host on a fake port that the test answers itself, as a script that took the runtime's port would. */
+  async function forged() {
+    const port: ScriptPort = { postMessage: () => {}, onmessage: null }
+    const s = hostSetup('', { connect: async () => ({ port, terminate: () => {} }) })
+    await s.host.start({}, 0)
+    let seq = 0
+    const answer = (fields: Record<string, unknown>) => {
+      port.onmessage!({ data: Object.defineProperties({ t: 'done', seq }, Object.getOwnPropertyDescriptors(fields)) })
+      s.host.beginFrame()
+      s.host.endFrame(seq / 30, s.source)
+      seq++
+    }
+    return { ...s, answer }
+  }
+
+  it('ignores malformed commands and emits, without throwing', async () => {
+    const s = await forged()
+    s.answer({
+      commands: ['x', null, 42, {}, ['set'], ['set', 0, null, null], ['set', 0, null, 'opacity'], ['set', 0, null, [1]], ['set', 0, 'face', { opacity: 0.5 }],
+        ['animate', 0, null, { opacity: 0 }, null], ['animate', 0, null, { opacity: 0 }], ['play', 0, null, {}], ['eval', 0]],
+      emits: ['x', null, [{}, 1], ['__proto__', 1], ['bad name', 1], ['ok', 1]],
+      warnings: 'nope',
+    })
+    expect(s.errors).toEqual([])
+    // The one valid command (a face that is not a number counts as every face) and the one valid emit went through.
+    expect(s.opacity()).toBe(0.5)
+    expect(s.emits).toEqual([['ok', 1]])
+    expect(s.host.state).toBe('running')
+  })
+
+  it('bounds the warnings: per answer, in length, each text once, and in all', async () => {
+    const s = await forged()
+    const long = 'x'.repeat(10 * MAX_WARNING_LENGTH)
+    // The first 20 entries only: a text twice and a number count among them.
+    s.answer({ warnings: [long, long, 7, ...Array.from({ length: 100 }, (_, i) => `w${i}`)] })
+    expect(s.warnings).toHaveLength(MAX_ANSWER_WARNINGS - 2)
+    expect(Math.max(...s.warnings.map((w) => w.length))).toBeLessThanOrEqual(MAX_WARNING_LENGTH)
+    expect(s.warnings[0]).toMatch(/^Filter "test": script: x+…$/)
+    // The same texts again: nothing new.
+    s.answer({ warnings: [long, 'w0'] })
+    expect(s.warnings).toHaveLength(MAX_ANSWER_WARNINGS - 2)
+    for (let i = 0; i < 20; i++) s.answer({ warnings: Array.from({ length: MAX_ANSWER_WARNINGS }, (_, j) => `frame ${i} ${j}`) })
+    expect(s.warnings).toHaveLength(MAX_SCRIPT_WARNINGS + 1)
+    expect(s.warnings.at(-1)).toMatch(`more than ${MAX_SCRIPT_WARNINGS} different warnings; the next ones are dropped`)
+    expect(s.errors).toEqual([])
+  })
+
+  it('stops the script when an answer cannot be applied', async () => {
+    const s = await forged()
+    // A getter that throws, as only a script that rewrites the runtime's answers could send (a structured clone has
+    // no getters: this stands for any unexpected failure while applying an answer).
+    s.answer({ get commands(): unknown[] { throw new Error('boom') } })
+    expect(s.host.state).toBe('stopped')
+    expect(s.errors.map((e) => [e.code, e.message])).toEqual([['script', expect.stringMatching(/sent an answer the engine cannot apply \(Error: boom\)/)]])
   })
 })
 

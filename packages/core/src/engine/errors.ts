@@ -19,6 +19,8 @@ export type OuafErrorCode =
   | 'invalid-package'
   | 'shader'
   | 'gpu-context-lost'
+  /** A filter's shader kept the GPU busy for seconds (spec §11): the engine disabled it. */
+  | 'gpu-stalled'
   | 'disposed'
   /** `send(name, data)`: an invalid message name, or data that is not structured-cloneable. */
   | 'invalid-message'
@@ -193,6 +195,21 @@ export class GpuContextLostError extends OuafError {
 
   constructor(filterId: string) {
     super('gpu-context-lost', `Filter "${filterId}" was disabled: the GPU context was lost while its shader was drawn (spec §11).`)
+    this.filter = filterId
+  }
+}
+
+/**
+ * A filter's shader kept the GPU busy for more than 3 s a frame (spec §11, §15.5): the engine disabled that filter
+ * (`gpu-watchdog.ts`). Emitted on `engine.on('error')`; the host may re-enable it (`handle.enabled = true`) or remove it.
+ */
+export class GpuStalledError extends OuafError {
+  override name = 'GpuStalledError'
+  /** The filter disabled (manifest id). */
+  readonly filter: string
+
+  constructor(filterId: string, ms: number) {
+    super('gpu-stalled', `Filter "${filterId}" was disabled: its shader kept the GPU busy for ${Math.round(ms)} ms a frame (spec §11).`)
     this.filter = filterId
   }
 }

@@ -59,6 +59,7 @@ export function createCanvasLayer(decl: LayerDecl, ctx: LayerContext): CanvasLay
   const root = sticker.object
   root.name = decl.id ?? 'canvas'
   let draws = 0
+  let warnedSize = false
   root.visible = false
 
   return {
@@ -72,8 +73,10 @@ export function createCanvasLayer(decl: LayerDecl, ctx: LayerContext): CanvasLay
     },
     setImage(pixels) {
       if (pixels.length !== d.width * d.height * 4) {
-        // The runtime keeps the declared size; anything else is refused (GPU memory is sized by the manifest).
-        ctx.warn(`layer "${decl.id}": a canvas image of ${pixels.length} bytes instead of ${d.width}×${d.height} px was ignored.`)
+        // The runtime keeps the declared size; anything else is refused (GPU memory is sized by the manifest). Once:
+        // only a script that rewrites the runtime's answers sends them (#27), maybe at every frame.
+        if (!warnedSize) ctx.warn(`layer "${decl.id}": a canvas image of ${pixels.length} bytes instead of ${d.width}×${d.height} px was ignored.`)
+        warnedSize = true
         return
       }
       draws++

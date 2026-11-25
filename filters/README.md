@@ -6,6 +6,8 @@ Filter folders served by the playground at `/filters/<path>/` (`manifest.json` +
 - `fixtures/`: small filters used by the browser tests (`e2e/`). They may use the playground's test plugin
   (`playground:*` layer types, `apps/playground/src/engine/test-plugin.ts`).
 - Demo filters (#37): one folder per filter id, next to it. They use only the built-in layer types.
+- [`evil/`](evil/): malicious filters (#27) that the engine must defeat, run by `e2e/evil.spec.ts` on three browsers
+  ([`SECURITY.md`](../SECURITY.md)).
 
 ## Demo filters
 

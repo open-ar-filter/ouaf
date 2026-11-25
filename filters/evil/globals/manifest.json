@@ -1,0 +1,16 @@
+{
+  "ouaf": "1",
+  "id": "evil-globals",
+  "name": "Evil: recovered globals (malicious filter)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Malicious filter (#27): tries to get the removed network and storage globals back (prototypes, function constructors, eval, blob: modules, nested workers) and to reach the host page.",
+  "requires": {},
+  "layers": [
+    { "id": "grade", "type": "color", "saturation": 0 }
+  ],
+  "script": {
+    "entry": "script.js",
+    "on": ["message:attack"]
+  }
+}

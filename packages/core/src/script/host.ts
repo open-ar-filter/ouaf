@@ -24,6 +24,10 @@
  *   warning.
  * - **Canvas layers** (spec §12.6): the script draws them in its Worker; each answer may carry their new images
  *   (premultiplied RGBA pixels, transferred), handed to the layers with the answer's commands (`drawn`).
+ * - **Untrusted answers** (spec §15.1, #27): the script runs in the same Worker as the runtime and can rewrite its
+ *   answers, so every field is checked. Malformed entries are ignored; the script's warnings are bounded (at most
+ *   `MAX_ANSWER_WARNINGS` per answer, `MAX_WARNING_LENGTH` characters each, each text once, `MAX_SCRIPT_WARNINGS` in
+ *   all), so a script cannot flood the host; an answer that cannot be applied stops the script.
  */
 import { SCRIPT_LIMITS, type ScriptUse } from '@ouaf/spec'
 import { OuafError } from '../engine/errors.ts'
@@ -39,6 +43,13 @@ import type { WireCanvas, WireCommand, WireDone, WireEvent, WireFont, WireFrame,
  * the watchdog) reaches it: a host that sends a message every frame would otherwise grow it forever.
  */
 export const MAX_QUEUED_EVENTS = 256
+
+/** Warnings of one answer that reach the host: the runtime itself keeps at most 20 (spec §15.1, #27). */
+export const MAX_ANSWER_WARNINGS = 20
+/** Longer warnings from a script are cut to this many characters. */
+export const MAX_WARNING_LENGTH = 500
+/** Distinct warnings about one script (its own and the host's) before the next ones are dropped. */
+export const MAX_SCRIPT_WARNINGS = 100
 
 /** Key of the events a later one makes obsolete: a host message by its name, a `paramChange` by its parameter. */
 function supersedeKey(e: WireEvent): string | undefined {
@@ -418,17 +429,41 @@ export class ScriptHost {
     this.#watchdog = undefined
   }
 
+  /** Warns once per key, and about `MAX_SCRIPT_WARNINGS` keys at most (then once that the next ones are dropped). */
   #warnOnce(key: string, message: string): void {
-    if (this.#warned.has(key)) return
+    key = cut(key)
+    if (this.#warned.has(key) || this.#warned.size > MAX_SCRIPT_WARNINGS) return
     this.#warned.add(key)
-    this.#o.warn(`Filter "${this.#o.filterId}": ${message}`)
+    if (this.#warned.size > MAX_SCRIPT_WARNINGS) {
+      this.#o.warn(`Filter "${this.#o.filterId}": more than ${MAX_SCRIPT_WARNINGS} different warnings; the next ones are dropped.`)
+      return
+    }
+    this.#o.warn(cut(`Filter "${this.#o.filterId}": ${message}`))
   }
 
+  /**
+   * Applies an answer of the script. It comes from the sandbox, where the script may have rewritten it (spec §15.1):
+   * every field is checked, and an answer that still cannot be applied stops the script.
+   */
   #apply(answer: WireDone): void {
-    for (const w of answer.warnings ?? []) this.#o.warn(`Filter "${this.#o.filterId}": script: ${w}`)
-    for (const c of answer.commands ?? []) this.#command(c)
-    for (const [name, data] of answer.emits ?? []) this.#emit(name, data)
-    // The answer comes from the sandbox, where the script may have rewritten it: check what it holds.
+    try {
+      this.#applyChecked(answer)
+    } catch (error) {
+      this.#stop(`it sent an answer the engine cannot apply (${cut(String(error))})`, 'script')
+    }
+  }
+
+  #applyChecked(answer: WireDone): void {
+    const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
+    for (const w of list(answer.warnings).slice(0, MAX_ANSWER_WARNINGS)) {
+      if (typeof w === 'string') this.#warnOnce(`script:${w}`, `script: ${w}`)
+    }
+    for (const c of list(answer.commands)) if (Array.isArray(c)) this.#command(c as WireCommand)
+    for (const e of list(answer.emits)) {
+      const [name, data] = Array.isArray(e) ? (e as unknown[]) : []
+      // The names `f.emit()` accepts (a rewritten answer may hold anything).
+      if (typeof name === 'string' && /^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) this.#emit(name, data)
+    }
     if (!Array.isArray(answer.images) || !this.#o.drawn) return
     for (const entry of answer.images as unknown[]) {
       const [layer, pixels] = Array.isArray(entry) ? (entry as unknown[]) : []
@@ -444,8 +479,8 @@ export class ScriptHost {
     const [op, layer] = c
     if (typeof layer !== 'number' || !(layer in this.#o.layers)) return
     if (op === 'set' || op === 'animate') {
-      const face = c[2] ?? undefined
-      for (const [name, value] of flattenProps(c[3])) {
+      const face = typeof c[2] === 'number' ? c[2] : undefined
+      for (const [name, value] of flattenProps(c[3] as unknown)) {
         const prop = this.#o.overrides.property(layer, name)
         if (!prop) {
           const settable = this.#o.overrides.propertiesOf(layer)
@@ -463,12 +498,13 @@ export class ScriptHost {
           }
           continue
         }
-        this.#animate(layer, name, face, value, c[4])
+        this.#animate(layer, name, face, value, (c[4] ?? {}) as Record<string, unknown>)
       }
       return
     }
     if (op === 'play') {
-      const result = this.#o.play?.(layer, c[2] ?? undefined, c[3]) ?? 'unsupported'
+      if (typeof c[3] !== 'string') return
+      const result = this.#o.play?.(layer, typeof c[2] === 'number' ? c[2] : undefined, c[3]) ?? 'unsupported'
       if (result === 'unsupported') this.#warnOnce(`play:${layer}`, `.play() starts model animations: ${this.#layerName(layer)} is not a model layer; ignored.`)
       else if (result === 'unknown') this.#warnOnce(`play:${layer}:${c[3]}`, `.play(${JSON.stringify(c[3])}): ${this.#layerName(layer)} has no such animation.`)
     }
@@ -532,14 +568,20 @@ export class ScriptHost {
 }
 
 /** The properties of a `.set()` / `.animate()` call; `uniforms: { a: 1 }` (shader layers) becomes `uniforms.a`. */
-function flattenProps(props: Record<string, unknown>): Array<[string, unknown]> {
+function flattenProps(props: unknown): Array<[string, unknown]> {
   const out: Array<[string, unknown]> = []
+  if (props === null || typeof props !== 'object' || Array.isArray(props)) return out
   for (const [name, value] of Object.entries(props)) {
     if (name === 'uniforms' && value !== null && typeof value === 'object' && !Array.isArray(value)) {
       for (const [k, v] of Object.entries(value)) out.push([`uniforms.${k}`, v])
     } else out.push([name, value])
   }
   return out
+}
+
+/** `text` cut to `MAX_WARNING_LENGTH` characters. */
+function cut(text: string): string {
+  return text.length > MAX_WARNING_LENGTH ? `${text.slice(0, MAX_WARNING_LENGTH - 1)}…` : text
 }
 
 function copy(v: OverrideValue): OverrideValue {

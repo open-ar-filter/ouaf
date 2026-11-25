@@ -1,0 +1,16 @@
+{
+  "ouaf": "1",
+  "id": "evil-heavy-shader",
+  "name": "Evil: heavy shader (malicious filter)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Malicious filter (#27): a post shader that loops `iterations` times per pixel. The page must stay responsive; a GPU reset disables the filter (spec §11, §15.5).",
+  "requires": {},
+  "params": {
+    "iterations": { "type": "number", "default": 1000000, "min": 0, "max": 1000000, "step": 1 }
+  },
+  "assets": { "burn": "assets/burn.frag" },
+  "layers": [
+    { "id": "burn", "type": "shader", "src": "burn", "stage": "post", "uniforms": { "iterations": { "param": "iterations" } } }
+  ]
+}

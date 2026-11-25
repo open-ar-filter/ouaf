@@ -91,10 +91,12 @@ describe('canvas layer', () => {
     layer.dispose()
   })
 
-  it('refuses an image of another size than declared', () => {
+  it('refuses an image of another size than declared, and warns once', () => {
     const warnings: string[] = []
     const layer = createCanvasLayer({ type: 'canvas', id: 'c', width: 64, height: 64 } as LayerDecl, context(warnings))
     layer.setImage(image(4096, 4096))
+    layer.setImage(image(4096, 4096))
+    layer.setImage(image(2, 2))
     expect(layer.draws).toBe(0)
     expect(warnings).toEqual(['layer "c": a canvas image of 67108864 bytes instead of 64×64 px was ignored.'])
   })
