@@ -543,8 +543,6 @@ Specified, or reserved, but not working in the reference engine today. Do not re
   (reserved: import JSON in `filter.ts`, section 6).
 - KTX2 textures; GLSL compilation in `ouaf validate`; reserved `requires` (`hands`, `segmentation`, `pose`, `audio`)
   and reserved events (`tap`…): warnings.
-- With a file source, the engine does not wait for the script yet, so offline renders of scripted filters are not
-  frame-exact (#26).
 
 ## 15. Complete examples
 

@@ -1,0 +1,16 @@
+{
+  "ouaf": "1",
+  "id": "script-frames",
+  "name": "Script frames (file regime fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Script fixture (#26, spec §12.1): update() turns a black-and-white grade on and off at every frame it gets, to check that with a file source each frame shows the answer to the previous one.",
+  "requires": {},
+  "layers": [
+    { "id": "grade", "type": "color", "saturation": -1 }
+  ],
+  "script": {
+    "entry": "script.js",
+    "update": true
+  }
+}

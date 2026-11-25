@@ -9,10 +9,9 @@ import { expect, test } from '@playwright/test'
  * `reference.time` is given to `engine.pushFrame` (file regime, spec §12.1): each frame waits for its own tracking
  * result, time is the media time and seeds are fixed, so the image does not depend on the machine's speed.
  *
- * Scripts: the engine does not wait for the script with file sources yet (#26, spec §12.1), so a script's answer
- * to frame N lands at a frame that depends on timing. The run therefore leaves the script time to answer after each
- * frame, and ends by rendering the last frame again a few times, 1 ms apart: whatever the script was still doing is
- * applied, and the reference frames are chosen where the script's output is stable (no animation running).
+ * Scripts: the engine waits for a script's answer to frame N before rendering frame N + 1 (spec §12.1). The run ends
+ * by rendering the last frame again a few times, 1 ms apart, so that the script's answers to the last frames are
+ * applied; the reference frames are chosen where the script's output is stable (no animation running).
  *
  * Comparison: Playwright's image comparison, with a per-pixel tolerance and a share of pixels allowed to differ
  * (`MAX_DIFF`), since tracking (GPU or CPU inference), video decoding and font rasterization differ slightly
@@ -61,8 +60,6 @@ for (const demo of demos) {
       async ([demo, width, height]) => {
         const { engine, core } = window.ouaf!
         await engine.addFilter(`/filters/${demo.id}/`)
-        const scripted = engine.filters[0]!.manifest.script !== undefined
-        const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
         const source = await core.OfflineVideoSource.open(`/test-media/${demo.clip}.mp4`)
         const eps = 1e-4
         let last: Awaited<ReturnType<typeof source.read>> = null
@@ -80,16 +77,10 @@ for (const demo of demos) {
           await engine.pushFrame(frame.image, frame.time)
           last?.close()
           last = frame
-          // Time for the script to answer this frame before the next one (see above).
-          if (scripted) await sleep(15)
         }
         if (!last) throw new Error(`no frame of ${demo.clip} between ${demo.reference.from} and ${demo.reference.time} s`)
         // The same frame again, 1 ms later each time: the script's last answers are applied.
-        for (let i = 1; i <= 4; i++) {
-          await engine.pushFrame(last.image, last.time + i / 1000)
-          await sleep(scripted ? 100 : 0)
-        }
-        await engine.pushFrame(last.image, last.time + 5 / 1000)
+        for (let i = 1; i <= 5; i++) await engine.pushFrame(last.image, last.time + i / 1000)
         // The compared part, read in the same task as the render (the drawing buffer is not preserved).
         const [cx, cy, cw, ch] = demo.reference.crop ?? [0, 0, 1, 1]
         const w = Math.round(cw * width)
