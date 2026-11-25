@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -79,6 +79,19 @@ describe('ouaf validate', () => {
       const r = await cli('validate', ...args)
       expect(r.code, args.join(' ')).toBe(EXIT.USAGE)
       expect(r.err).toContain('See ouaf validate --help.')
+    }
+  })
+
+  it('a symbolic link to nothing is a missing input (exit 2), not a crash', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ouaf-cli-'))
+    try {
+      const link = join(dir, 'filter.ouaf')
+      await symlink(join(dir, 'gone.ouaf'), link)
+      const r = await cli('validate', '--no-glsl', link)
+      expect(r.code).toBe(EXIT.USAGE)
+      expect(r.err).toContain('a symbolic link to a file or folder that does not exist')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
     }
   })
 
