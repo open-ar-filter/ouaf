@@ -1,0 +1,12 @@
+{
+  "ouaf": "1",
+  "id": "shader-error-eof",
+  "name": "Unclosed shader (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Shader test fixture: effect() has no closing brace; loading the filter must fail on the last line of the file (5), not in the engine's main().",
+  "requires": {},
+  "layers": [
+    { "type": "shader", "src": "assets/unclosed.frag" }
+  ]
+}

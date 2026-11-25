@@ -128,10 +128,20 @@ describe('parseShaderLog', () => {
     ])
   })
 
-  it('attributes later lines to the wrapper main(), and keeps lines it cannot parse', () => {
-    expect(parseShaderLog("ERROR: 0:9: 'effect' : no matching overloaded function found\nERROR: 2 compilation errors.", wrapped)).toEqual([
+  it('attributes later lines to the wrapper main(), keeps lines it cannot parse, and drops the error count', () => {
+    const log = "ERROR: 0:9: 'effect' : no matching overloaded function found\nINTERNAL ERROR: out of memory\nERROR: 2 compilation errors.  No code generated.\n"
+    expect(parseShaderLog(log, wrapped)).toEqual([
       { severity: 'error', message: "'effect' : no matching overloaded function found (in the engine's main(), which calls vec4 effect(vec2 uv))" },
-      { severity: 'error', message: 'ERROR: 2 compilation errors.' },
+      { severity: 'error', message: 'INTERNAL ERROR: out of memory' },
+    ])
+  })
+
+  // Logs of Chromium, Firefox and WebKit (all ANGLE) for a 6-line source.
+  it('reports a source that is not closed on its last line: a missing "}" or an open comment', () => {
+    const hint = ' (at the end of the file: a "}", ")" or ";" may be missing, or a comment is not closed)'
+    expect(parseShaderLog("ERROR: 0:7: '{' : syntax error\n", wrapped)).toEqual([{ severity: 'error', line: 6, message: `'{' : syntax error${hint}` }])
+    expect(parseShaderLog("ERROR: 0:12: 'EOF while in a comment' : unexpected end of file found in comment\n", wrapped)).toEqual([
+      { severity: 'error', line: 6, message: `'EOF while in a comment' : unexpected end of file found in comment${hint}` },
     ])
   })
 })

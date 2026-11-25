@@ -96,6 +96,19 @@ test('a shader that does not compile rejects its filter with the line in the aut
   expect(await page.evaluate(() => window.ouaf!.engine.filters.length)).toBe(0)
 })
 
+test('a shader that is not closed is reported on the last line of the author file', async ({ page }) => {
+  await open(page, 'source=pesquet-talk&autostart', false)
+  const details = await page.evaluate(async (url) => {
+    try {
+      await window.ouaf!.engine.addFilter(url)
+      return null
+    } catch (e) {
+      return (e as { details: Array<{ line?: number; message: string }> }).details
+    }
+  }, `${F}/shader-error-eof/`)
+  expect(details).toEqual([{ severity: 'error', line: 5, message: expect.stringContaining('a "}"') }])
+})
+
 /** Centroid and area (px) of pure red and pure green pixels in the top and bottom halves (stacked faces). */
 async function discs(page: Page): Promise<Array<{ red: { x: number; y: number; n: number }; green: { x: number; y: number; n: number } }>> {
   const png = await page.locator('#canvas').screenshot()
@@ -285,7 +298,7 @@ async function loseContext(page: Page, restoreAfterMs: number): Promise<void> {
   }, restoreAfterMs)
 }
 
-test('a context loss while a shader draws disables its filter; rendering resumes after the restore', async ({ page }) => {
+test('a context loss while a shader draws disables its filter; rendering resumes after the restore, and the filter draws again once re-enabled', async ({ page }) => {
   await open(page, `source=pesquet-talk&autostart&filter=${F}/shader-post/`, false)
   await expect.poll(async () => check((await means(page, [ALL]))[0]!, (s) => s.r > 240 && s.g < 15), POLL).toBe(true)
   await loseContext(page, 500)
@@ -294,6 +307,9 @@ test('a context loss while a shader draws disables its filter; rendering resumes
   await expect.poll(() => page.evaluate(() => window.ouaf!.engine.contextLost), POLL).toBe(false)
   // The video again, without the tint.
   await expect.poll(async () => check((await means(page, [ALL]))[0]!, (s) => s.chroma > 5 && s.g > 15), POLL).toBe(true)
+  // Re-enabled by the host: three.js rebuilt the program and the texture, the tint is back.
+  await page.evaluate(() => (window.ouaf!.engine.filters[0]!.enabled = true))
+  await expect.poll(async () => check((await means(page, [ALL]))[0]!, (s) => s.r > 240 && s.g < 15), POLL).toBe(true)
 })
 
 test('a context loss without author shaders disables nothing; layers render again after the restore', async ({ page }) => {

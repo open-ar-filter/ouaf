@@ -627,8 +627,7 @@ interface GlslDiagnostic {
 function programDiagnostics(log: ProgramLog, wrapped: WrappedShader): GlslDiagnostic[] {
   const out: GlslDiagnostic[] = []
   if (log.fragment !== undefined) {
-    // ANGLE ends its log with a count ("ERROR: 1 compilation errors.  No code generated."): not a problem of its own.
-    const diagnostics = parseShaderLog(log.fragment, wrapped).filter((d) => !/^ERROR: \d+ compilation errors?\./i.test(d.message))
+    const diagnostics = parseShaderLog(log.fragment, wrapped)
     out.push(...diagnostics)
     if (diagnostics.length === 0) out.push({ severity: 'error', message: log.fragment.trim() || 'The shader does not compile.' })
   }
