@@ -13,13 +13,10 @@
  * are evaluated for the first face (`face.*` data, or their default when no face is tracked).
  */
 import {
-  BufferAttribute,
-  BufferGeometry,
   Camera,
   ClampToEdgeWrapping,
   Data3DTexture,
   DoubleSide,
-  DynamicDrawUsage,
   GLSL3,
   HalfFloatType,
   LinearFilter,
@@ -28,7 +25,6 @@ import {
   RGBAFormat,
   RawShaderMaterial,
   Scene,
-  Sphere,
   Vector3,
   Vector4,
   type Texture,
@@ -42,7 +38,7 @@ import type { LayerContext, LayerDecl, LayerTypeImpl, PassLayer } from '../../en
 import type { OuafPlugin } from '../../engine/plugin.ts'
 import { writeColor } from '../../params/values.ts'
 import { CubeError, lutTextureData, parseCube } from './cube.ts'
-import { MASK_INDICES, MASK_VERTICES, faceMaskIndices, faceMaskValues, writeFaceMask } from './face-mask.ts'
+import { FaceMaskMesh } from './face-mask-mesh.ts'
 import { AMOUNT, AMOUNT_COUNT, AMOUNT_DEFS, U, UNIFORM_COUNT, isNeutral, writeGradeUniforms, type AmountName } from './grade.ts'
 import { COPY_FRAGMENT, FACE_VERTEX, GRADE_FRAGMENT } from './shader.ts'
 
@@ -162,21 +158,16 @@ function createColorLayer(decl: LayerDecl, ctx: LayerContext): PassLayer {
   }
 
   let full: RawShaderMaterial | undefined
-  let face: { copy: RawShaderMaterial; scene: Scene; camera: Camera; mesh: Mesh<BufferGeometry, RawShaderMaterial>; positions: BufferAttribute } | undefined
+  let face: { copy: RawShaderMaterial; scene: Scene; camera: Camera; mask: FaceMaskMesh; mesh: Mesh<FaceMaskMesh['geometry'], RawShaderMaterial> } | undefined
   if (faceRegion) {
-    const geometry = new BufferGeometry()
-    const positions = new BufferAttribute(new Float32Array(ctx.maxFaces * MASK_VERTICES * 2), 2).setUsage(DynamicDrawUsage)
-    geometry.setAttribute('position', positions)
-    geometry.setAttribute('mask', new BufferAttribute(faceMaskValues(ctx.maxFaces), 1))
-    geometry.setIndex(new BufferAttribute(faceMaskIndices(ctx.maxFaces), 1))
-    geometry.boundingSphere = new Sphere(new Vector3(), Infinity)
-    const mesh = new Mesh(geometry, material(FACE_VERTEX, GRADE_FRAGMENT, uniforms, { ...defines, FACE_REGION: '' }))
+    const mask = new FaceMaskMesh(ctx.maxFaces)
+    const mesh = new Mesh(mask.geometry, material(FACE_VERTEX, GRADE_FRAGMENT, uniforms, { ...defines, FACE_REGION: '' }))
     mesh.material.side = DoubleSide // the contour's winding flips with mirroring
     mesh.frustumCulled = false
     mesh.matrixAutoUpdate = false
     const scene = new Scene()
     scene.add(mesh)
-    face = { copy: material(FULLSCREEN_VERTEX, COPY_FRAGMENT, { uInput }, {}), scene, camera: new Camera(), mesh, positions }
+    face = { copy: material(FULLSCREEN_VERTEX, COPY_FRAGMENT, { uInput }, {}), scene, camera: new Camera(), mask, mesh }
   } else {
     full = material(FULLSCREEN_VERTEX, GRADE_FRAGMENT, uniforms, defines)
   }
@@ -211,13 +202,7 @@ function createColorLayer(decl: LayerDecl, ctx: LayerContext): PassLayer {
       uTint.value.set(u[U.tintR]!, u[U.tintG]!, u[U.tintB]!, u[U.tintA]!)
       uSeed.value = u[U.seed]!
       uLutMix.value = lut ? u[U.lut]! : 0
-      if (face) {
-        const projection = ctx.view.camera.projectionMatrix.elements
-        const out = face.positions.array as Float32Array
-        for (let f = 0; f < count; f++) writeFaceMask(frame.faces, f, f, frame.mirrored, projection, out)
-        face.positions.needsUpdate = true
-        face.mesh.geometry.setDrawRange(0, count * MASK_INDICES)
-      }
+      if (face) face.mask.update(frame.faces, count, frame.mirrored, ctx.view.camera.projectionMatrix.elements)
     },
     render(pass) {
       uInput.value = pass.input
@@ -236,7 +221,7 @@ function createColorLayer(decl: LayerDecl, ctx: LayerContext): PassLayer {
       if (face) {
         face.copy.dispose()
         face.mesh.material.dispose()
-        face.mesh.geometry.dispose()
+        face.mask.dispose()
       }
     },
   }

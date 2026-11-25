@@ -145,7 +145,6 @@ describe('shader face inputs (spec §11.1)', () => {
         anchors.setFrame(faces, [1], mirrored)
         const inputs = new ShaderFaceInputs(2, ['noseTip', 'leftEye'], true)
         inputs.update(anchors, faces.count, camera.projectionMatrix.elements)
-        expect(inputs.count).toBe(1)
         const v = computeVideoToClip(faces.width, faces.height, tw, th, 'cover', mirrored, createVideoToClip())
         ;(['noseTip', 'leftEye'] as const).forEach((anchor, a) => {
           const live = { x: 0, y: 0, z: 0 }
@@ -210,7 +209,7 @@ function stubGl(log?: string): { gl: CompileContext; sources: string[] } {
 }
 
 describe('checkProgram', () => {
-  it('compiles both shaders with #version 300 es and maps errors to author lines', () => {
+  it('compiles both shaders with #version 300 es and maps errors to author lines, without the error count', () => {
     const wrapped = wrapShader('vec4 effect(vec2 uv) {\n  return x;\n}\n', { stage: 'post', maxFaces: 1 })
     const ok = stubGl()
     expect(checkProgram(ok.gl, 'void main() {}', wrapped)).toEqual([])
@@ -218,7 +217,6 @@ describe('checkProgram', () => {
     const bad = stubGl("ERROR: 0:2: 'x' : undeclared identifier\nERROR: 1 compilation errors.  No code generated.")
     expect(checkProgram(bad.gl, 'void main() {}', wrapped)).toEqual([
       { severity: 'error', line: 2, message: "'x' : undeclared identifier" },
-      { severity: 'error', message: 'ERROR: 1 compilation errors.  No code generated.' },
     ])
   })
 

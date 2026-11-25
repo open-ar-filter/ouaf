@@ -253,15 +253,21 @@ export interface ShaderDiagnostic {
 }
 
 /**
- * Parses a GLSL compiler info log (`ERROR: 0:12: 'x' : undeclared identifier`, the format of ANGLE and of most
- * drivers) into diagnostics with lines of the author's file. Messages on lines after the author's source come from
- * the wrapper's `main()`: they lose their line (`effect` missing or with a wrong signature).
+ * Parses a GLSL compiler info log (`ERROR: 0:12: 'x' : undeclared identifier`, the format of ANGLE, which Chromium,
+ * Firefox and Safari all use) into diagnostics with lines of the author's file. The count ANGLE may end its log with
+ * (`ERROR: 1 compilation errors.  No code generated.`) is dropped: it is not a problem of its own.
+ *
+ * Messages after the author's source:
+ * - on the line right after it (the wrapper's `void main() {`), or at the end of the file: the author's source is
+ *   not closed (a missing `}`, `)` or `;`, or an open comment). They are reported on the author's last line.
+ * - further down, in the wrapper's `main()`: they lose their line (`effect` missing or with a wrong signature).
  */
 export function parseShaderLog(log: string, wrapped: Pick<WrappedShader, 'authorLines'>): ShaderDiagnostic[] {
   const out: ShaderDiagnostic[] = []
+  const last = Math.max(1, wrapped.authorLines)
   for (const raw of log.split('\n')) {
     const text = raw.replace(/\0/g, '').trim()
-    if (!text) continue
+    if (!text || /^ERROR:\s*\d+\s+compilation errors?\./i.test(text)) continue
     const m = /^(ERROR|WARNING):\s*\d+:(\d+):\s*(.*)$/i.exec(text)
     if (!m) {
       out.push({ severity: /^warning/i.test(text) ? 'warning' : 'error', message: text })
@@ -271,7 +277,9 @@ export function parseShaderLog(log: string, wrapped: Pick<WrappedShader, 'author
     const line = Number(m[2])
     const message = m[3]!.trim()
     if (line >= 1 && line <= wrapped.authorLines) out.push({ severity, line, message })
-    else out.push({ severity, message: `${message} (in the engine's main(), which calls vec4 effect(vec2 uv))` })
+    else if (line === wrapped.authorLines + 1 || /end of file/i.test(message)) {
+      out.push({ severity, line: last, message: `${message} (at the end of the file: a "}", ")" or ";" may be missing, or a comment is not closed)` })
+    } else out.push({ severity, message: `${message} (in the engine's main(), which calls vec4 effect(vec2 uv))` })
   }
   return out
 }
