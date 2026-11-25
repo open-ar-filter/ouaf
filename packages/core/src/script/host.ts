@@ -9,7 +9,8 @@
  *   `paramChange` of each parameter are kept (then the oldest event is dropped if still full), with a warning.
  * - **Live sources** (spec §12.1): the engine never waits. An answer is applied at the start of the first frame
  *   rendered after it arrives (`beginFrame`), so commands take effect with at least one frame of latency.
- *   (Waiting for the answer with file sources needs the offline sources of #32.)
+ * - **File sources** (spec §12.1): the engine waits for `settled()` before rendering each frame, so that the answer
+ *   to frame N (or to `setup`) is applied at frame N + 1 on every run. The watchdog still bounds the wait.
  * - **Watchdog**: no answer within 1 s (`setup` included) stops the script: its sandbox is removed (which terminates
  *   the Worker) and the engine emits `OuafError('SCRIPT_STOPPED')`. Layers, bindings and the animations already
  *   started keep working; the script stays stopped until the filter is activated again. The 1 s are the script's:
@@ -171,6 +172,8 @@ export class ScriptHost {
   #emitWindow = 0
   #emitCount = 0
   readonly #warned = new Set<string>()
+  /** Resolvers of `settled()`, called once nothing is in flight. */
+  #settling: Array<() => void> = []
 
   constructor(options: ScriptHostOptions) {
     this.#o = options
@@ -184,6 +187,16 @@ export class ScriptHost {
   /** A message (`init` or a frame) is waiting for the script's answer. */
   get waiting(): boolean {
     return this.#inFlight >= 0
+  }
+
+  /**
+   * Resolves once the script has nothing in flight: it answered `setup` and the last frame sent, or it was stopped or
+   * disposed (file regime, spec §12.1). `undefined` when that is already the case. The watchdog bounds the wait: 1 s
+   * per answer, `STARTUP_MS` while the sandbox starts.
+   */
+  settled(): Promise<void> | undefined {
+    if (this.#state !== 'starting' && this.#inFlight < 0) return undefined
+    return new Promise((resolve) => this.#settling.push(resolve))
   }
 
   /** The script handles `event` (it is in `script.on`). */
@@ -203,6 +216,7 @@ export class ScriptHost {
     } catch (error) {
       if ((this.#state as State) === 'disposed') return
       this.#state = 'stopped'
+      this.#settle()
       this.#o.error(error instanceof OuafError ? error : new OuafError('script', `Filter "${this.#o.filterId}": ${String(error)}`, { cause: error }))
       return
     }
@@ -336,6 +350,15 @@ export class ScriptHost {
     this.#clearWatchdog()
     this.#inFlight = -1
     this.#answers.push(m as WireDone)
+    this.#settle()
+  }
+
+  /** Nothing is in flight any more: resolves the pending `settled()` promises. */
+  #settle(): void {
+    if (this.#settling.length === 0) return
+    const settling = this.#settling
+    this.#settling = []
+    for (const resolve of settling) resolve()
   }
 
   #armWatchdog(seq: number, ms: number): void {
@@ -380,6 +403,7 @@ export class ScriptHost {
       this.#connection.terminate()
       this.#connection = undefined
     }
+    this.#settle()
   }
 
   #clearWatchdog(): void {

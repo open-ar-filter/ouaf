@@ -357,6 +357,54 @@ describe('script host', () => {
     expect(plain.warnings).toEqual([])
   })
 
+  it('settles once setup and the last frame sent are answered, for the file regime (spec §12.1)', async () => {
+    const s = hostSetup(`export default { setup(f) { f.layer('label').set({ opacity: 0.5 }) }, update(f, frame) { f.layer('label').set({ opacity: frame.time }) } }`)
+    expect(s.host.settled()).toBeUndefined() // not started: nothing to wait for
+    const start = s.host.start({}, 0)
+    const setup = s.host.settled()
+    expect(setup).toBeInstanceOf(Promise) // the sandbox is starting
+    await start
+    await setup
+    expect(s.host.waiting).toBe(false)
+    expect(s.host.settled()).toBeUndefined()
+    s.host.beginFrame()
+    expect(s.opacity()).toBe(0.5)
+    s.host.endFrame(0.25, s.source)
+    const frame = s.host.settled()
+    expect(frame).toBeInstanceOf(Promise)
+    await frame
+    s.host.beginFrame()
+    expect(s.opacity()).toBe(0.25) // the answer to the frame, applied at the next one
+  })
+
+  it('settles when the script is stopped or disposed, or its sandbox does not start', async () => {
+    let fire: (() => void) | undefined
+    const s = hostSetup(`export default { setup(f) {} }`, { now: () => 0, setTimeout: (fn) => ((fire = fn), 1), clearTimeout: () => (fire = undefined) })
+    await s.host.start({}, 0)
+    await s.host.settled()
+    s.conn().port.onmessage = null // the frame never gets an answer
+    s.host.endFrame(0, s.source)
+    const stopped = s.host.settled()
+    fire!() // the watchdog
+    await stopped
+    expect(s.host.state).toBe('stopped')
+    expect(s.host.settled()).toBeUndefined()
+
+    const d = hostSetup(`export default { setup(f) {} }`)
+    const start = d.host.start({}, 0)
+    const disposed = d.host.settled()
+    d.host.dispose()
+    await disposed
+    await start
+
+    const failed = hostSetup('', { connect: () => Promise.reject(new OuafError('script', 'no sandbox')) })
+    const failing = failed.host.start({}, 0)
+    const settled = failed.host.settled()
+    await failing
+    await settled
+    expect(failed.host.state).toBe('stopped')
+  })
+
   it('reports a sandbox that does not start', async () => {
     const s = hostSetup('', { connect: () => Promise.reject(new OuafError('script', 'no sandbox')) })
     await s.host.start({}, 0)
