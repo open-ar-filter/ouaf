@@ -25,7 +25,7 @@ What a malicious filter may try, and what stops it (normative rules: [spec §15]
 | Reach the host page (DOM, cookies, storage) | Opaque origin: none of the page's objects or storage are reachable from the sandbox. |
 | Rewrite the runtime's messages (the script shares its Worker) | The host checks every field of every answer, bounds warnings and messages (64 KB, 60 a second), and stops a script whose answer cannot be applied. |
 | Freeze the page with a loop | The script runs off the rendering thread; a script that does not answer within 1 s is stopped (spec §12.7). |
-| Exhaust memory | Only the script's Worker grows; once it is stopped or crashes, the watchdog stops the script. Oversized messages are dropped. |
+| Exhaust memory | Only the script's Worker grows; once it is stopped or crashes, the watchdog stops the script. Oversized messages are dropped. **Known limitation on Chromium** ([#181](https://github.com/open-ar-filter/ouaf/issues/181)): a Worker that reaches V8's heap limit (about 4 GB) takes down its renderer process, which the sandbox shares with the host page. On a fast machine the limit comes before the 1 s watchdog, and the page crashes. No data leaves; the fix is to run the sandbox in its own process. |
 | Stall the GPU with a heavy shader | The engine measures the frames that draw author shaders and disables a filter that keeps the GPU busy over 3 s a frame; a GPU reset (context loss) disables it too (spec §11). |
 | Zip bomb, path traversal, links in a package | Declared sizes are bounded before anything is inflated, inflating stops at the declared size, and unsafe paths, links, special and duplicate entries are refused (spec §3). |
 | Deceptive UI | Layers are drawn into the canvas: a filter cannot create input fields. |

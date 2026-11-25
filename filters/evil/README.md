@@ -14,7 +14,7 @@ Most attack when the test sends them a host message, so that each attack starts 
 | [`forge`](forge/) | hooks `MessagePort.prototype.postMessage` to take the runtime's port, rewrites its answers (invalid commands, `__proto__` keys, 1 000 long warnings, oversized and too many emits, wrong canvas images), then swallows the frames | the host ignores what it cannot use, warnings stay bounded, no prototype pollution; the watchdog stops the script |
 | [`loop-setup`](loop-setup/) | a `setup` that never returns | stopped after 1 s, rendering goes on |
 | [`loop`](loop/) | a synchronous loop, or an endless chain of microtasks, in a frame | stopped after 1 s, rendering goes on |
-| [`memory`](memory/) | allocates without bound (objects, array buffers), sends 32 MB messages | the page survives, the script is stopped; messages over 64 KB are dropped |
+| [`memory`](memory/) | allocates without bound (objects, array buffers), sends 32 MB messages | the page survives, the script is stopped; messages over 64 KB are dropped. On Chromium, the heap bomb may crash the page before the watchdog (#181): accepted there as a known limitation |
 | [`heavy-shader`](heavy-shader/) | a post shader that loops `iterations` times a pixel (a million by default) | disabled by the GPU watchdog (or after a GPU reset), rendering resumes |
 | [`zip-bombs.ts`](zip-bombs.ts) | archives built by the test: entries that inflate past their declared size, over 50 MB declared, over 1000 entries, `..` and absolute paths, a symbolic link, a duplicate entry | refused with a `PackageError`, nothing loaded |
 
