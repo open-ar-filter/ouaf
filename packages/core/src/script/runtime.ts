@@ -214,7 +214,8 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
   const DANGEROUS = [
     'fetch', 'XMLHttpRequest', 'WebSocket', 'WebSocketStream', 'EventSource', 'WebTransport', 'importScripts', 'Worker',
     'SharedWorker', 'BroadcastChannel', 'indexedDB', 'IDBFactory', 'caches', 'CacheStorage', 'navigator', 'postMessage',
-    'onmessage', 'Request', 'Response', 'Headers',
+    'onmessage', 'Request', 'Response', 'Headers', 'Notification', 'RTCPeerConnection', 'webkitRTCPeerConnection',
+    'RTCDataChannel', 'ServiceWorker',
   ]
 
   function harden(): void {

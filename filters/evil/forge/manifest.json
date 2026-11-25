@@ -1,0 +1,18 @@
+{
+  "ouaf": "1",
+  "id": "evil-forge",
+  "name": "Evil: forged answers (malicious filter)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Malicious filter (#27): takes the runtime port by hooking MessagePort.prototype.postMessage, then rewrites its answers or swallows frames. The host must check every answer.",
+  "requires": {},
+  "layers": [
+    { "id": "grade", "type": "color", "saturation": 0 },
+    { "id": "board", "type": "canvas", "anchor": "screen", "width": 64, "height": 64, "size": 0.2 }
+  ],
+  "script": {
+    "entry": "script.js",
+    "on": ["message:tamper", "message:flood", "message:swallow"],
+    "draw": ["board"]
+  }
+}

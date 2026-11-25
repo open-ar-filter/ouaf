@@ -1,0 +1,252 @@
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { zipBombs } from '../filters/evil/zip-bombs.ts'
+
+/**
+ * Malicious filters (#27, `filters/evil/`): each one attacks the engine from inside a filter (the script sandbox, the
+ * package reader, the GPU) and must fail, on Chromium, Firefox and WebKit (`npm run test:security`). CI fails if any
+ * of them succeeds.
+ *
+ * The host page loses its own Content-Security-Policy here (`open`): the sandbox must hold by itself, as on a host
+ * page without a CSP. Requests are watched twice: in the browser (every request of the context that got a response,
+ * workers included; every request to another origin is answered as a willing accomplice would) and on the dev server, whose sink
+ * records every request that reaches `/__evil__/` (apps/playground/vite.config.ts).
+ */
+
+const POLL = { timeout: 30_000, intervals: [250, 500, 1000] }
+
+declare global {
+  interface Window {
+    received?: Array<[string, unknown]>
+  }
+}
+
+interface Watch {
+  /**
+   * Every URL of the browser context that got a response since `open`. A request the sandbox CSP blocks may still be
+   * reported as a request (Chromium does, with the failure `csp`), but it never gets a response.
+   */
+  answered: string[]
+  /** Unique to the test: the attacks' URLs contain it. */
+  token: string
+  /** The attacks' targets: the host's origin (the dev server's sink) and another origin. */
+  targets: string[]
+}
+
+/** Opens the engine page on a clip with `filter`, without the page's own CSP, and records the requests. */
+async function open(page: Page, filter: string, events: string[] = []): Promise<Watch> {
+  const token = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+  const watch: Watch = { answered: [], token, targets: [] }
+  page.context().on('requestfinished', (r) => watch.answered.push(r.url()))
+  // Another origin: answered 200 to any origin, so that a request that gets out would also succeed.
+  await page.context().route(/^https?:\/\/evil\.invalid\//, (route) =>
+    route.fulfill({ status: 200, headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'text/javascript' }, body: 'export default 1\n' }),
+  )
+  await page.route((url) => url.pathname === '/engine.html', async (route) => {
+    const response = await route.fetch()
+    const headers = Object.fromEntries(Object.entries(response.headers()).filter(([name]) => name.toLowerCase() !== 'content-security-policy'))
+    const body = (await response.text()).replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '')
+    expect(body).not.toContain('Content-Security-Policy')
+    await route.fulfill({ response, headers, body })
+  })
+  await page.goto(`/engine.html?source=pesquet-talk&autostart&filter=${filter}`)
+  await page.waitForFunction(() => ((window.ouaf?.frames ?? 0) > 0 && (window.ouaf?.engine.filters.length ?? 0) > 0) || (window.ouaf?.errors.length ?? 0) > 0, undefined, {
+    timeout: 60_000,
+  })
+  const origin = new URL(page.url()).origin
+  watch.targets = [`${origin}/__evil__/${token}/same-origin`, `https://evil.invalid/__evil__/${token}/other-origin`]
+  await page.evaluate((events) => {
+    window.received = []
+    const handle = window.ouaf!.engine.filters[0]!
+    for (const name of events) handle.on(`filter:${name}`, (data) => window.received!.push([name, data]))
+  }, events)
+  return watch
+}
+
+const send = (page: Page, name: string, data?: unknown) =>
+  page.evaluate(([name, data]) => window.ouaf!.engine.filters[0]!.send(name as string, data), [name, data] as const)
+
+const received = (page: Page, name: string) => page.evaluate((name) => window.received!.filter(([n]) => n === name).map(([, d]) => d), name)
+
+const errors = (page: Page) => page.evaluate(() => window.ouaf!.errors)
+
+const frames = (page: Page) => page.evaluate(() => window.ouaf!.frames)
+
+/** Nothing got out: no request with the test's token got an answer, and the dev server's sink saw none. */
+async function expectNoLeak(watch: Watch, request: APIRequestContext): Promise<void> {
+  expect(watch.answered.filter((u) => u.includes(watch.token) || u.includes('evil.invalid'))).toEqual([])
+  const hits = await (await request.get(`/__evil-sink__?token=${watch.token}`)).json()
+  expect(hits).toEqual([])
+}
+
+/** The report of an attack: every attempt must say 'blocked'. */
+async function report(page: Page): Promise<Record<string, string>> {
+  await expect.poll(() => received(page, 'report'), { ...POLL, timeout: 90_000 }).toHaveLength(1)
+  const [result] = (await received(page, 'report')) as Array<Record<string, string>>
+  return result!
+}
+
+const opened = (result: Record<string, string>) => Object.entries(result).filter(([, v]) => v !== 'blocked')
+
+test.describe('the script sandbox', () => {
+  test('evil-network: no network API of the Worker sends anything out', async ({ page, request }) => {
+    test.slow()
+    const watch = await open(page, '/filters/evil/network/', ['report'])
+    const before = await page.evaluate(() => window.ouaf!.frames)
+    await send(page, 'attack', { targets: watch.targets })
+    const result = await report(page)
+    expect(opened(result)).toEqual([])
+    expect(Object.keys(result).length).toBeGreaterThanOrEqual(40)
+    await expectNoLeak(watch, request)
+    // Attacks are the script's business: the page kept rendering meanwhile, without an error.
+    await expect.poll(() => frames(page), POLL).toBeGreaterThan(before + 30)
+    expect(await errors(page)).toEqual([])
+  })
+
+  test('evil-globals: the removed globals stay removed, and the host page is out of reach', async ({ page, request }) => {
+    const watch = await open(page, '/filters/evil/globals/', ['report'])
+    await send(page, 'attack', { target: watch.targets[0] })
+    const result = await report(page)
+    expect(opened(result)).toEqual([])
+    expect(Object.keys(result).length).toBeGreaterThanOrEqual(18)
+    await expectNoLeak(watch, request)
+    expect(await errors(page)).toEqual([])
+  })
+
+  test('evil-forge: forged answers on the runtime port are checked, and change nothing in the page', async ({ page, request }) => {
+    const watch = await open(page, '/filters/evil/forge/', ['stolen', 'spam'])
+    const pageErrors: string[] = []
+    page.on('pageerror', (e) => pageErrors.push(e.message))
+    const start = Date.now()
+    await send(page, 'tamper')
+    await send(page, 'flood')
+    const before = await frames(page)
+    await expect.poll(() => frames(page), POLL).toBeGreaterThan(before + 60)
+    const state = await page.evaluate(() => ({
+      polluted: (({}) as Record<string, unknown>).polluted ?? (Object.prototype as unknown as Record<string, unknown>).polluted ?? null,
+      warnings: window.ouaf!.warnings.length,
+      longest: Math.max(0, ...window.ouaf!.warnings.map((w) => w.length)),
+    }))
+    // No prototype pollution, no oversized emit delivered, at most 60 emits a second, and a bounded number of short
+    // warnings. Nothing stopped the script: it only sent what the host ignores.
+    expect(state.polluted).toBeNull()
+    expect(await received(page, 'stolen')).toEqual([])
+    expect((await received(page, 'spam')).length).toBeLessThanOrEqual(60 * Math.ceil((Date.now() - start) / 1000 + 1))
+    expect(await errors(page)).toEqual([])
+    expect(state.warnings).toBeLessThan(100)
+    expect(state.longest).toBeLessThan(2000)
+    expect(pageErrors).toEqual([])
+
+    // Swallowing the frames: the watchdog stops the script, and rendering goes on.
+    await send(page, 'swallow')
+    await expect.poll(() => errors(page), POLL).toEqual([expect.stringMatching(/script was stopped/)])
+    const stopped = await frames(page)
+    await expect.poll(() => frames(page), POLL).toBeGreaterThan(stopped + 30)
+    await expectNoLeak(watch, request)
+  })
+})
+
+/** The script was stopped by the watchdog, and the page goes on rendering with the filter's layers. */
+async function expectStoppedAndRendering(page: Page): Promise<void> {
+  await expect.poll(() => errors(page), POLL).toEqual([expect.stringMatching(/script was stopped/)])
+  const stopped = await frames(page)
+  await expect.poll(() => frames(page), POLL).toBeGreaterThan(stopped + 30)
+  expect(await page.evaluate(() => window.ouaf!.engine.filters.length)).toBe(1)
+}
+
+test.describe('denial of service', () => {
+  test('evil-loop-setup: a setup that never returns is stopped after 1 s', async ({ page }) => {
+    await open(page, '/filters/evil/loop-setup/')
+    await expectStoppedAndRendering(page)
+  })
+
+  for (const mode of ['sync', 'microtasks']) {
+    test(`evil-loop (${mode}): a script that never answers again is stopped, rendering goes on`, async ({ page }) => {
+      await open(page, '/filters/evil/loop/')
+      await send(page, mode)
+      await expectStoppedAndRendering(page)
+    })
+  }
+
+  for (const mode of ['heap', 'buffers']) {
+    test(`evil-memory (${mode}): a script that exhausts its memory is stopped, the page survives`, async ({ page }) => {
+      test.slow()
+      let crashed = false
+      page.on('crash', () => (crashed = true))
+      await open(page, '/filters/evil/memory/')
+      await send(page, mode)
+      await expectStoppedAndRendering(page)
+      expect(crashed).toBe(false)
+    })
+  }
+
+  test('evil-memory (emit): oversized messages to the host are dropped', async ({ page }) => {
+    await open(page, '/filters/evil/memory/', ['bomb', 'done'])
+    await send(page, 'emit')
+    await expect.poll(() => received(page, 'done'), POLL).toHaveLength(1)
+    expect(await received(page, 'bomb')).toEqual([])
+    expect(await page.evaluate(() => window.ouaf!.warnings.join('\n'))).toMatch(/larger than 64 KB; dropped/)
+    expect(await errors(page)).toEqual([])
+  })
+})
+
+test.describe('the GPU', () => {
+  test('evil-heavy-shader: a shader that keeps the GPU busy for seconds is disabled, rendering resumes', async ({ page }) => {
+    test.slow()
+    await page.goto('/engine.html?source=pesquet-talk&autostart')
+    await page.waitForFunction(() => (window.ouaf?.frames ?? 0) > 0, undefined, { timeout: 60_000 })
+    // A loop that takes seconds a frame, whatever the GPU: from a few thousand rounds a pixel (seconds on a software
+    // renderer, as in CI), four times more every few seconds until the engine disables the filter. The filter's
+    // default (a million) would hold a software renderer for minutes, during which no page script runs.
+    await page.evaluate(() => window.ouaf!.engine.addFilter('/filters/evil/heavy-shader/', { iterations: 3000 }))
+    const disabled = /"evil-heavy-shader" was disabled: (its shader kept the GPU busy|the GPU context was lost)/
+    for (let iterations = 3000; ; iterations *= 4) {
+      const done = await expect
+        .poll(() => errors(page), { timeout: 20_000, intervals: [1000] })
+        .toEqual([expect.stringMatching(disabled)])
+        .then(() => true, () => false)
+      if (done) break
+      // Disabled by the engine's GPU watchdog, or after the browser reset the GPU (context loss): either way reported.
+      expect(iterations, 'the filter was never disabled').toBeLessThan(1_000_000)
+      await page.evaluate((n) => window.ouaf!.engine.filters[0]!.setParam('iterations', n), Math.min(iterations * 4, 1_000_000))
+    }
+    expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.enabled)).toBe(false)
+    // The page renders at its pace again.
+    const before = await frames(page)
+    await expect.poll(() => frames(page), POLL).toBeGreaterThan(before + 30)
+  })
+})
+
+test.describe('packages', () => {
+  const bombs = zipBombs()
+
+  test('zip bombs and unsafe archives are refused with a typed error, and nothing is loaded', async ({ page }) => {
+    test.slow()
+    let crashed = false
+    page.on('crash', () => (crashed = true))
+    await page.route((url) => url.pathname.startsWith('/__bombs__/'), (route) => {
+      const name = new URL(route.request().url()).pathname.slice('/__bombs__/'.length).replace(/\.ouaf$/, '')
+      return route.fulfill({ status: 200, contentType: 'application/zip', body: Buffer.from(bombs[name]!.bytes) })
+    })
+    await page.goto('/engine.html')
+    await page.waitForFunction(() => !!window.ouaf)
+    const results = await page.evaluate(async (names) => {
+      const { engine } = window.ouaf!
+      const out: Record<string, { name?: string; reason?: string; cause?: { name?: string; reason?: string } } | 'loaded'> = {}
+      for (const name of names) {
+        out[name] = await engine.addFilter(`/__bombs__/${name}.ouaf`).then(
+          () => 'loaded' as const,
+          (e: Error & { reason?: string; cause?: Error & { reason?: string } }) => ({ name: e.name, reason: e.reason, cause: e.cause && { name: e.cause.name, reason: e.cause.reason } }),
+        )
+      }
+      return { out, filters: engine.filters.length }
+    }, Object.keys(bombs))
+    for (const [name, bomb] of Object.entries(bombs)) {
+      const r = results.out[name]
+      // The package error itself, or the cause of the asset error of the file that could not be read.
+      const error = r !== 'loaded' && r?.name === 'AssetError' ? r.cause : r
+      expect({ name, error }).toEqual({ name, error: expect.objectContaining({ name: 'PackageError', reason: bomb.reason }) })
+    }
+    expect(results.filters).toBe(0)
+    expect(crashed).toBe(false)
+  })
+})

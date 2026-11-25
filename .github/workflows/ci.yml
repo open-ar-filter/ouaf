@@ -122,3 +122,46 @@ jobs:
           path: test-results/
           retention-days: 7
 
+
+  security:
+    name: Malicious filters (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    # The suite of SECURITY.md (#27): every filter of filters/evil/ must fail, on each browser engine.
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache the face model
+        uses: actions/cache@v6
+        with:
+          path: apps/playground/models
+          key: models-${{ hashFiles('apps/playground/scripts/fetch-models.ts') }}
+
+      - name: Download the face model
+        run: npm run fetch-models
+
+      - name: Install ${{ matrix.browser }}
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Malicious filters
+        # Under a virtual display: headless Firefox has no WebGL on Linux, so it runs headed (playwright.config.ts).
+        run: xvfb-run -a npm run test:security -- --project=${{ matrix.browser }}
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-results-security-${{ matrix.browser }}
+          path: test-results/
+          retention-days: 7

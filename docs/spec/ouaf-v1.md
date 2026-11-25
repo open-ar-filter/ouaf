@@ -530,6 +530,12 @@ vec4 effect(vec2 uv) {
 - Reserved for later versions: `ouaf_personMask` (segmentation, phase 2), `ouaf_audioLevel` (audio, phase 3).
 - A validator SHOULD compile the shader and report errors with their line numbers, counted in the author's file.
 - An engine MUST handle GPU context loss and disable a filter whose shader causes it.
+- A draw call cannot be interrupted: a shader that runs for seconds stalls the whole page (on some systems the
+  browser's compositor too) until the GPU finishes or the browser resets it. An engine SHOULD disable a filter whose
+  shader keeps the GPU busy for more than **3 s** a frame on two frames in a row, or on one frame that has not finished
+  after 6 s, and report it as for a context loss. Informative: the reference engine measures each frame that draws
+  an author shader with a fence (`fenceSync`) polled on a timer, does not count frames while the page is hidden, and
+  emits an `error` event with the code `gpu-stalled`.
 - For a future WebGPU renderer, GLSL → WGSL translation happens at packaging time; authors only write GLSL.
 
 ## 12. Scripts
@@ -756,7 +762,9 @@ The sandbox runs the script off the rendering thread: a slow script makes its ow
 
 1. **No data leaves.** Filter code MUST NOT have any network access. An engine MUST run it in an isolated context,
    without access to the host's DOM, cookies or storage, with the network blocked. The reference implementation
-   uses a `sandbox` iframe (opaque origin), a `connect-src 'none'` CSP and a Worker.
+   uses a `sandbox` iframe (opaque origin), a `connect-src 'none'` CSP and a Worker. The script shares that context
+   with the engine's runtime, so it can rewrite the runtime's messages: an engine MUST check every message that comes
+   out of it (commands, events, warnings, images), and bound what it accepts.
 2. **Minimization.** A script only receives the data declared in `uses`. A filter without a script sends no data
    to untrusted code.
 3. **No identification.** An engine MUST NOT recognize or re-identify a person. Face ids are ephemeral.
@@ -769,7 +777,8 @@ The sandbox runs the script off the rendering thread: a slow script makes its ow
    decompression is bounded by the declared sizes and the size limit, so an archive cannot write outside the package
    or inflate without bound (zip bomb).
 5. **Denial of service.** The script never blocks rendering, at most one frame is in flight to it, a script that
-   does not answer within 1 s is stopped (12.7), and GPU context loss is handled (11).
+   does not answer within 1 s is stopped (12.7), GPU context loss is handled and a shader that stalls the GPU is
+   disabled (11).
 6. **Deceptive UI.** `overlay` layers are drawn into the canvas: a filter cannot create input fields.
 7. **Expressions, not emotions.** Events describe expressions (smile, open mouth). Emotion inference is reserved for an
    explicit plugin; hosts in education or workplace settings MUST disable it (EU AI Act).

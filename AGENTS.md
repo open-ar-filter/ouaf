@@ -22,6 +22,7 @@ npm workspaces monorepo, TypeScript only, Node >= 24.
 | `docs/spec/` | Format specification `ouaf-v1.md` and the generated `ouaf-v1.schema.json` |
 | `docs/decisions/`, `docs/perf/` | Design decisions and spike reports, perf export format |
 | `docs/privacy.md` | What leaves the device |
+| `filters/` | Demo filters, test fixtures, and the malicious filters of `filters/evil/` ([`SECURITY.md`](SECURITY.md)) |
 
 Packages export their TypeScript sources directly (`exports: ./src/index.ts`); there is no package build step.
 
@@ -36,6 +37,7 @@ npm run build          # playground production build
 npm run build:schema   # regenerate the JSON Schema; commit docs/spec/ and packages/spec/schema/ changes
 npm run fetch-models   # face model into apps/playground/models/ (gitignored); needed by the browser tests
 npm run test:browser   # Playwright (starts `npm run dev` itself); first run: npx playwright install chromium
+npm run test:security  # malicious filters (filters/evil/) on Chromium, Firefox, WebKit; Linux: xvfb-run -a …
 npm run dev            # playground on https://localhost:5173 (self-signed); /?source=<clip> plays a test clip
 npx ouaf validate <folder|file.ouaf> [--json]   # check a filter; exit 0 valid, 1 invalid, 2 usage error
 npx ouaf pack <folder> [-o out.ouaf]   # filter.ts/filter.js + assets/ → .ouaf (spec §3.1); same exit codes
@@ -59,6 +61,8 @@ below 80 % coverage: add tests, never exclude a module that runs in Node); `npm 
 - Style: match the surrounding code (2 spaces, single quotes, no semicolons, ~120 columns). No formatter.
 - No runtime network calls or CDN loads from the engine or playground (privacy, see `docs/privacy.md`).
 - Do not add new dependencies without a reason stated in the PR.
+- A change to the script sandbox, the package reader or the shader layer keeps `npm run test:security` green; a new
+  attack the engine resists gets a filter in `filters/evil/`.
 
 ## Test media
 

@@ -41,7 +41,8 @@ import { Compositor, type StagePasses } from './compositor.ts'
 import { Emitter } from './emitter.ts'
 import { messagePayload } from './messages.ts'
 import { Outputs, type OutputStreamOptions, type RecordOptions, type Recording, type SnapshotOptions } from './outputs.ts'
-import { GpuContextLostError, IncompatibleSourceError, OuafError, disposedError } from './errors.ts'
+import { GpuContextLostError, GpuStalledError, IncompatibleSourceError, OuafError, disposedError } from './errors.ts'
+import { GpuWatchdog, type GpuFences } from './gpu-watchdog.ts'
 import { FilterInstance, bindingParams, createHandle, loadFilter, scriptSeed, type FilterHandle, type FilterLoadEnv } from './filter.ts'
 import type { FrameContext, LayerContext, LayerInstance, LayerTypeImpl, ObjectLayer, PassLayer } from './layer-type.ts'
 import { FaceBindingData } from '../bindings/index.ts'
@@ -361,6 +362,10 @@ export class Engine {
   #warmupUntil = Number.NaN
   #disposed = false
   #contextLost = false
+  /** Blames the filters whose shaders keep the GPU busy for seconds (spec §11, §15.5). */
+  #gpuWatchdog!: GpuWatchdog<FilterInstance>
+  /** Filters whose author shaders draw in the frame being rendered. */
+  readonly #authorDraws: FilterInstance[] = []
   #onContextLost = (event: Event) => this.#contextLostHandler(event)
   #onContextRestored = () => this.#contextRestoredHandler()
 
@@ -374,6 +379,10 @@ export class Engine {
     this.registry = createRegistry()
     this.#compositor = new Compositor({ canvas: options.canvas, fit: options.fit, scale: options.scale, width: options.width, height: options.height })
     this.#compositor.capture = this.#outputs
+    this.#gpuWatchdog = new GpuWatchdog<FilterInstance>({
+      gl: this.#compositor.renderer.getContext() as unknown as GpuFences,
+      stalled: (filters, ms) => this.#gpuStalled(filters, ms),
+    })
     this.#anchors = new FaceAnchors(createFaceFrame(1), this.#compositor.camera)
     this.#identity = new FaceIdentityTracker({ maxFaces })
     this.#smoother = new FaceSmoother(this.#identity)
@@ -721,6 +730,7 @@ export class Engine {
   dispose(): void {
     if (this.#disposed) return
     this.#disposed = true
+    this.#gpuWatchdog.reset()
     this.#stopFeed()
     for (const f of this.#stack) this.#disposeFilter(f)
     this.#stack = []
@@ -1064,6 +1074,7 @@ export class Engine {
     if (this.#contextLost) return
     this.#markAuthorShaders(start)
     compositor.render(this.#passes as StagePasses)
+    this.#gpuWatchdog.submitted(this.#authorDraws)
     // Then the frame goes to the scripts that are not busy with a previous one (spec §12.7).
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
@@ -1112,6 +1123,7 @@ export class Engine {
 
   /** Records which filters draw author shader code this frame (context loss suspects, spec §11). */
   #markAuthorShaders(now: number): void {
+    this.#authorDraws.length = 0
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!
       if (!filter.authorShader || !filter.active) continue
@@ -1120,6 +1132,7 @@ export class Engine {
         const instance = layers[l]!.instance
         if (instance.authorShader && instance.kind === 'pass' && instance.active) {
           filter.lastAuthorDraw = now
+          this.#authorDraws.push(filter)
           break
         }
       }
@@ -1135,6 +1148,7 @@ export class Engine {
     event.preventDefault() // allows the browser to restore the context
     if (this.#contextLost || this.#disposed) return
     this.#contextLost = true
+    this.#gpuWatchdog.reset()
     const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
     const since = performance.now() - CONTEXT_LOSS_WINDOW_MS
     const suspects = hidden ? [] : this.#stack.filter((f) => f.active && f.authorShader && f.lastAuthorDraw >= since)
@@ -1147,6 +1161,20 @@ export class Engine {
       `The GPU context was lost${suspects.length ? `; disabled ${suspects.map((f) => `"${f.manifest.id}"`).join(', ')}, whose shader was drawing` : ''}. Rendering resumes when the browser restores the context.`,
     )
     for (const f of suspects) this.#error(new GpuContextLostError(f.manifest.id))
+  }
+
+  /**
+   * The GPU watchdog's verdict (spec §11, §15.5): `filters` drew author shaders in frames that each kept the GPU busy
+   * for more than `GPU_STALL_MS`. They are disabled, as after a context loss, and reported (`error`: `GpuStalledError`).
+   */
+  #gpuStalled(filters: readonly FilterInstance[], ms: number): void {
+    if (this.#disposed) return
+    const suspects = filters.filter((f) => f.enabled && this.#stack.includes(f))
+    if (suspects.length === 0) return
+    for (const f of suspects) f.enabled = false
+    this.#stackChanged()
+    void this.#updateTracking()
+    for (const f of suspects) this.#error(new GpuStalledError(f.manifest.id, ms))
   }
 
   #contextRestoredHandler(): void {

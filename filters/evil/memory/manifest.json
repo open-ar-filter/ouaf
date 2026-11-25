@@ -1,0 +1,17 @@
+{
+  "ouaf": "1",
+  "id": "evil-memory",
+  "name": "Evil: memory bomb (malicious filter)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Malicious filter (#27): allocates without bound (heap objects, array buffers) or sends oversized messages. The page must survive and keep rendering.",
+  "requires": {},
+  "layers": [
+    { "id": "grade", "type": "color", "saturation": 0 }
+  ],
+  "script": {
+    "entry": "script.js",
+    "update": true,
+    "on": ["message:heap", "message:buffers", "message:emit"]
+  }
+}
