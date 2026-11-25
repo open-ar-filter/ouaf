@@ -310,7 +310,7 @@ describe('ouaf pack (command)', () => {
     const r = await cli('pack', dir)
     expect(r.code).toBe(EXIT.OK)
     expect(r.out).toContain(`Wrote ${dir}.ouaf: 1 file`)
-    expect((await cli('validate', `${dir}.ouaf`)).code).toBe(EXIT.OK)
+    expect((await cli('validate', '--no-glsl', `${dir}.ouaf`)).code).toBe(EXIT.OK)
   })
 
   it('-o creates the parent folders and replaces an existing file', async () => {

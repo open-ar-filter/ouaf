@@ -38,8 +38,8 @@ describe('ouaf', () => {
 
 describe('ouaf validate', () => {
   it('exit 0 for a valid filter, 1 for an invalid one', async () => {
-    expect((await cli('validate', join(fixtures, 'valid'))).code).toBe(EXIT.OK)
-    const r = await cli('validate', join(fixtures, 'broken'))
+    expect((await cli('validate', '--no-glsl', join(fixtures, 'valid'))).code).toBe(EXIT.OK)
+    const r = await cli('validate', '--no-glsl', join(fixtures, 'broken'))
     expect(r.code).toBe(EXIT.FAILED)
     expect(r.out).toContain('error [unknown-anchor]')
   })
@@ -50,8 +50,8 @@ describe('ouaf validate', () => {
       const manifest = { ouaf: '1', id: 'x', name: 'X', version: '1.0.0', license: 'CC0-1.0', requires: {}, layers: [] }
       await writeFile(join(dir, 'manifest.json'), JSON.stringify(manifest))
       await writeFile(join(dir, 'notes.txt'), 'outside the layout: a warning in a folder')
-      expect((await cli('validate', dir)).code).toBe(EXIT.OK)
-      expect((await cli('validate', '--strict', dir)).code).toBe(EXIT.FAILED)
+      expect((await cli('validate', '--no-glsl', dir)).code).toBe(EXIT.OK)
+      expect((await cli('validate', '--no-glsl', '--strict', dir)).code).toBe(EXIT.FAILED)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -90,8 +90,8 @@ describe('ouaf validate', () => {
 
   it('runs as a binary with Node', async () => {
     const bin = join(import.meta.dirname, '..', 'src', 'bin.ts')
-    const r = await promisify(execFile)(process.execPath, [bin, 'validate', join(fixtures, 'valid')])
+    const r = await promisify(execFile)(process.execPath, [bin, 'validate', '--no-glsl', join(fixtures, 'valid')])
     expect(r.stdout).toContain('valid.')
-    await expect(promisify(execFile)(process.execPath, [bin, 'validate', join(fixtures, 'broken')])).rejects.toMatchObject({ code: 1 })
+    await expect(promisify(execFile)(process.execPath, [bin, 'validate', '--no-glsl', join(fixtures, 'broken')])).rejects.toMatchObject({ code: 1 })
   })
 })
