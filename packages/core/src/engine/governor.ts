@@ -13,7 +13,11 @@
  *   main thread, so the rate while hidden is not that rate: the prediction is the rate measured just before hiding,
  *   scaled by how much faster tracking got after the first `hiddenBaselineMs` (6 s) hidden. Without such a gain, only
  *   the slow probes (below) show them again. The delays double each time the filters are hidden again soon after
- *   being shown.
+ *   being shown. A tracker that runs off the main thread (a worker, `GovernorMeasures.offMainThread`) gains nothing
+ *   from the hide, so the rate measured while hidden is the prediction itself, from the first settled rate on (a short
+ *   dip is over in seconds), capped by what the main thread could handle while they were drawn (`frameMs`: its
+ *   results are handled there between frames); unless the filters were hidden again soon after their last show, which
+ *   shows that drawing them does slow it: then as above.
  * - **Restore**: the last capability dropped comes back first, once the rate predicted with it (what dropping it
  *   gained, as a share of the pipeline time per result, added back to the current period) stays above
  *   `restoreAboveHz` (17 Hz) for `restoreAfterMs` (5 s); the delay doubles for a capability dropped
@@ -102,6 +106,17 @@ export interface GovernorMeasures {
    */
   recoveryHz?: number
   recoveryPipelineMs?: number
+  /**
+   * The tracker's work runs off the main thread (a worker, `FrameTracker.offMainThread`): hiding the filters, which
+   * frees the main thread, does not make it faster, so the rate while hidden predicts the rate once shown. Default false.
+   */
+  offMainThread?: boolean
+  /**
+   * Mean time of the engine's own work per rendered frame on the main thread (ms, `EngineStats.frameMs`), recorded
+   * with each hide: with a tracker off the main thread, the rate with the filters shown is at most about
+   * `1000 / frameMs`, since its results are handled there between frames. Default: no such cap.
+   */
+  frameMs?: number
 }
 
 export type GovernorChange =
@@ -149,6 +164,8 @@ export class DeviceGovernor {
   #hiddenPipeline = Number.NaN
   /** Faces tracked when the filters were hidden. */
   #facesAtHide = 0
+  /** Highest rate the main thread could handle with the filters drawn, when they were hidden (`frameMs`). */
+  #ceilingBeforeHide = Infinity
   #caps: Record<Capability, CapabilityState>
 
   constructor(tuning: Partial<GovernorTuning> = {}) {
@@ -190,6 +207,7 @@ export class DeviceGovernor {
     this.#rateBeforeHide = Number.NaN
     this.#hiddenAt = Number.NaN
     this.#facesAtHide = 0
+    this.#ceilingBeforeHide = Infinity
     for (const c of CAPABILITIES) Object.assign(this.#caps[c], { rateBefore: NaN, pipelineBefore: NaN, ratio: NaN, ofPipeline: false, backoff: 1, restoredAt: -Infinity, goodSince: NaN, facesAtDrop: 0 })
     this.#changed(now)
   }
@@ -245,6 +263,10 @@ export class DeviceGovernor {
       // about the rate once shown. First learn what hiding gained (the hidden rate and pipeline time over
       // `hiddenBaselineMs`); then the rate predicted with the filters shown is the rate before hiding, scaled by how
       // much faster tracking got since (rate or pipeline time). Otherwise only slow probes try again.
+      // A tracker off the main thread gains nothing from the hide: the hidden rate is the prediction, at once (a dip
+      // that ends during the baseline would otherwise leave a gain of 1 on a rate below the floor, #180). Not after a
+      // quick re-hide (backoff > 1): drawing the filters did slow it, then as a main-thread tracker.
+      const direct = measures.offMainThread === true && this.#showBackoff === 1
       if (now - this.#hiddenAt < t.hiddenBaselineMs || this.#hiddenRate === 0) {
         this.#hiddenRate = Math.max(this.#hiddenRate, recoveryHz)
         if (recoveryPipelineMs > 0) this.#hiddenPipeline = recoveryPipelineMs
@@ -253,7 +275,7 @@ export class DeviceGovernor {
       const gain = learnt
         ? Math.max(recoveryHz / this.#hiddenRate, this.#hiddenPipeline > 0 && recoveryPipelineMs > 0 ? this.#hiddenPipeline / recoveryPipelineMs : 0)
         : 0
-      const shown = this.#rateBeforeHide * gain
+      const shown = direct ? Math.min(recoveryHz, this.#ceilingBeforeHide) : this.#rateBeforeHide * gain
       const wait =
         shown > t.resumeHz
           ? Math.min(t.maxDelayMs, t.showAfterMs * this.#showBackoff)
@@ -296,6 +318,8 @@ export class DeviceGovernor {
         this.#hiddenRate = 0
         this.#hiddenPipeline = Number.NaN
         this.#facesAtHide = Math.min(faces, 1e6)
+        const frameMs = measures.frameMs ?? Number.NaN
+        this.#ceilingBeforeHide = frameMs > 0 ? 1000 / frameMs : Infinity
         this.#changed(now)
         return { kind: 'hide' }
       }

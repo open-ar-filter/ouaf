@@ -105,6 +105,7 @@ describe('LiteRtFrameTracker (page side of the worker)', () => {
     const { tracker, worker, warnings } = await open()
     expect(tracker.description).toBe('LiteRT.js wasm in a worker, WebGL2 crops, VideoFrame')
     expect(tracker.eager).toBe(true)
+    expect(tracker.offMainThread).toBe(true)
     const video = { videoWidth: 720, videoHeight: 1280 } as HTMLVideoElement
     const out = createFaceFrame(1)
     const done = tracker.track(video, 1, 0.5, out)

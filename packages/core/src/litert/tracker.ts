@@ -246,6 +246,11 @@ export class LiteRtFrameTracker implements FrameTracker {
     return true
   }
 
+  /** The models run in the worker; only the crops are made on the page. */
+  get offMainThread(): boolean {
+    return true
+  }
+
   /**
    * Blendshapes and the extra faces make it faster when dropped (a model run per face each); the analysis resolution
    * does not: the crops are taken from the full frame whatever its resolution.

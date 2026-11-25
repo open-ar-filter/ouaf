@@ -13,7 +13,7 @@ const ALL = new Set<Capability>(CAPABILITIES)
 function run(
   device: Device,
   seconds: number,
-  options: { droppable?: (t: number) => ReadonlySet<Capability>; pipeline?: Device; faces?: (t: number) => number } = {},
+  options: { droppable?: (t: number) => ReadonlySet<Capability>; pipeline?: Device; faces?: (t: number) => number; offMainThread?: boolean; frameMs?: Device } = {},
 ) {
   const g = new DeviceGovernor()
   const changes: Array<{ t: number; change: GovernorChange }> = []
@@ -22,11 +22,14 @@ function run(
     const rate = device(g.dropped, g.hidden, t)
     const pipelineMs = options.pipeline?.(g.dropped, g.hidden, t)
     const faces = options.faces?.(t)
+    const frameMs = options.frameMs?.(g.dropped, g.hidden, t)
     // As the engine: showing and restoring see only the results with the faces of the decision (none: no data).
     const recovery = faces === undefined || faces >= g.referenceFaces ? rate : Number.NaN
     const change = g.update(ms, rate, options.droppable?.(t) ?? ALL, {
       ...(pipelineMs === undefined ? {} : { pipelineMs }),
       ...(faces === undefined ? {} : { faces }),
+      ...(options.offMainThread === undefined ? {} : { offMainThread: options.offMainThread }),
+      ...(frameMs === undefined ? {} : { frameMs }),
       recoveryHz: recovery,
       ...(pipelineMs === undefined ? {} : { recoveryPipelineMs: Number.isNaN(recovery) ? Number.NaN : pipelineMs }),
     })
@@ -190,6 +193,59 @@ describe('DeviceGovernor', () => {
     expect(kinds.slice(0, 5)).toEqual(['drop blendshapes', 'drop extraFaces', 'drop resolution', 'hide', 'show'])
     expect(changes[4]!.t).toBeLessThan(23)
     expect(kinds.at(-1)).toBe('restore blendshapes') // then everything comes back
+  })
+
+  it('worker tracker: shows the filters again within seconds after a short dip, even one ending during the baseline', () => {
+    // #180. Tracking in a worker: hiding the filters frees the main thread, not the tracker (same rate hidden or shown).
+    // 19 Hz, a dip to 8 Hz from 10 s to 16 s (hidden at 14 s), 19 Hz again: back within the first 6 s hidden.
+    const device: Device = (_, __, t) => (t >= 10 && t < 16 ? 8 : 19)
+    const { kinds, changes } = run(device, 120, { offMainThread: true })
+    expect(kinds.slice(0, 5)).toEqual(['drop blendshapes', 'drop extraFaces', 'drop resolution', 'hide', 'show'])
+    const t = (kind: string) => changes[kinds.indexOf(kind)]!.t
+    expect(t('hide')).toBeLessThan(16)
+    expect(t('show') - 16).toBeLessThanOrEqual(5)
+    // Then the capabilities come back (19 Hz, each one costing nothing here), and nothing is hidden again.
+    expect(kinds.filter((k) => k === 'hide')).toHaveLength(1)
+    expect(kinds.at(-1)).toBe('restore blendshapes')
+    // A main-thread tracker on the same rates waits for the slow probe: the hidden rate could be what hiding gained.
+    const main = run(device, 120)
+    expect(main.changes[main.kinds.indexOf('show')]!.t).toBeGreaterThanOrEqual(t('hide') + 30)
+  })
+
+  it('worker tracker: a filter that keeps the main thread busy is not shown again before the slow probe', () => {
+    // The tracker runs in a worker, but its results are handled on the main thread, which the filter blocks 85 ms per
+    // frame (the `busy` fixture): 11 Hz shown, 20 Hz hidden. The cap (1000 / 85 ≈ 12 Hz) says showing would not hold.
+    const device: Device = (_, hidden) => (hidden ? 20 : 11)
+    const frameMs: Device = (_, hidden) => (hidden ? 1 : 85)
+    const { kinds, changes } = run(device, 120, { offMainThread: true, frameMs, droppable: () => new Set<Capability>(['blendshapes', 'resolution']) })
+    expect(kinds.slice(0, 3)).toEqual(['drop blendshapes', 'drop resolution', 'hide'])
+    const shows = changes.filter((c) => c.change.kind === 'show').map((c) => c.t)
+    expect(shows[0]!).toBeGreaterThanOrEqual(changes[2]!.t + 30)
+    // A light filter (5 ms per frame) on the same rates: shown again at once (then hidden again, and probes).
+    const light = run(device, 120, { offMainThread: true, frameMs: () => 5, droppable: () => new Set<Capability>(['blendshapes', 'resolution']) })
+    expect(light.changes.find((c) => c.change.kind === 'show')!.t - light.changes[2]!.t).toBeLessThanOrEqual(3)
+  })
+
+  it('worker tracker: no flicker between the floor and the show level', () => {
+    // Hidden at 8 Hz, then 13 Hz hidden or shown: below the 14 Hz show level, the filters stay hidden.
+    const { kinds } = run((_, __, t) => (t < 10 ? 8 : 13), 300, { offMainThread: true })
+    expect(kinds).toEqual(['drop blendshapes', 'drop extraFaces', 'drop resolution', 'hide'])
+    // Hovering around 14 Hz (13.5–14.5) after the hide: shown at most once, never hidden again (the floor is 12 Hz).
+    const hover = run((_, __, t) => (t < 10 ? 8 : 14 + 0.5 * Math.sin(t)), 300, { offMainThread: true })
+    expect(hover.kinds.filter((k) => k === 'show').length).toBeLessThanOrEqual(1)
+    expect(hover.kinds.filter((k) => k === 'hide')).toHaveLength(1)
+  })
+
+  it('worker tracker: if showing the filters does slow tracking, falls back to the prediction and the slow probes', () => {
+    // The tracker runs in a worker but competes with the rendering: 16 Hz hidden, 10 Hz shown. One quick show, hidden
+    // again 4 s later; from then on as a main-thread tracker (shows 30 s, 60 s, 120 s… apart).
+    const { kinds, changes } = run(costs(1000 / 10, {}, 1000 / 10 - 1000 / 16), 600, { offMainThread: true })
+    expect(kinds.slice(0, 6)).toEqual(['drop blendshapes', 'drop extraFaces', 'drop resolution', 'hide', 'show', 'hide'])
+    const shows = changes.filter((c) => c.change.kind === 'show').map((c) => c.t)
+    expect(shows[0]! - changes[3]!.t).toBeLessThanOrEqual(3)
+    expect(shows.length).toBeLessThanOrEqual(5)
+    const gaps = shows.slice(1).map((t, i) => t - shows[i]!)
+    for (let i = 1; i < gaps.length; i++) expect(gaps[i]!).toBeGreaterThanOrEqual(60 * 2 ** (i - 1))
   })
 
   it('backs off restoring a capability that had to be dropped again soon after', () => {
