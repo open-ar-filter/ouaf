@@ -48,10 +48,7 @@ async function open(page: Page, filter: string, events: string[] = []): Promise<
     expect(body).not.toContain('Content-Security-Policy')
     await route.fulfill({ response, headers, body })
   })
-  await page.goto(`/engine.html?source=pesquet-talk&autostart&filter=${filter}`)
-  await page.waitForFunction(() => ((window.ouaf?.frames ?? 0) > 0 && (window.ouaf?.engine.filters.length ?? 0) > 0) || (window.ouaf?.errors.length ?? 0) > 0, undefined, {
-    timeout: 60_000,
-  })
+  await start(page, `/engine.html?source=pesquet-talk&autostart&filter=${filter}`, true)
   const origin = new URL(page.url()).origin
   watch.targets = [`${origin}/__evil__/${token}/same-origin`, `https://evil.invalid/__evil__/${token}/other-origin`]
   await page.evaluate((events) => {
@@ -60,6 +57,25 @@ async function open(page: Page, filter: string, events: string[] = []): Promise<
     for (const name of events) handle.on(`filter:${name}`, (data) => window.received!.push([name, data]))
   }, events)
   return watch
+}
+
+/**
+ * Opens `url` and waits for its first rendered frame (and its filter, with `filter`), or an engine error. The page is
+ * loaded again once if it renders nothing within 30 s: WebKit's playback of the clip sometimes stalls at its first
+ * frame on CI runners, before any filter code has run. Only the start is retried, never an attack.
+ */
+async function start(page: Page, url: string, filter = false): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    await page.goto(url)
+    const started = await page
+      .waitForFunction(
+        (filter) => ((window.ouaf?.frames ?? 0) > 0 && (!filter || (window.ouaf?.engine.filters.length ?? 0) > 0)) || (window.ouaf?.errors.length ?? 0) > 0,
+        filter,
+        { timeout: 30_000 },
+      )
+      .then(() => true, (error: unknown) => (attempt < 2 ? false : Promise.reject(error)))
+    if (started) return
+  }
 }
 
 const send = (page: Page, name: string, data?: unknown) =>
@@ -192,8 +208,7 @@ test.describe('denial of service', () => {
 test.describe('the GPU', () => {
   test('evil-heavy-shader: a shader that keeps the GPU busy for seconds is disabled, rendering resumes', async ({ page }) => {
     test.slow()
-    await page.goto('/engine.html?source=pesquet-talk&autostart')
-    await page.waitForFunction(() => (window.ouaf?.frames ?? 0) > 0, undefined, { timeout: 60_000 })
+    await start(page, '/engine.html?source=pesquet-talk&autostart')
     // A loop that takes seconds a frame, whatever the GPU: from a few thousand rounds a pixel (seconds on a software
     // renderer, as in CI), four times more every few seconds until the engine disables the filter. The filter's
     // default (a million) would hold a software renderer for minutes, during which no page script runs.
