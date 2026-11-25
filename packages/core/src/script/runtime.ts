@@ -31,20 +31,28 @@
  * the Worker, canvas text falls back to the platform's fonts, with one warning.
  *
  * Messages (structured clone over the port):
- * - engine → runtime: `{ t: 'init', code, layers, canvases, params, seed, clock, assets, fonts }`, `{ t: 'frame',
- *   seq, time, dt, aspect, clock, faces, pairs?, params?, events }`.
+ * - engine → runtime: `{ t: 'init', code, layers, canvases, params, seed, clock, assets, fonts, blendshapes? }`,
+ *   `{ t: 'frame', seq, time, dt, aspect, clock, faces, blendshapes?, pairs?, params?, seed?, events }`.
  * - runtime → engine: `{ t: 'started' }` once the runtime has prepared the canvases and fonts and starts the script
- *   (`script.js` and `setup`), `{ t: 'done', seq, commands, emits, warnings, images? }` (`seq` 0 answers `init`),
- *   `{ t: 'fatal', message }` when `script.js` cannot be loaded.
+ *   (`script.js` and `setup`), `{ t: 'done', seq, commands, emits, warnings, images?, idle? }` (`seq` 0 answers
+ *   `init`), `{ t: 'fatal', message }` when `script.js` cannot be loaded, `{ t: 'wake' }` when an idle script needs a
+ *   frame after all (below).
+ *
+ * **Idle scripts** (#129): a script without `update` has nothing to do at a frame that brings no event, no due timer
+ * and no due canvas draw. Its answers then carry `idle`: when its next timer is due (script clock, ms) and when its
+ * next canvas draw is (media time, s). The engine sends it no frame until one of them is due or an event is queued,
+ * which spares the rendering thread the cost of a frame (structured clone, `postMessage`, the answer): what the script
+ * sees does not change, since only `update` and `draw` read `frame`, and `frame.dt` covers the frames not sent. What
+ * a script does between frames (after an `await`: commands, messages, timers, `invalidate()`) goes with the next
+ * answer, as before: an idle script then says `wake`, once, and the engine sends it a frame.
  */
 
-/** A face as sent by the engine; the runtime adds `state`. */
+/** A face as sent by the engine; the runtime adds `state`, and `blendshapes` from `WireFrame.blendshapes`. */
 export interface WireFace {
   id: number
   index: number
   pose?: { yaw: number; pitch: number; roll: number }
   size?: number
-  blendshapes?: Record<string, number>
   anchors?: Record<string, [number, number]>
   landmarks?: Float32Array
 }
@@ -75,6 +83,11 @@ export interface WireInit {
   canvases: WireCanvas[]
   /** Font assets registered in the Worker for the canvases, by asset name (copied). */
   fonts?: WireFont[]
+  /**
+   * Names of the scores of `WireFrame.blendshapes`, in order (`face.blendshapes`, spec §12.4); the first one
+   * (`_neutral`) is not given to the script.
+   */
+  blendshapes?: string[]
 }
 
 /** A font asset for the script's canvases (spec §12.6). */
@@ -108,6 +121,12 @@ export interface WireFrame {
   aspect: number
   clock: number
   faces: WireFace[]
+  /**
+   * The blendshape scores of `faces` (`uses: ["face.blendshapes"]`): `blendshapes.length` (of `WireInit`) per face, in
+   * the order of `faces`. Absent while the engine has dropped them (spec §16.2). One typed array rather than an object
+   * per face: the engine reuses it and the structured clone copies it, so it allocates nothing per frame (#129).
+   */
+  blendshapes?: Float32Array
   pairs?: Array<{ a: number; b: number; distance: number; contact: boolean }>
   /** Present when a parameter changed since the previous frame sent. */
   params?: Record<string, unknown>
@@ -134,6 +153,18 @@ export interface WireDone {
    * `height` of the canvas (transferred).
    */
   images?: Array<[number, Uint8ClampedArray]>
+  /**
+   * Present when the script has nothing to do at a frame without events (no `update`, no canvas to draw at the next
+   * frame): the engine may send no frame until `timer` (script clock, ms: the next `f.after` / `f.every`) or `draw`
+   * (media time, s: the next canvas draw allowed by `fps`) is due, the media time goes back, or an event is queued.
+   */
+  idle?: WireIdle
+}
+
+/** When an idle script needs its next frame (`WireDone.idle`); a missing field never does. */
+export interface WireIdle {
+  timer?: number
+  draw?: number
 }
 
 /** What the runtime needs from its global scope (the Worker's `self`, or a test double). */
@@ -249,6 +280,7 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
   let port: Port | undefined
   let def: Def = {}
   let layerIds: string[] = []
+  let blendshapeNames: string[] = []
   let params: Obj = {}
   let assets: Obj = {}
   let canvases: Canvas[] = []
@@ -263,6 +295,15 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
   const byId = new Map<number, Obj>()
   let timers: Timer[] = []
   const handles = new Map<string, unknown>()
+  /** The last answer said `idle` and no frame came since: what the script does now needs one (`wake`). */
+  let sleeping = false
+
+  /** The script did something between frames that goes with the next answer: an idle script asks for a frame. */
+  function wake(): void {
+    if (!sleeping) return
+    sleeping = false
+    port!.postMessage({ t: 'wake' })
+  }
 
   // sfc32, seeded with the filter seed (spec §12.5).
   let s0 = 0
@@ -291,6 +332,7 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
   }
 
   function warn(message: string): void {
+    wake()
     if (warnings.length < 20) warnings.push(message)
   }
 
@@ -325,21 +367,27 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
       h = Object.freeze({
         set(props: unknown) {
           if (!props || typeof props !== 'object') throw new TypeError('.set(props): props must be an object.')
+          wake()
           commands.push(['set', index, key, props])
         },
         animate(props: unknown, opts: unknown) {
           if (!props || typeof props !== 'object') throw new TypeError('.animate(props, options): props must be an object.')
           const o = (opts ?? {}) as Obj
           if (typeof o.duration !== 'number' || !(o.duration >= 0)) throw new TypeError('.animate(props, options): options.duration (ms) is required.')
+          wake()
           commands.push(['animate', index, key, props, o])
         },
         play(name: unknown) {
           if (typeof name !== 'string') throw new TypeError('.play(name): name must be a string.')
+          wake()
           commands.push(['play', index, key, name])
         },
         invalidate() {
           const c = canvases.find((c) => c.layer === index)
-          if (c) c.invalid = true
+          if (c) {
+            wake()
+            c.invalid = true
+          }
           else warn(`f.layer("${id}").invalidate(): only canvas layers drawn by the script (draw.${id}) are redrawn; ignored.`)
         },
       })
@@ -353,6 +401,7 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
     if (typeof fn !== 'function') throw new TypeError('f.after / f.every: fn must be a function.')
     if (every && ms < 1) throw new TypeError('f.every: ms must be at least 1.')
     const t: Timer = { due: clock * 1000 + ms, every: every ? ms : 0, fn: fn as (f: unknown) => void, cancelled: false }
+    wake()
     timers.push(t)
     return Object.freeze({ cancel: () => void (t.cancelled = true) })
   }
@@ -370,6 +419,7 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
     },
     emit(name: unknown, data?: unknown) {
       if (typeof name !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) throw new TypeError(`f.emit(name): invalid name ${JSON.stringify(name)}.`)
+      wake()
       emits.push([name, data])
     },
     asset(name: unknown) {
@@ -470,10 +520,28 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
     return data
   }
 
+  /** `WireDone.idle`: undefined when the script needs the next frame whatever happens (spec §12.7, #129). */
+  function idle(): WireIdle | undefined {
+    if (typeof def.update === 'function') return undefined
+    const out: WireIdle = {}
+    for (const t of timers) if (!t.cancelled && t.due < (out.timer ?? Infinity)) out.timer = t.due
+    for (const c of canvases) {
+      if (typeof def.draw?.[c.id] !== 'function') continue
+      // Drawn at the next frame: never drawn yet, or invalidated by a draw function.
+      if (c.last < 0 || c.invalid) return undefined
+      // The test of `draw()`, solved for the time.
+      if (c.fps > 0) out.draw = Math.min(out.draw ?? Infinity, c.last + 1 / c.fps - 1e-6)
+    }
+    return out
+  }
+
   function answer(seq: number): void {
     const message: Obj = { t: 'done', seq, commands, emits, warnings }
     const drawn = images
     if (drawn.length > 0) message.images = drawn
+    const next = idle()
+    if (next) message.idle = next
+    sleeping = next !== undefined
     commands = []
     emits = []
     warnings = []
@@ -516,6 +584,7 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
 
   async function init(m: Obj): Promise<void> {
     layerIds = m.layers as string[]
+    blendshapeNames = (m.blendshapes as string[] | undefined) ?? []
     params = Object.freeze({ ...(m.params as Obj) })
     assets = (m.assets as Obj) ?? {}
     canvases = []
@@ -559,12 +628,20 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
   }
 
   function frame(m: Obj): void {
+    sleeping = false
     clock = m.clock as number
     if (m.params) params = Object.freeze({ ...(m.params as Obj) })
     if (typeof m.seed === 'number') seedRandom(m.seed)
     byId.clear()
-    faces = (m.faces as Obj[]).map((w) => {
+    const scores = m.blendshapes as Float32Array | undefined
+    const n = blendshapeNames.length
+    faces = (m.faces as Obj[]).map((w, k) => {
       const face = faceObject(w)
+      if (scores && n > 0 && scores.length >= (k + 1) * n) {
+        const b: Record<string, number> = {}
+        for (let i = 1; i < n; i++) b[blendshapeNames[i]!] = scores[k * n + i]!
+        face.blendshapes = b
+      }
       byId.set(face.id as number, face)
       return face
     })

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { scriptRuntime, workerSource } from '../src/script/runtime.ts'
 import type { WireDone } from '../src/script/runtime.ts'
-import { FakeCanvas, STRAIGHT, ask, fakeImage, fakeScope, frame, init, load, runtime, type TestConnection } from './script-helpers.ts'
+import { FakeCanvas, STRAIGHT, ask, fakeImage, fakeScope, frame, init, load, runtime, tick, type TestConnection } from './script-helpers.ts'
 
 describe('script runtime', () => {
   it('is self-contained, so it can become the Worker source', () => {
@@ -422,5 +422,76 @@ describe('script runtime: start-up', () => {
       'canvas layer "dot" cannot be drawn: Error: OffscreenCanvas is not available in this browser, so canvas layers cannot be drawn.',
       `this browser has no FontFace in workers: canvas text is drawn with the platform's fonts instead of the filter's ("title")`,
     ])
+  })
+})
+
+describe('script runtime: frame data and idle answers (#129)', () => {
+  it('gives face.blendshapes by name from the scores of the frame, without _neutral, and none when they are dropped', async () => {
+    const conn = runtime()
+    const code = `export default { update(f, frame) { f.emit('b', frame.faces.map((face) => face.blendshapes ?? null)) } }`
+    await ask(conn, init(code, { blendshapes: ['_neutral', 'jawOpen', 'mouthSmileLeft'] }))
+    const faces = [{ id: 1, index: 0 }, { id: 2, index: 3 }]
+    const done = await ask(conn, frame(1, { faces, blendshapes: new Float32Array([1, 0.5, 0.25, 1, 0.75, 0]) }))
+    expect(done.emits[0]![1]).toEqual([{ jawOpen: 0.5, mouthSmileLeft: 0.25 }, { jawOpen: 0.75, mouthSmileLeft: 0 }])
+    // Dropped by the engine (spec §16.2), or fewer scores than faces (a rewritten message): none.
+    expect((await ask(conn, frame(2, { faces }))).emits[0]![1]).toEqual([null, null])
+    expect((await ask(conn, frame(3, { faces, blendshapes: new Float32Array(3) }))).emits[0]![1]).toEqual([{ jawOpen: 0, mouthSmileLeft: 0 }, null])
+  })
+
+  it('says a script without update is idle, and when its next timer is due on the script clock (ms)', async () => {
+    expect((await ask(runtime(), init(`export default { update() {} }`))).idle).toBeUndefined()
+    const conn = runtime()
+    const code = `export default {
+      on: { 'message:go'(f) { f.after(500, () => f.emit('done')); f.every(200, () => {}).cancel() } },
+    }`
+    expect((await ask(conn, init(code))).idle).toEqual({})
+    expect((await ask(conn, frame(1, { clock: 2, events: [{ name: 'message:go', payload: {} }] }))).idle).toEqual({ timer: 2500 })
+    const fired = await ask(conn, frame(2, { clock: 2.5 }))
+    expect([fired.emits, fired.idle]).toEqual([[['done', undefined]], {}])
+  })
+
+  it('asks for a frame, once, when an idle script does something after an await; its output goes with the answer', async () => {
+    const conn = runtime()
+    const code = `export default {
+      on: { async 'message:go'(f) { await null; f.emit('late', 1); f.layer('label').set({ text: 'x' }); f.after(1000, () => {}) } },
+    }`
+    await ask(conn, init(code))
+    const got: unknown[] = []
+    const done = await ask(conn, frame(1, { events: [{ name: 'message:go', payload: {} }] }))
+    expect([done.emits, done.idle]).toEqual([[], {}])
+    conn.port.onmessage = (e) => void got.push(e.data)
+    await tick()
+    expect(got).toEqual([{ t: 'wake' }])
+    const next = await ask(conn, frame(2))
+    expect([next.emits, next.commands, next.idle]).toEqual([[['late', 1]], [['set', 0, null, { text: 'x' }]], { timer: 1000 / 30 + 1000 }])
+    // A script with update gets every frame: it never needs to ask.
+    const busy = runtime()
+    await ask(busy, init(`export default { update() {}, on: { async 'message:go'(f) { await null; f.emit('late') } } }`))
+    await ask(busy, frame(1, { events: [{ name: 'message:go', payload: {} }] }))
+    const seen: unknown[] = []
+    busy.port.onmessage = (e) => void seen.push(e.data)
+    await tick()
+    expect(seen).toEqual([])
+  })
+
+  it('says when an idle script draws its canvases next: none before the first draw or after an invalidate()', async () => {
+    const conn = runtime()
+    const code = `export default {
+      on: { 'message:redraw'(f) { f.layer('dot').invalidate() } },
+      draw: { dot(ctx, f, frame) { if (frame.time > 5) f.layer('dot').invalidate() } },
+    }`
+    const canvases = (fps: number) => [{ layer: 2, width: 8, height: 8, fps }]
+    expect((await ask(conn, init(code, { canvases: canvases(10) }))).idle).toBeUndefined() // never drawn
+    expect((await ask(conn, frame(1, { time: 1 }))).idle!.draw).toBeCloseTo(1.1, 5)
+    expect((await ask(conn, frame(2, { time: 1.05 }))).idle!.draw).toBeCloseTo(1.1, 5)
+    // An invalidate() from an event redraws at once; one from a draw function, at the next frame.
+    expect((await ask(conn, frame(3, { time: 1.06, events: [{ name: 'message:redraw', payload: {} }] }))).idle!.draw).toBeCloseTo(1.16, 5)
+    expect((await ask(conn, frame(4, { time: 6 }))).idle).toBeUndefined()
+    // fps 0: only after invalidate().
+    const still = runtime()
+    await ask(still, init(code, { canvases: canvases(0) }))
+    expect((await ask(still, frame(1, { time: 1 }))).idle).toEqual({})
+    // A canvas without a draw function is never drawn.
+    expect((await ask(runtime(), init(`export default {}`, { canvases: canvases(10) }))).idle).toEqual({})
   })
 })

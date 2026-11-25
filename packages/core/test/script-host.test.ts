@@ -8,12 +8,21 @@ import { FrameDataBuilder, type FrameDataSource } from '../src/script/frame-data
 import { MAX_ANSWER_WARNINGS, MAX_QUEUED_EVENTS, MAX_SCRIPT_WARNINGS, MAX_WARNING_LENGTH, STARTUP_MS, ScriptHost, estimateSize, type ScriptConnection, type ScriptHostOptions, type ScriptPort } from '../src/script/host.ts'
 import { ScriptOverrides } from '../src/script/overrides.ts'
 import { ShaderUniforms } from '../src/layers/shader/uniforms.ts'
+import { bytesPerCall } from './allocation.ts'
 import { env, fakeImage, runtime, tick } from './script-helpers.ts'
 
 /** Waits until the host has the script's answer to its last message (or 2 s at most). */
 async function idle(host: ScriptHost): Promise<void> {
   for (let i = 0; i < 200 && host.waiting; i++) await tick()
   if (host.waiting) throw new Error('the script did not answer')
+}
+
+/** Counts the messages the host sends on `conn` from now on. */
+function countSends(conn: { port: ScriptPort }): { n: number } {
+  const count = { n: 0 }
+  const post = conn.port.postMessage.bind(conn.port)
+  conn.port.postMessage = (m, t) => (count.n++, post(m, t))
+  return count
 }
 
 function hostSetup(code: string, options: Partial<ScriptHostOptions> = {}) {
@@ -71,6 +80,74 @@ describe('script host', () => {
     expect(s.opacity()).toBe(0.25)
     expect(s.emits).toEqual([['went', 0.25]])
     expect(s.warnings).toEqual([])
+  })
+
+  it('sends a script without update a frame only for an event, a due timer or a due canvas draw (#129)', async () => {
+    const s = hostSetup(`export default {
+      on: { 'message:go'(f, { data }) { f.after(data, () => f.emit('timer', f.params.size)) } },
+    }`)
+    await s.host.start({ size: 1 }, 0)
+    await idle(s.host)
+    s.host.beginFrame()
+    const sends = countSends(s.conn())
+    const sent = () => sends.n
+    let k = 0
+    const step = async () => {
+      const time = ++k / 30
+      s.overrides.clock.advance(time)
+      s.host.beginFrame()
+      s.host.endFrame(time, s.source)
+      await idle(s.host)
+    }
+    for (let i = 0; i < 10; i++) await step()
+    expect(sent()).toBe(0)
+    s.host.queue({ name: 'message:go', payload: { data: 200 } })
+    s.host.paramsChanged({ size: 2 }) // not handled: goes with the next frame sent
+    await step()
+    expect(sent()).toBe(1)
+    // The timer is due 200 ms of script clock later, at the 6th frame (the clock started at frame 1).
+    for (let i = 0; i < 5; i++) await step()
+    expect([sent(), s.emits]).toEqual([1, []])
+    await step()
+    s.host.beginFrame()
+    expect([sent(), s.emits]).toEqual([2, [['timer', 2]]])
+    for (let i = 0; i < 10; i++) await step()
+    expect(sent()).toBe(2)
+
+    // What it does after an `await` comes back with the next frame, which it asks for.
+    const a = hostSetup(`export default { on: { async 'message:go'(f) { await new Promise((r) => setTimeout(r, 30)); f.emit('late', 1) } } }`)
+    await a.host.start({}, 0)
+    await idle(a.host)
+    const asked = countSends(a.conn())
+    a.host.queue({ name: 'message:go', payload: {} })
+    a.host.endFrame(0, a.source)
+    await idle(a.host)
+    a.host.endFrame(0.1, a.source)
+    expect(asked.n).toBe(1)
+    for (let i = 0; i < 20 && a.emits.length === 0; i++) {
+      await tick()
+      a.host.beginFrame()
+      a.host.endFrame(0.2 + i / 30, a.source)
+    }
+    expect([asked.n, a.emits]).toEqual([2, [['late', 1]]])
+
+    // A canvas drawn at most twice a second: a frame for its first draw, then every 0.5 s of media time.
+    const drawn: number[] = []
+    const c = hostSetup(`export default { draw: { label(ctx) {} } }`, {
+      canvases: [{ layer: 0, width: 4, height: 4, fps: 2 }],
+      images: async () => ({}),
+      drawn: (layer) => void drawn.push(layer),
+    })
+    await c.host.start({}, 0)
+    await idle(c.host)
+    const frames = countSends(c.conn())
+    for (let i = 0; i <= 30; i++) {
+      c.host.beginFrame()
+      c.host.endFrame(i / 30, c.source)
+      await idle(c.host)
+    }
+    c.host.beginFrame()
+    expect([frames.n, drawn]).toEqual([3, [0, 0, 0]])
   })
 
   it('bounds the queue of a script that gets no frames: the last message of each name, the last change of each parameter', async () => {
@@ -153,7 +230,7 @@ describe('script host', () => {
 
   it('stops a script that does not answer within 1 s; the layers keep their values', async () => {
     let fire: (() => void) | undefined
-    const s = hostSetup(`export default { setup(f) { f.layer('label').set({ opacity: 0.5 }) } }`, {
+    const s = hostSetup(`export default { setup(f) { f.layer('label').set({ opacity: 0.5 }) }, update() {} }`, {
       setTimeout: (fn) => ((fire = fn), 1),
       clearTimeout: () => (fire = undefined),
     })
@@ -166,7 +243,9 @@ describe('script host', () => {
     const original = s.conn().port
     s.host.endFrame(0, s.source)
     ;(original as unknown as MessagePort).close()
-    expect(fire).toBeDefined()
+    // One timer serves every message (#129): the one armed for setup fires, then waits for what is left of the frame's.
+    fire!()
+    expect(s.errors).toEqual([])
     fire!()
     expect(s.errors).toHaveLength(1)
     expect(s.errors[0]!.code).toBe('SCRIPT_STOPPED')
@@ -179,7 +258,7 @@ describe('script host', () => {
   it('gives the script another period when the watchdog fires late (this thread was busy), not when it fires on time', async () => {
     let fire: (() => void) | undefined
     let clock = 0
-    const s = hostSetup(`export default { setup(f) {} }`, {
+    const s = hostSetup(`export default { setup(f) {}, update() {} }`, {
       now: () => clock,
       setTimeout: (fn) => ((fire = fn), 1),
       clearTimeout: () => (fire = undefined),
@@ -237,7 +316,7 @@ describe('script host', () => {
 
   it('sends a new seed with the next frame only, unfolds uniforms and routes play() to the layer', async () => {
     const played: Array<[number, number | undefined, string]> = []
-    const s = hostSetup(`export default { setup(f) { f.layer('label').set({ uniforms: { amount: 0.5 } }); f.layer('label').play('wave') } }`, {
+    const s = hostSetup(`export default { setup(f) { f.layer('label').set({ uniforms: { amount: 0.5 } }); f.layer('label').play('wave') }, update() {} }`, {
       play: (layer, face, name) => (played.push([layer, face, name]), name === 'wave' ? 'played' : 'unknown'),
     })
     compileNumberBinding(0, { fallback: 0, name: 'uniforms.amount' }, env(s.overrides.forLayer(0)))
@@ -249,7 +328,7 @@ describe('script host', () => {
     expect(s.overrides.property(0, 'uniforms.amount')!.entryFor(3)).toEqual({ kind: 'set', value: 0.5 })
     const port = s.conn().port
     const post = port.postMessage.bind(port)
-    port.postMessage = (m: unknown, t?: Transferable[]) => (sent.push(m as Record<string, unknown>), post(m, t))
+    port.postMessage = (m: unknown, t?: Transferable[]) => (sent.push(structuredClone(m) as Record<string, unknown>), post(m, t))
     s.host.reseed(7)
     s.host.endFrame(0, s.source)
     await idle(s.host)
@@ -379,13 +458,14 @@ describe('script host', () => {
 
   it('settles when the script is stopped or disposed, or its sandbox does not start', async () => {
     let fire: (() => void) | undefined
-    const s = hostSetup(`export default { setup(f) {} }`, { now: () => 0, setTimeout: (fn) => ((fire = fn), 1), clearTimeout: () => (fire = undefined) })
+    const s = hostSetup(`export default { setup(f) {}, update() {} }`, { now: () => 0, setTimeout: (fn) => ((fire = fn), 1), clearTimeout: () => (fire = undefined) })
     await s.host.start({}, 0)
     await s.host.settled()
     s.conn().port.onmessage = null // the frame never gets an answer
     s.host.endFrame(0, s.source)
     const stopped = s.host.settled()
-    fire!() // the watchdog
+    fire!() // the watchdog, armed for setup: it waits for the frame's period
+    fire!()
     await stopped
     expect(s.host.state).toBe('stopped')
     expect(s.host.settled()).toBeUndefined()
@@ -504,7 +584,8 @@ describe('script host: answers, checked and applied (spec §12.4, §12.7)', () =
   /** A host on a port the test answers itself; `answer(…)` replies to the message in flight. */
   async function manual(options: Partial<ScriptHostOptions> = {}) {
     const sent: Array<{ message: Record<string, unknown>; transfer: Transferable[] | undefined }> = []
-    const port: ScriptPort = { postMessage: (m, t) => void sent.push({ message: m as Record<string, unknown>, transfer: t }), onmessage: null }
+    // Copied as by the structured clone: the host reuses its frame message (#129).
+    const port: ScriptPort = { postMessage: (m, t) => void sent.push({ message: structuredClone(m) as Record<string, unknown>, transfer: t }), onmessage: null }
     let terminated = 0
     const s = hostSetup('', { connect: async () => ({ port, terminate: () => void terminated++ }), now: () => 0, ...options })
     await s.host.start({}, 0)
@@ -649,9 +730,9 @@ describe('script host: answers, checked and applied (spec §12.4, §12.7)', () =
     expect(s.sent).toHaveLength(2) // init and one frame
   })
 
-  it('sends frame.dt, pairs for "pairs", the changed parameters once, and transfers the landmarks', async () => {
+  it('sends frame.dt, pairs for "pairs", the changed parameters once, and copies the landmarks', async () => {
     const landmarks = new Float32Array(6)
-    const frameData = { build: () => [{ id: 1, index: 0, landmarks }] } as unknown as FrameDataBuilder
+    const frameData = { build: () => ({ faces: [{ id: 1, index: 0, landmarks }], blendshapes: undefined }) } as unknown as FrameDataBuilder
     const s = await manual({ uses: ['pairs', 'face.landmarks'], frameData })
     s.answer()
     s.host.paramsChanged({ size: 2 })
@@ -662,7 +743,9 @@ describe('script host: answers, checked and applied (spec §12.4, §12.7)', () =
     s.host.endFrame(1, s.source) // the media time went back (a loop)
     const frames = s.sent.slice(1).map((m) => m.message)
     expect(frames.map((f) => [f.seq, f.dt, f.params, f.pairs])).toEqual([[1, 0, { size: 2 }, []], [2, 0.25, undefined, []], [3, 0, undefined, []]])
-    expect(s.sent[1]!.transfer).toEqual([landmarks.buffer])
+    // Reused by the frame data builder: copied by the structured clone, not transferred (#129).
+    expect(s.sent[1]!.transfer).toBeUndefined()
+    expect(landmarks.byteLength).toBe(24)
   })
 
   it('stops the script when a frame cannot be sent', async () => {
@@ -727,6 +810,81 @@ describe('script host: answers, checked and applied (spec §12.4, §12.7)', () =
     expect([s.host.handles('message:go'), s.host.handles('smile')]).toEqual([true, false])
     await s.host.start({}, 0)
     expect(s.sent).toHaveLength(1)
+  })
+
+  it('sends an idle script no frame until it is due, and takes only numbers as its idle times (#129, spec §15.1)', async () => {
+    const s = await manual()
+    const frames = () => s.sent.length - 1
+    s.answer({ idle: {} })
+    for (let i = 0; i < 10; i++) s.host.endFrame(i / 30, s.source)
+    expect(frames()).toBe(0)
+    s.host.queue({ name: 'message:go', payload: {} }) // an event: sent with the next frame
+    s.host.endFrame(0.4, s.source)
+    expect(frames()).toBe(1)
+    // A rewritten answer with anything else than numbers gets every frame.
+    for (const idle of [{ timer: 'soon' }, { draw: Number.NaN }, 'x', null]) {
+      s.answer({ idle })
+      s.host.endFrame(0.5, s.source)
+    }
+    expect(frames()).toBe(5)
+    // Due when the script clock reaches the timer (ms), when the media time reaches the next draw…
+    s.answer({ idle: { timer: 1000, draw: 2 } })
+    s.host.endFrame(1.9, s.source)
+    s.overrides.clock.advance(0)
+    s.overrides.clock.advance(0.9)
+    s.host.endFrame(1.95, s.source)
+    expect(frames()).toBe(5)
+    s.host.endFrame(2, s.source)
+    expect(frames()).toBe(6)
+    s.answer({ idle: { timer: 1000 } })
+    s.overrides.clock.advance(1)
+    s.host.endFrame(2.1, s.source)
+    expect(frames()).toBe(7)
+    // …or when it goes back (a loop) with a draw to come; frame.dt covers the frames not sent.
+    s.answer({ idle: { draw: 5 } })
+    s.host.endFrame(4, s.source)
+    s.host.endFrame(1, s.source)
+    expect(s.sent.slice(-2).map((m) => [m.message.time, m.message.dt])).toEqual([[2.1, expect.closeTo(0.1)], [1, 0]])
+  })
+
+  it('allocates nothing at a frame an idle script is not sent (#129)', async () => {
+    const s = await manual()
+    s.answer({ idle: { timer: 1e9, draw: 1e9 } })
+    expect(bytesPerCall(() => s.host.endFrame(0.5, s.source))).toBeLessThan(1)
+    expect(s.sent).toHaveLength(1)
+  })
+
+  it('serves every message with one watchdog timer, armed again only for what is left (#129)', async () => {
+    const timers: Array<[number, () => void]> = []
+    let cleared = 0
+    let clock = 0
+    const s = await manual({ now: () => clock, setTimeout: (fn, ms) => (timers.push([ms, fn]), timers.length), clearTimeout: () => void cleared++ })
+    s.reply({ t: 'started' })
+    s.answer()
+    for (let i = 0; i < 30; i++) {
+      clock += 20
+      s.host.endFrame(i / 30, s.source)
+      s.answer()
+    }
+    // One timer for setup and 30 frames; only the startup bound was cleared, when the script started.
+    expect(timers.map(([ms]) => ms)).toEqual([STARTUP_MS, 1000])
+    expect(cleared).toBe(1)
+    clock = 1000 // it fires with nothing in flight: no timer until the next message
+    timers[1]![1]()
+    expect(timers).toHaveLength(2)
+    clock = 1200
+    s.host.endFrame(1, s.source)
+    expect(timers.map(([ms]) => ms)).toEqual([STARTUP_MS, 1000, 1000])
+    s.answer()
+    clock = 1500
+    s.host.endFrame(1.1, s.source)
+    // Armed for the previous frame: it waits for what is left of the one in flight, sent at 1500.
+    clock = 2200
+    timers[2]![1]()
+    expect([timers.at(-1)![0], s.host.state]).toEqual([300, 'running'])
+    clock = 2500
+    timers.at(-1)![1]()
+    expect(s.errors.map((e) => e.message)).toEqual([expect.stringMatching(/did not answer a frame within 1000 ms/)])
   })
 })
 

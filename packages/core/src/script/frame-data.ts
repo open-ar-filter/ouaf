@@ -23,7 +23,19 @@ export interface FrameDataSource {
   readonly aspect: number
 }
 
-/** Builds `frame.faces` for `uses`. `anchorNames`: the face anchors of the registry (spec §5.3). */
+/** `frame.faces` and `frame.blendshapes` of one frame (`WireFrame`); the next `build` reuses them. */
+export interface FrameFaces {
+  readonly faces: WireFace[]
+  blendshapes: Float32Array | undefined
+}
+
+/**
+ * Builds `frame.faces` for `uses`. `anchorNames`: the face anchors of the registry (spec §5.3).
+ *
+ * It allocates nothing per frame in the steady state (#129): the faces, their `pose`, `anchors` and `landmarks`, and
+ * the blendshape scores are reused from one build to the next, which the structured clone of `postMessage` allows (it
+ * copies them at the call). The engine sends each build before the next one.
+ */
 export class FrameDataBuilder {
   readonly #pose: boolean
   readonly #blendshapes: boolean
@@ -34,6 +46,11 @@ export class FrameDataBuilder {
   readonly #x = new Float64Array(1)
   readonly #m = new Matrix4()
   readonly #v = new Vector3()
+  readonly #out: FrameFaces = { faces: [], blendshapes: undefined }
+  /** The face objects, by position in `frame.faces`. */
+  readonly #pool: WireFace[] = []
+  /** Blendshape scores, by number of faces. */
+  readonly #scores: Float32Array[] = []
 
   constructor(uses: readonly ScriptUse[], anchorNames: readonly string[]) {
     this.#pose = uses.includes('face.pose')
@@ -43,32 +60,59 @@ export class FrameDataBuilder {
     this.#anchorNames = anchorNames
   }
 
-  build(src: FrameDataSource): WireFace[] {
-    const out: WireFace[] = []
+  build(src: FrameDataSource): FrameFaces {
+    const out = this.#out
+    const faces = out.faces
     const data = src.bindingData
     if (this.#readers.length === 0) {
       for (const path of ['face.pose.yaw', 'face.pose.pitch', 'face.pose.roll', 'face.size']) this.#readers.push(data.resolve(path))
     }
+    let n = 0
     for (let i = 0; i < src.faces.count; i++) {
       const id = src.anchors.id(i)
       if (id <= 0) continue
-      const face: WireFace = { id, index: i }
+      const face = (this.#pool[n] ??= this.#newFace())
+      face.id = id
+      face.index = i
       if (this.#pose) {
-        face.pose = { yaw: this.#read(0, i), pitch: this.#read(1, i), roll: this.#read(2, i) }
+        const pose = face.pose!
+        pose.yaw = this.#read(0, i)
+        pose.pitch = this.#read(1, i)
+        pose.roll = this.#read(2, i)
         face.size = this.#read(3, i)
       }
-      if (this.#blendshapes && data.blendshapes) {
-        const b: Record<string, number> = {}
-        const scores = src.faces.blendshapes
-        const o = i * BLENDSHAPE_NAMES.length
-        for (let k = 1; k < BLENDSHAPE_NAMES.length; k++) b[BLENDSHAPE_NAMES[k]!] = scores[o + k]!
-        face.blendshapes = b
-      }
-      if (this.#anchors) face.anchors = this.#projectAnchors(src, i)
-      if (this.#landmarks) face.landmarks = landmarksToDisplay(src.faces, i, src.videoToClip)
-      out.push(face)
+      if (this.#anchors) this.#projectAnchors(src, i, face.anchors!)
+      if (this.#landmarks) landmarksToDisplay(src.faces, i, src.videoToClip, face.landmarks)
+      faces[n++] = face
     }
+    // The length changes only when the number of faces does.
+    if (faces.length !== n) faces.length = n
+    out.blendshapes = this.#blendshapes && data.blendshapes && n > 0 ? this.#copyScores(src, n) : undefined
     return out
+  }
+
+  #newFace(): WireFace {
+    const face: WireFace = { id: 0, index: 0 }
+    if (this.#pose) {
+      face.pose = { yaw: 0, pitch: 0, roll: 0 }
+      face.size = 0
+    }
+    if (this.#anchors) face.anchors = {}
+    if (this.#landmarks) face.landmarks = new Float32Array(LANDMARK_COUNT * 3)
+    return face
+  }
+
+  /** The blendshape scores of the `n` faces of `frame.faces`, in their order. */
+  #copyScores(src: FrameDataSource, n: number): Float32Array {
+    const stride = BLENDSHAPE_NAMES.length
+    const scores = (this.#scores[n] ??= new Float32Array(n * stride))
+    const from = src.faces.blendshapes
+    const faces = this.#out.faces
+    for (let k = 0; k < n; k++) {
+      const o = faces[k]!.index * stride
+      for (let j = 0; j < stride; j++) scores[k * stride + j] = from[o + j]!
+    }
+    return scores
   }
 
   #read(reader: number, face: number): number {
@@ -78,21 +122,24 @@ export class FrameDataBuilder {
     return this.#x[0]!
   }
 
-  #projectAnchors(src: FrameDataSource, face: number): Record<string, [number, number]> {
-    const result: Record<string, [number, number]> = {}
+  /** Projects the anchors of face slot `face` into `result`; the ones not found this frame are left out. */
+  #projectAnchors(src: FrameDataSource, face: number, result: Record<string, [number, number]>): void {
     const proj = src.camera.projectionMatrix
     for (const name of this.#anchorNames) {
-      if (!src.anchors.face(face, name, 'auto', this.#m)) continue
+      if (!src.anchors.face(face, name, 'auto', this.#m)) {
+        if (Object.hasOwn(result, name)) delete result[name]
+        continue
+      }
       const p = this.#v.setFromMatrixPosition(this.#m).applyMatrix4(proj)
-      result[name] = [(p.x + 1) / 2, (1 - p.y) / 2]
+      const xy = Object.hasOwn(result, name) ? result[name]! : (result[name] = [0, 0])
+      xy[0] = (p.x + 1) / 2
+      xy[1] = (1 - p.y) / 2
     }
-    return result
   }
 }
 
-/** Landmarks of face slot `face` in normalized display space (x, y), z scaled like x. */
-export function landmarksToDisplay(faces: Readonly<FaceFrame>, face: number, v: Readonly<VideoToClip>): Float32Array {
-  const out = new Float32Array(LANDMARK_COUNT * 3)
+/** Landmarks of face slot `face` in normalized display space (x, y), z scaled like x; written to `out` if given. */
+export function landmarksToDisplay(faces: Readonly<FaceFrame>, face: number, v: Readonly<VideoToClip>, out: Float32Array = new Float32Array(LANDMARK_COUNT * 3)): Float32Array {
   const src = faces.landmarks
   const o = face * LANDMARKS_STRIDE
   const zScale = Math.abs(v.ax) / 2
