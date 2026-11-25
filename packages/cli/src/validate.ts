@@ -13,7 +13,7 @@ import type { Issue, Severity, ShaderStage, ShaderUniformType, SpecRegistry, TAs
 import type { TSchema } from 'typebox'
 import { Value } from 'typebox/value'
 import { BrowserSetupError } from './browser.ts'
-import type { GlslCompiler } from './glsl.ts'
+import type { GlslCompiler, ProgramLog } from './glsl.ts'
 import { jsonLocator, jsonSyntaxError, type JsonLocator } from './json-locate.ts'
 import { sniff, type Format, type MediaInfo } from './media.ts'
 import { openPackage, SourceError, type PackageSource } from './source.ts'
@@ -72,10 +72,11 @@ export interface PackageReport {
 }
 
 /**
- * `OUAF_MAX_FACES` of the programs `ouaf validate` compiles: the engine's default `maxFaces`. A host may raise it (up to
- * 16); a shader that only reads face arrays below `ouaf_faceCount` compiles the same for any value.
+ * `OUAF_MAX_FACES` values `ouaf validate` compiles each shader with: the engine's default `maxFaces` and the largest a
+ * host may set (spec §5.4). A shader that compiles with both compiles for every value in between: a constant index
+ * into a face array fails with the smallest, the size of the uniforms with the largest.
  */
-export const GLSL_MAX_FACES = 1
+export const GLSL_MAX_FACES = [1, 16] as const
 
 export interface ValidateOptions {
   /** Vocabulary of loaded plugins (defaults to the built-in registry). */
@@ -558,7 +559,8 @@ async function checkShader(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array) 
 interface ShaderJob {
   file: string
   pointer: string
-  wrapped: WrappedShader
+  /** One program per `GLSL_MAX_FACES` value, in that order. */
+  wrapped: WrappedShader[]
   stage: ShaderStage
 }
 
@@ -595,13 +597,9 @@ function shaderJobs(ctx: Ctx, m: Record<string, unknown>, reg: SpecRegistry, sou
     if (!typed) return
     const stage = (layer.stage ?? 'post') as ShaderStage
     try {
-      const wrapped = wrapShader(source, {
-        stage,
-        maxFaces: GLSL_MAX_FACES,
-        uniforms,
-        textures: Object.keys((layer.textures ?? {}) as Record<string, unknown>),
-        anchors: (layer.anchors ?? []) as string[],
-      })
+      const textures = Object.keys((layer.textures ?? {}) as Record<string, unknown>)
+      const anchors = (layer.anchors ?? []) as string[]
+      const wrapped = GLSL_MAX_FACES.map((maxFaces) => wrapShader(source, { stage, maxFaces, uniforms, textures, anchors }))
       jobs.push({ file, pointer: `${pointer}/src`, wrapped, stage })
     } catch (e) {
       if (!(e instanceof ShaderDeclarationError)) throw e // names: reported by the manifest checks
@@ -618,33 +616,72 @@ function shaderFile(m: Record<string, unknown>, ref: string): string | undefined
   return typeof src === 'string' && src.startsWith('assets/') ? src : undefined
 }
 
-/** Compiles the jobs and reports the compiler's errors and warnings, at lines of the author's file. */
+/** A compiler message of one program, before it is reported. */
+interface GlslDiagnostic {
+  severity: Severity
+  line?: number
+  message: string
+}
+
+/** What the compiler said about one program: its fragment log mapped to author lines, the engine's steps. */
+function programDiagnostics(log: ProgramLog, wrapped: WrappedShader): GlslDiagnostic[] {
+  const out: GlslDiagnostic[] = []
+  if (log.fragment !== undefined) {
+    // ANGLE ends its log with a count ("ERROR: 1 compilation errors.  No code generated."): not a problem of its own.
+    const diagnostics = parseShaderLog(log.fragment, wrapped).filter((d) => !/^ERROR: \d+ compilation errors?\./i.test(d.message))
+    out.push(...diagnostics)
+    if (diagnostics.length === 0) out.push({ severity: 'error', message: log.fragment.trim() || 'The shader does not compile.' })
+  }
+  // The engine's vertex shader and the link step fail only with an engine bug, a broken driver or a resource limit.
+  if (log.vertex !== undefined) out.push({ severity: 'error', message: `The engine's vertex shader does not compile here: ${log.vertex.trim()}` })
+  if (log.link !== undefined) out.push({ severity: 'error', message: `The program does not link: ${log.link.trim()}` })
+  return out
+}
+
+/**
+ * Compiles each job with every `GLSL_MAX_FACES` value and reports the compiler's errors and warnings at lines of the
+ * author's file. A message given for some values only says which.
+ */
 async function compileShaders(ctx: Ctx, jobs: ShaderJob[]) {
   const files = [...new Set(jobs.map((j) => j.file))]
   const skip = (reason: string) => ctx.skipped.push({ check: 'glsl-compile', files, reason })
   if (!ctx.options.compileShaders) {
     return skip('GLSL compilation was not run (`--no-glsl`, or `ouaf pack`): only the static checks of spec §11 ran.')
   }
-  let logs
+  const programs = jobs.flatMap((j) => j.wrapped.map((w) => ({ vertex: shaderVertex(j.stage), fragment: w.fragment })))
+  let logs: ProgramLog[]
   try {
-    logs = await ctx.options.compileShaders(jobs.map((j) => ({ vertex: shaderVertex(j.stage), fragment: j.wrapped.fragment })))
+    logs = await ctx.options.compileShaders(programs)
   } catch (e) {
     if (!(e instanceof BrowserSetupError)) throw e
     return skip(`${e.message}${e.hint ? ` ${e.hint}` : ''} Only the static checks of spec §11 ran.`)
   }
-  jobs.forEach((job, i) => {
-    const log = logs[i] ?? {}
-    const loc = (line?: number): Loc => ({ file: job.file, path: job.pointer, ...(line !== undefined ? { line } : {}) })
-    if (log.fragment !== undefined) {
-      // ANGLE ends its log with a count ("ERROR: 1 compilation errors.  No code generated."): not a problem of its own.
-      const diagnostics = parseShaderLog(log.fragment, job.wrapped).filter((d) => !/^ERROR: \d+ compilation errors?\./i.test(d.message))
-      for (const d of diagnostics) add(ctx, d.severity, 'glsl', loc(d.line), d.message)
-      if (diagnostics.length === 0) add(ctx, 'error', 'glsl', loc(), log.fragment.trim() || 'The shader does not compile.')
+  let next = 0
+  for (const job of jobs) {
+    // Each distinct message once, with the OUAF_MAX_FACES values it came with.
+    const seen = new Map<string, { d: GlslDiagnostic; faces: number[] }>()
+    job.wrapped.forEach((wrapped, k) => {
+      for (const d of programDiagnostics(logs[next++] ?? {}, wrapped)) {
+        const key = `${d.severity}\0${d.line ?? ''}\0${d.message}`
+        const entry = seen.get(key) ?? { d, faces: [] }
+        entry.faces.push(GLSL_MAX_FACES[k]!)
+        seen.set(key, entry)
+      }
+    })
+    for (const { d, faces } of seen.values()) {
+      const loc: Loc = { file: job.file, path: job.pointer, ...(d.line !== undefined ? { line: d.line } : {}) }
+      if (faces.length === GLSL_MAX_FACES.length) {
+        add(ctx, d.severity, 'glsl', loc, d.message)
+        continue
+      }
+      const n = faces.join(', ')
+      const smallest = faces.includes(GLSL_MAX_FACES[0])
+      add(ctx, d.severity, 'glsl', loc, `${d.message} (with OUAF_MAX_FACES = ${n}${smallest ? ', the engine\'s default' : ''})`,
+        smallest
+          ? 'Index the face arrays up to ouaf_faceCount in a loop (for i < OUAF_MAX_FACES, break at ouaf_faceCount), not with constants.'
+          : `Hosts may track up to ${GLSL_MAX_FACES.at(-1)} faces: use fewer anchors or textures, or smaller per-face data.`)
     }
-    // The engine's vertex shader and the link step fail only with an engine bug or a broken driver: say so.
-    if (log.vertex !== undefined) add(ctx, 'error', 'glsl', loc(), `The engine's vertex shader does not compile here: ${log.vertex.trim()}`)
-    if (log.link !== undefined) add(ctx, 'error', 'glsl', loc(), `The program does not link: ${log.link.trim()}`)
-  })
+  }
 }
 
 // ---------------------------------------------------------------------------------------------

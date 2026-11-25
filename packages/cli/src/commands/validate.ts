@@ -17,8 +17,8 @@ Checks a filter package (or its unzipped folder) against the Ouaf v1 spec:
   - image ≤ 4096 px per side, video ≤ 1080p (720p recommended), MP4 H.264 / WebM VP9 (spec §10.4)
   - .cube LUTs, glTF / GLB models (version, external files), JSON data
   - shaders (spec §11): no #version, no main(), defines vec4 effect(vec2 uv), uniform types; then each
-    shader layer's program, wrapped as the engine does (OUAF_MAX_FACES = 1, the engine's default), is
-    compiled and linked with WebGL2 in headless Chromium (Playwright, as for ouaf preview). Without
+    shader layer's program, wrapped as the engine does, is compiled and linked with WebGL2 in headless
+    Chromium (Playwright, as for ouaf preview), with OUAF_MAX_FACES = 1 (the engine's default) and 16. Without
     Playwright's Chromium, or with --no-glsl, compilation is reported as a skipped check.
   - package size: ≤ 5 MB recommended (warning), above 50 MB an engine may refuse it (error)
 

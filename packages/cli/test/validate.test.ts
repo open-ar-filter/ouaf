@@ -313,15 +313,30 @@ describe('shaders (spec §11)', () => {
     const r = await shader('vec4 effect(vec2 uv) {\n  return nope;\n}\n', compiler, { face: true }, 'fx', {
       stage: 'face', uniforms: { amount: { param: 'amount' }, tint: '#ff0000' }, textures: { noise: 'fx' }, anchors: ['noseTip'],
     }, { params: { amount: { type: 'number', default: 0.5 } } })
-    expect(seen).toHaveLength(1)
+    // Once with the engine's default number of faces, once with the most a host may set.
+    expect(seen.map((p) => /#define OUAF_MAX_FACES (\d+)/.exec(p.fragment)?.[1])).toEqual(['1', '16'])
     expect(seen[0]!.vertex).toContain('out float ouaf_vMask') // the face mesh's vertex shader
     expect(seen[0]!.fragment).toMatch(/uniform float amount;[\s\S]*uniform vec4 tint;[\s\S]*uniform sampler2D noise;/)
-    expect(seen[0]!.fragment).toContain('#define OUAF_MAX_FACES 1')
     expect(seen[0]!.fragment).toContain('uniform vec2 ouaf_anchor_noseTip[OUAF_MAX_FACES];')
     expect(r.errors).toEqual([
       expect.objectContaining({ code: 'glsl', file: 'assets/fx.frag', line: 2, path: '/layers/0/src', message: "'nope' : undeclared identifier" }),
     ])
     expect(r.skipped).toEqual([])
+  })
+
+  it('says which OUAF_MAX_FACES a message comes with when it is not all of them', async () => {
+    const compiler: GlslCompiler = async (programs) => programs.map((p) => {
+      const faces = /#define OUAF_MAX_FACES (\d+)/.exec(p.fragment)![1]
+      return faces === '1'
+        ? { fragment: "ERROR: 0:2: '[]' : array index out of range\nWARNING: 0:1: 'x' : shared" }
+        : { fragment: "WARNING: 0:1: 'x' : shared", link: 'too many uniforms' }
+    })
+    const r = await shader('vec4 effect(vec2 uv) {\n  return ouaf_sample(uv) * ouaf_faceSize[3];\n}\n', compiler, { face: true })
+    expect(r.errors.map((e) => [e.line, e.message, e.hint])).toEqual([
+      [2, "'[]' : array index out of range (with OUAF_MAX_FACES = 1, the engine's default)", expect.stringContaining('up to ouaf_faceCount')],
+      [undefined, 'The program does not link: too many uniforms (with OUAF_MAX_FACES = 16)', expect.stringContaining('up to 16 faces')],
+    ])
+    expect(r.warnings.map((w) => [w.line, w.message, w.hint])).toEqual([[1, "'x' : shared", undefined]]) // both: no note
   })
 
   it('reports a uniform without a GLSL type, which the engine would reject, and compiles nothing then', async () => {

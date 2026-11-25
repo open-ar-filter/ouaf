@@ -497,8 +497,9 @@ alpha 0 leaves the image unchanged.
   `ouaf_faceCount`, `ouaf_faceSize` in the source (comments do not count). `ouaf validate` and `ouaf pack` read the
   shader file and report a missing `requires.face`.
 - `ouaf validate` checks the declarations, `#version`, `main()` and `effect()`, then compiles each shader layer as
-  the engine wraps it (with `OUAF_MAX_FACES` = 1, the engine's default), in headless Chromium: errors come with the
-  line in your file (code `glsl`). It needs Playwright's Chromium (`npx playwright install chromium`, as for
+  the engine wraps it, in headless Chromium, with `OUAF_MAX_FACES` = 1 (the engine's default) and 16 (the most a host
+  may set): errors come with the line in your file (code `glsl`), and say which value when only one fails. A
+  constant index into a face array (`ouaf_faceSize[3]`) fails with 1: loop up to `ouaf_faceCount` instead. It needs Playwright's Chromium (`npx playwright install chromium`, as for
   `ouaf preview`); without it, or with `--no-glsl`, compilation is listed under `skipped`. `ouaf pack` does not
   compile.
 
