@@ -87,7 +87,8 @@ export function decodeDetections(regressors: Float32Array, scores: Float32Array,
   const toY = (v: number) => (v * DETECTOR_SIZE - box.offsetY) / box.scale
   for (let i = 0; i < DETECTOR_ANCHORS; i++) {
     const score = sigmoid(scores[i] ?? -Infinity)
-    if (score < MIN_SCORE) continue
+    // Written so that a NaN score (a NaN in the model output) is dropped too, as for the presence (`pipeline.ts`).
+    if (!(score >= MIN_SCORE)) continue
     const r = i * DETECTOR_COORDS
     const ax = ANCHORS[i * 2]!
     const ay = ANCHORS[i * 2 + 1]!

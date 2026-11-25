@@ -84,6 +84,17 @@ describe('LiteRT.js face geometry (MediaPipe graph calculators)', () => {
     expect(out[0]!.xMin + out[0]!.width / 2).toBeCloseTo(cx + (4 * s1) / (s1 + s3), 3)
   })
 
+  it('drops a candidate whose score is NaN', () => {
+    const { regressors, scores } = detectorOutputs([
+      { anchor: 600, logit: 3, dx: 0, dy: 0, w: 40, h: 40 },
+      { anchor: 650, logit: 2, dx: 0, dy: 0, w: 20, h: 20 },
+    ])
+    scores[650] = Number.NaN
+    const out = decodeDetections(regressors, scores, { scale: 1, offsetX: 0, offsetY: 0 })
+    expect(out).toHaveLength(1)
+    expect(out[0]!.score).toBeCloseTo(1 / (1 + Math.exp(-3)), 6)
+  })
+
   it('takes the ROI rotation from the eyes (y down, clockwise)', () => {
     const { regressors, scores } = detectorOutputs([{ anchor: 600, logit: 4, dx: 0, dy: 0, w: 40, h: 40, eyes: [-10, -10, 10, 10] }])
     const [d] = decodeDetections(regressors, scores, { scale: 1, offsetX: 0, offsetY: 0 })
