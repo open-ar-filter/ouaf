@@ -39,7 +39,7 @@ describe('ouaf validate', () => {
   it('one input; help; --json', async () => {
     expect((await cli([validate], 'validate', 'a', 'b')).err).toContain('Expected a single folder or .ouaf file.')
     expect((await cli([validate], 'validate', '-h')).out).toContain('Exit codes:')
-    const json = await cli([validate], 'validate', valid, '--json')
+    const json = await cli([validate], 'validate', valid, '--json', '--no-glsl')
     expect(json.code).toBe(EXIT.OK)
     expect(JSON.parse(json.out)).toMatchObject({ format: 1, ok: true, kind: 'folder' })
   })

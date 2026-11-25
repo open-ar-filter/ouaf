@@ -301,3 +301,71 @@ export function uniformTypeOfParam(type: string): ShaderUniformType | undefined 
       return undefined
   }
 }
+
+/** What the type of a bound uniform depends on: parameter types and binding data types (`DataPathDef.type`). */
+export interface UniformTypeLookup {
+  /** Type of the parameter `name`, `undefined` when there is none. */
+  param(name: string): string | undefined
+  /** Type of the binding data `path`, `undefined` when it is unknown. */
+  data(path: string): 'number' | 'string' | 'boolean' | undefined
+}
+
+/**
+ * GLSL type of a `uniforms` value (spec §11): fixed, `{ param }`, or `{ bind }` (from `map`, `to`, the data type or
+ * `default`). `{ problem }` when it has none: the engine then rejects the filter, and `ouaf validate` reports it.
+ */
+export function shaderUniformType(name: string, value: unknown, lookup: UniformTypeLookup): { type: ShaderUniformType } | { problem: string } {
+  const bound = !!value && typeof value === 'object' && !Array.isArray(value) && ('param' in value || 'bind' in value)
+  if (!bound) {
+    const type = uniformTypeOf(value)
+    return type ? { type } : { problem: `uniform "${name}": ${JSON.stringify(value)} is not a number, boolean, vec2, vec3 or color.` }
+  }
+  if ('param' in value) {
+    const param = String(value.param)
+    const paramType = lookup.param(param)
+    if (paramType === undefined) return { problem: `uniform "${name}": unknown parameter "${param}".` }
+    const type = uniformTypeOfParam(paramType)
+    return type ? { type } : { problem: `uniform "${name}": parameter "${param}" has type "${paramType}", which cannot be a uniform.` }
+  }
+  const b = value as { bind: string; map?: Record<string, unknown>; default?: unknown; to?: unknown }
+  if (b.map) {
+    const types = new Set(Object.values(b.map).map(uniformTypeOf))
+    const type = types.size === 1 ? [...types][0] : undefined
+    return type ? { type } : { problem: `uniform "${name}": the values of "map" must all be numbers, booleans, vec2, vec3 or colors of one type.` }
+  }
+  if (b.to !== undefined) return { type: 'float' }
+  const data = lookup.data(b.bind)
+  if (data === 'number') return { type: 'float' }
+  if (data === 'boolean') return { type: 'bool' }
+  const fallback = data === undefined && b.default !== undefined ? uniformTypeOf(b.default) : undefined
+  if (fallback) return { type: fallback }
+  return { problem: `uniform "${name}": data "${b.bind}" ${data ? 'is a string: add "map"' : 'is unknown'}.` }
+}
+
+/** Vertex shader of full-screen passes (`background`, `post` stages): `position` in clip space. */
+export const SHADER_FULLSCREEN_VERTEX = /* glsl */ `
+precision highp float;
+in vec2 position;
+out vec2 ${SHADER_INTERNALS.uv};
+void main() {
+  ${SHADER_INTERNALS.uv} = position * 0.5 + 0.5;
+  gl_Position = vec4(position, 0.0, 1.0);
+}
+`
+
+/** Vertex shader of the face mesh (`face` stage): clip-space positions and the mask value of each vertex. */
+export const SHADER_FACE_VERTEX = /* glsl */ `
+precision highp float;
+in vec2 position;
+in float mask;
+out vec2 ${SHADER_INTERNALS.uv};
+out float ${SHADER_INTERNALS.meshMask};
+void main() {
+  ${SHADER_INTERNALS.uv} = position * 0.5 + 0.5;
+  ${SHADER_INTERNALS.meshMask} = mask;
+  gl_Position = vec4(position, 0.0, 1.0);
+}
+`
+
+/** The engine's vertex shader for a stage, linked with the wrapped fragment shader. */
+export const shaderVertex = (stage: ShaderStage): string => (stage === 'face' ? SHADER_FACE_VERTEX : SHADER_FULLSCREEN_VERTEX)

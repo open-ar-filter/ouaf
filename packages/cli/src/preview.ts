@@ -20,6 +20,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rolldown } from 'rolldown'
 import type { Browser, BrowserContext, Route } from 'playwright'
+import { BrowserSetupError as PreviewSetupError, launchChromium, loadChromium } from './browser.ts'
 import { packFolder, PackSourceError } from './pack.ts'
 import type { PreviewJob, PreviewPageOutcome, PreviewPageResult } from './preview/protocol.ts'
 import { IMAGE_TYPES, VIDEO_TYPES, type Reference } from './preview/references.ts'
@@ -37,26 +38,9 @@ export const DEFAULT_MODELS = fileURLToPath(new URL('../../../apps/playground/mo
 /** The file the built-in face tracker needs (`packages/core/src/engine/builtin.ts`). */
 const FACE_MODEL = 'face_landmarker.task'
 
-/**
- * Chromium flags. Software WebGL (SwiftShader) whatever the machine has: the same rendering everywhere this
- * Chromium build runs, the condition of pixel-identical screenshots. Fixed scale factor and color profile.
- */
-export const CHROMIUM_ARGS = [
-  '--use-angle=swiftshader',
-  '--enable-unsafe-swiftshader',
-  '--force-device-scale-factor=1',
-  '--force-color-profile=srgb',
-  '--autoplay-policy=no-user-gesture-required',
-]
-
 /** Cannot run at all (missing Playwright or Chromium, missing model, bad input): a usage error, exit code 2. */
-export class PreviewSetupError extends Error {
-  hint: string | undefined
-  constructor(message: string, hint?: string) {
-    super(message)
-    this.hint = hint
-  }
-}
+export { BrowserSetupError as PreviewSetupError } from './browser.ts'
+export { CHROMIUM_ARGS } from './browser.ts'
 
 export interface PreviewFilter {
   /** What the user passed. */
@@ -130,34 +114,6 @@ export async function loadFilters(inputs: string[]): Promise<PreviewFilter[]> {
     }
   }
   return out
-}
-
-type Chromium = typeof import('playwright').chromium
-
-/** Playwright, an optional peer dependency of `@ouaf/cli`: `playwright` or `playwright-core`. */
-async function loadChromium(): Promise<Chromium> {
-  for (const name of ['playwright', 'playwright-core']) {
-    try {
-      return ((await import(name)) as typeof import('playwright')).chromium
-    } catch {}
-  }
-  throw new PreviewSetupError(
-    'ouaf preview needs Playwright, which is not installed.',
-    'Install it next to @ouaf/cli, with its Chromium: npm install --save-dev playwright && npx playwright install chromium',
-  )
-}
-
-async function launch(chromium: Chromium): Promise<Browser> {
-  try {
-    return await chromium.launch({ headless: true, args: CHROMIUM_ARGS })
-  } catch (e) {
-    const message = (e as Error).message
-    if (/Executable doesn't exist|browserType\.launch: .*(install|not found)/i.test(message)) {
-      const hint = 'Run: npx playwright install chromium (add --with-deps on Linux if system libraries are missing)'
-      throw new PreviewSetupError('Playwright\'s Chromium is not installed.', hint)
-    }
-    throw new PreviewSetupError(`Cannot start Chromium: ${message.split('\n')[0]}`)
-  }
 }
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -290,9 +246,9 @@ export async function previewFilters(options: PreviewOptions): Promise<PreviewRe
       `In the Ouaf repository, run: npm run fetch-models (or point --models / OUAF_MODELS to a folder with ${FACE_MODEL})`,
     )
   }
-  const chromium = await loadChromium()
+  const chromium = await loadChromium('ouaf preview')
   const origin = new PreviewOrigin(await bundlePage(), modelsDir)
-  const browser = await launch(chromium)
+  const browser = await launchChromium(chromium)
   const shots: Array<PreviewShot | PreviewShotFailure> = []
   try {
     await mkdir(options.outDir, { recursive: true })

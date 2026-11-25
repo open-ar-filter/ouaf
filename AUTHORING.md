@@ -499,8 +499,12 @@ alpha 0 leaves the image unchanged.
 - Declare `requires.face` when the shader uses the face: `anchors`, `stage: "face"`, or `ouaf_faceMask`,
   `ouaf_faceCount`, `ouaf_faceSize` in the source (comments do not count). `ouaf validate` and `ouaf pack` read the
   shader file and report a missing `requires.face`.
-- `ouaf validate` checks the declarations, `#version`, `main()` and `effect()`, but cannot compile GLSL yet: the
-  engine compiles it when it loads the filter, and the playground shows the errors with the line in your file.
+- `ouaf validate` checks the declarations, `#version`, `main()` and `effect()`, then compiles each shader layer as
+  the engine wraps it, in headless Chromium, with `OUAF_MAX_FACES` = 1 (the engine's default) and 16 (the most a host
+  may set): errors come with the line in your file (code `glsl`), and say which value when only one fails. A
+  constant index into a face array (`ouaf_faceSize[3]`) fails with 1: loop up to `ouaf_faceCount` instead. It needs Playwright's Chromium (`npx playwright install chromium`, as for
+  `ouaf preview`); without it, or with `--no-glsl`, compilation is listed under `skipped`. `ouaf pack` does not
+  compile.
 
 ## 12. Limits
 
@@ -543,7 +547,7 @@ Specified, or reserved, but not working in the reference engine today. Do not re
 - A host file as a video or spritesheet sticker (only images), or as a shader texture: `textures` take assets only.
 - Starting a sticker with `autoplay: false` from a script; `f.sound()` and audio assets; `lottie` and `data` assets
   (reserved: import JSON in `filter.ts`, section 6).
-- KTX2 textures; GLSL compilation in `ouaf validate`; reserved `requires` (`hands`, `segmentation`, `pose`, `audio`)
+- KTX2 textures; reserved `requires` (`hands`, `segmentation`, `pose`, `audio`)
   and reserved events (`tap`…): warnings.
 
 ## 15. Complete examples
@@ -752,6 +756,8 @@ then `→` a hint. Fix errors first; warnings do not block (unless `--strict`). 
 | `unknown-event`, `not-tunable` | wrong event name; `threshold` on an event that has none | names of section 9 |
 | `duplicate-id`, `missing-id`, `unknown-layer`, `not-canvas`, `canvas-not-drawn` | layer ids; a canvas needs an `id` and a `draw.<id>` function | give unique ids; add the draw function |
 | `shader-version`, `shader-main`, `shader-no-effect`, `shader-name` | `#version`, `main()`, no `effect()`, a reserved uniform name | write only `vec4 effect(vec2 uv)`; rename the uniform |
+| `shader-uniform` | a `uniforms` value with no GLSL type (a `map` mixing types, a string) | bind a number, boolean, vec2, vec3 or color |
+| `glsl` | the shader does not compile (line in the `.frag` file) | fix the GLSL at that line: types are strict (`2.0`, not `2`), `ouaf_sample` returns a `vec4` |
 | `lut-syntax` | malformed `.cube` | export the LUT again |
 | `missing-manifest` | `ouaf validate` on a `filter.ts` folder | run `ouaf pack` |
 | `function-in-data`, `not-json`, `accessor-in-data`, `script-section` | in `filter.ts`: a function outside `setup` / `update` / `on` / `draw`, a non-JSON value, a getter, or `script.<key>` other than `uses` | keep data plain; let `ouaf pack` write the `script` section |
@@ -776,8 +782,8 @@ spec and the schema. An agent writing a filter follows this loop:
    clips (`talk`, `walk`, `two-faces`, `no-face`; `--ref <id>` picks some, `--input <clip.mp4 | image.png>` uses
    another file, `--at <s>` its time) and writes `ouaf-preview/<reference>.png` (`-o <dir>` elsewhere). Look at
    each screenshot: is every layer where it should be, at the right size? In the JSON, each reference has
-   `errors` and `warnings` from the engine (a shader that does not compile, an asset that fails to decode: things
-   `validate` cannot see), `faces` (faces tracked), `changed` (share of the pixels the filter changed: near 0 means
+   `errors` and `warnings` from the engine (an asset that fails to decode, a script error: things `validate` cannot
+   see), `faces` (faces tracked), `changed` (share of the pixels the filter changed: near 0 means
    nothing shows), `pixelsSha256` and `perf` (frame times, measured with software rendering: compare filters, do
    not predict a phone). Exit code 0: rendered without engine errors; 1: errors; 2: usage error (also when
    Playwright's Chromium is missing: `npx playwright install chromium`). The same command gives the same pixels on

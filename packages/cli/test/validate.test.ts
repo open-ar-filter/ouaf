@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { memorySource, openFolder, zipSource } from '../src/source.ts'
-import { validatePackage, validatePath, type PackageIssue, type PackageReport, type ShaderCompiler } from '../src/validate.ts'
+import { BrowserSetupError } from '../src/browser.ts'
+import type { GlslCompiler } from '../src/glsl.ts'
+import { validatePackage, validatePath, type PackageIssue, type PackageReport } from '../src/validate.ts'
 import { formatReport } from '../src/report.ts'
 import { avif, bytes, cube, glb, jpeg, ktx2, mp4, png, webm, zip } from './helpers.ts'
 
@@ -275,11 +277,11 @@ describe('formats and limits (spec §10)', () => {
 })
 
 describe('shaders (spec §11)', () => {
-  const shader = (src: string, compileShader?: ShaderCompiler, requires: Record<string, unknown> = {}, ref = 'fx') =>
+  const shader = (src: string, compileShaders?: GlslCompiler, requires: Record<string, unknown> = {}, ref = 'fx', layer: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) =>
     validatePackage(memorySource({
-      'manifest.json': JSON.stringify({ ...base, requires, assets: { fx: 'assets/fx.frag' }, layers: [{ type: 'shader', id: 'mask', src: ref }] }),
+      'manifest.json': JSON.stringify({ ...base, requires, assets: { fx: 'assets/fx.frag' }, layers: [{ type: 'shader', id: 'mask', src: ref, ...layer }], ...extra }),
       'assets/fx.frag': src,
-    }), compileShader ? { compileShader } : {})
+    }), compileShaders ? { compileShaders } : {})
 
   it('ignores #version and main() inside comments', async () => {
     const r = await shader('/* #version 300 es\nvoid main() {} */\n// void main()\nvec4 effect(vec2 uv) { return ouaf_sample(uv); }\n')
@@ -301,15 +303,67 @@ describe('shaders (spec §11)', () => {
     expect(codes(commented.warnings)).toEqual(['unused-requirement@manifest.json:1#/requires/face'])
   })
 
-  it('hands the source to a compiler hook and reports its diagnostics with their lines', async () => {
-    const seen: string[] = []
-    const r = await shader('vec4 effect(vec2 uv) {\n  return nope;\n}\n', (src, file) => {
-      seen.push(file)
-      return src.includes('nope') ? [{ severity: 'error', line: 2, column: 10, message: "'nope' : undeclared identifier" }] : []
-    })
-    expect(seen).toEqual(['assets/fx.frag'])
-    expect(r.errors).toEqual([expect.objectContaining({ code: 'glsl', file: 'assets/fx.frag', line: 2, column: 10, path: '/assets/fx' })])
+  it('compiles each layer\'s program as the engine wraps it, and reports errors at lines of the author\'s file', async () => {
+    const seen: Array<{ vertex: string; fragment: string }> = []
+    const compiler: GlslCompiler = async (programs) => {
+      seen.push(...programs)
+      // The wrapper's `#line 1` makes compilers report author lines (ANGLE's format).
+      return programs.map(() => ({ fragment: "ERROR: 0:2: 'nope' : undeclared identifier\nERROR: 1 compilation errors.  No code generated." }))
+    }
+    const r = await shader('vec4 effect(vec2 uv) {\n  return nope;\n}\n', compiler, { face: true }, 'fx', {
+      stage: 'face', uniforms: { amount: { param: 'amount' }, tint: '#ff0000' }, textures: { noise: 'fx' }, anchors: ['noseTip'],
+    }, { params: { amount: { type: 'number', default: 0.5 } } })
+    // Once with the engine's default number of faces, once with the most a host may set.
+    expect(seen.map((p) => /#define OUAF_MAX_FACES (\d+)/.exec(p.fragment)?.[1])).toEqual(['1', '16'])
+    expect(seen[0]!.vertex).toContain('out float ouaf_vMask') // the face mesh's vertex shader
+    expect(seen[0]!.fragment).toMatch(/uniform float amount;[\s\S]*uniform vec4 tint;[\s\S]*uniform sampler2D noise;/)
+    expect(seen[0]!.fragment).toContain('uniform vec2 ouaf_anchor_noseTip[OUAF_MAX_FACES];')
+    expect(r.errors).toEqual([
+      expect.objectContaining({ code: 'glsl', file: 'assets/fx.frag', line: 2, path: '/layers/0/src', message: "'nope' : undeclared identifier" }),
+    ])
     expect(r.skipped).toEqual([])
+  })
+
+  it('says which OUAF_MAX_FACES a message comes with when it is not all of them', async () => {
+    const compiler: GlslCompiler = async (programs) => programs.map((p) => {
+      const faces = /#define OUAF_MAX_FACES (\d+)/.exec(p.fragment)![1]
+      return faces === '1'
+        ? { fragment: "ERROR: 0:2: '[]' : array index out of range\nWARNING: 0:1: 'x' : shared" }
+        : { fragment: "WARNING: 0:1: 'x' : shared", link: 'too many uniforms' }
+    })
+    const r = await shader('vec4 effect(vec2 uv) {\n  return ouaf_sample(uv) * ouaf_faceSize[3];\n}\n', compiler, { face: true })
+    expect(r.errors.map((e) => [e.line, e.message, e.hint])).toEqual([
+      [2, "'[]' : array index out of range (with OUAF_MAX_FACES = 1, the engine's default)", expect.stringContaining('up to ouaf_faceCount')],
+      [undefined, 'The program does not link: too many uniforms (with OUAF_MAX_FACES = 16)', expect.stringContaining('up to 16 faces')],
+    ])
+    expect(r.warnings.map((w) => [w.line, w.message, w.hint])).toEqual([[1, "'x' : shared", undefined]]) // both: no note
+  })
+
+  it('reports a uniform without a GLSL type, which the engine would reject, and compiles nothing then', async () => {
+    let calls = 0
+    const r = await shader('vec4 effect(vec2 uv) { return ouaf_sample(uv); }\n', async () => (calls++, []), {}, 'fx', {
+      uniforms: { level: { bind: 'faces.count', map: { '0': 0, '1': '#ff0000' } } },
+    })
+    expect(codes(r.errors)).toEqual(['shader-uniform@manifest.json:1#/layers/0/uniforms/level'])
+    expect(r.errors[0]!.message).toContain('the values of "map" must all be')
+    expect(calls).toBe(0)
+  })
+
+  it('skips compilation, saying why, without a compiler or when Chromium cannot start', async () => {
+    const src = 'vec4 effect(vec2 uv) { return ouaf_sample(uv); }\n'
+    const none = await shader(src)
+    expect(none.ok).toBe(true)
+    expect(none.skipped).toEqual([expect.objectContaining({ check: 'glsl-compile', files: ['assets/fx.frag'] })])
+    const missing = await shader(src, async () => {
+      throw new BrowserSetupError('Playwright\'s Chromium is not installed.', 'Run: npx playwright install chromium')
+    })
+    expect(missing.ok).toBe(true)
+    expect(missing.skipped[0]!.reason).toContain('npx playwright install chromium')
+    // A source that fails the static checks is not compiled.
+    let calls = 0
+    const broken = await shader('void main() {}\n', async () => (calls++, []))
+    expect(codes(broken.errors)).toContain('shader-main@assets/fx.frag:1#/assets/fx')
+    expect([calls, broken.skipped]).toEqual([0, []])
   })
 })
 
