@@ -7,6 +7,11 @@
  *   with the next frame sent, in order. A script that gets no frames (its filter disabled or hidden by the governor)
  *   keeps a bounded queue: at `MAX_QUEUED_EVENTS`, only the last `message:<name>` of each name and the last
  *   `paramChange` of each parameter are kept (then the oldest event is dropped if still full), with a warning.
+ * - **Idle scripts** (#129, spec §12.7): a script without `update` says in its answers when it next needs a frame
+ *   (its next timer, its next canvas draw: `WireDone.idle`); until then, and while no event waits, it is sent no
+ *   frame, so that a script that only reacts to events costs the rendering thread almost nothing per frame. When it
+ *   does something between frames (after an `await`), it says `wake` and gets the next frame, which carries its
+ *   output back.
  * - **Live sources** (spec §12.1): the engine never waits. An answer is applied at the start of the first frame
  *   rendered after it arrives (`beginFrame`), so commands take effect with at least one frame of latency.
  * - **File sources** (spec §12.1): the engine waits for `settled()` before rendering each frame, so that the answer
@@ -19,7 +24,10 @@
  *     only a generous bound applies (`STARTUP_MS`);
  *   - a timer that fires late means this thread was stalled (a long rendering task): the answer may be waiting
  *     behind it, so the script gets another period. A script stuck in a loop is still stopped by the next timer
- *     that fires on time, about 1 s later.
+ *     that fires on time, about 1 s later;
+ *   - one timer serves every message (#129): it is not cleared when an answer comes, and when it fires for an earlier
+ *     message, it is armed again for what is left of the one in flight (arming a timer for each frame and clearing
+ *     it at each answer cost ~0.2 ms per frame on a low-end phone).
  * - **Messages** (`f.emit`): structured-cloneable, at most 64 KB, at most 60 per second; others are dropped with a
  *   warning.
  * - **Canvas layers** (spec §12.6): the script draws them in its Worker; each answer may carry their new images
@@ -31,11 +39,12 @@
  */
 import { SCRIPT_LIMITS, type ScriptUse } from '@ouaf/spec'
 import { OuafError } from '../engine/errors.ts'
+import { BLENDSHAPE_NAMES } from '../face.ts'
 import { isEasing } from './easing.ts'
 import { estimateSize } from './size.ts'
 import type { FrameDataBuilder, FrameDataSource } from './frame-data.ts'
 import type { OverrideValue, ScriptOverrides } from './overrides.ts'
-import type { WireCanvas, WireCommand, WireDone, WireEvent, WireFont, WireFrame, WireInit } from './runtime.ts'
+import type { WireCanvas, WireCommand, WireDone, WireEvent, WireFont, WireFrame, WireIdle, WireInit } from './runtime.ts'
 
 /**
  * Events queued for a script before the queue is bounded (spec §12.7). A running script empties it with each frame
@@ -84,6 +93,9 @@ function compactEvents(events: WireEvent[]): WireEvent[] {
 }
 
 export { estimateSize } from './size.ts'
+
+/** The events of a frame that brings none. */
+const NO_EVENTS: WireEvent[] = []
 
 /** How late (ms) the watchdog timer may fire before the delay is blamed on this thread rather than on the script. */
 const WATCHDOG_LATE_MS = 250
@@ -165,15 +177,29 @@ type State = 'idle' | 'starting' | 'running' | 'stopped' | 'disposed'
 export class ScriptHost {
   readonly #o: ScriptHostOptions
   readonly #on: ReadonlySet<string>
+  readonly #clock: () => number
   #state: State = 'idle'
   #connection: ScriptConnection | undefined
   #seq = 0
   /** Sequence number of the message awaiting an answer, or -1. */
   #inFlight = -1
-  #watchdog: unknown
-  /** When the watchdog was armed (`now()`, ms), and for how long. */
-  #armedAt = 0
+  /** When the message in flight was sent (`now()`, ms), or given another period, and how long it has to be answered. */
+  #sentAt = 0
   #period = 0
+  /** The watchdog timer, the message it was armed for, when (`now()`, ms) and for how long. */
+  #watchdog: unknown
+  #timerSeq = -1
+  #timerAt = 0
+  #timerMs = 0
+  /**
+   * The last answer said the script is idle (`WireDone.idle`): no frame is sent until an event waits, the script clock
+   * reaches `#wakeTimer` (ms) or the media time reaches `#wakeDraw` (s) or goes back.
+   */
+  #idle = false
+  #wakeTimer = Infinity
+  #wakeDraw = Infinity
+  /** The frame message, reused (the structured clone copies it at `postMessage`). */
+  readonly #frame: WireFrame = { t: 'frame', seq: 0, time: 0, dt: 0, aspect: 1, clock: 0, faces: [], blendshapes: undefined, pairs: undefined, params: undefined, seed: undefined, events: [] }
   /** The runtime has prepared the sandbox and runs the script (`started`): `setup` is timed from then on. */
   #started = false
   /** Answers received since the last frame, applied at the start of the next one. */
@@ -194,6 +220,7 @@ export class ScriptHost {
   constructor(options: ScriptHostOptions) {
     this.#o = options
     this.#on = new Set(options.on)
+    this.#clock = options.now ?? (() => performance.now())
   }
 
   get state(): State {
@@ -257,6 +284,7 @@ export class ScriptHost {
       canvases: canvases.map((c) => ({ ...c })),
       fonts: canvases.length > 0 && this.#o.fonts ? this.#o.fonts() : [],
     }
+    if (this.#o.uses.includes('face.blendshapes')) init.blendshapes = [...BLENDSHAPE_NAMES]
     this.#send(0, init, Object.values(images))
   }
 
@@ -305,25 +333,32 @@ export class ScriptHost {
       return
     }
     this.#slowFrames = 0
+    if (this.#idle && !this.#due(time)) return
     const dt = this.#lastTime < 0 ? 0 : Math.max(0, time - this.#lastTime)
     this.#lastTime = time
-    const frame: WireFrame = {
-      t: 'frame',
-      seq: ++this.#seq,
-      time,
-      dt,
-      aspect: source.aspect,
-      clock: this.#o.overrides.clock.time,
-      faces: this.#o.frameData.build(source),
-      events: this.#events,
-    }
-    if (this.#o.uses.includes('pairs')) frame.pairs = this.#o.pairs?.() ?? []
-    if (this.#params) frame.params = this.#params
-    if (this.#seed !== undefined) frame.seed = this.#seed
-    this.#events = []
+    const frame = this.#frame
+    frame.seq = ++this.#seq
+    frame.time = time
+    frame.dt = dt
+    frame.aspect = source.aspect
+    frame.clock = this.#o.overrides.clock.time
+    const built = this.#o.frameData.build(source)
+    frame.faces = built.faces
+    frame.blendshapes = built.blendshapes
+    frame.pairs = this.#o.uses.includes('pairs') ? (this.#o.pairs?.() ?? []) : undefined
+    frame.params = this.#params
+    frame.seed = this.#seed
+    frame.events = this.#events.length > 0 ? this.#events : NO_EVENTS
+    if (this.#events.length > 0) this.#events = []
     this.#params = undefined
     this.#seed = undefined
     this.#send(frame.seq, frame)
+  }
+
+  /** An idle script needs this frame: an event waits, a timer or a canvas draw is due, or the media time went back. */
+  #due(time: number): boolean {
+    if (this.#events.length > 0 || this.#o.overrides.clock.time * 1000 >= this.#wakeTimer || time >= this.#wakeDraw) return true
+    return this.#wakeDraw !== Infinity && time < this.#lastTime
   }
 
   /** Stops the script and frees the sandbox. Idempotent. */
@@ -337,10 +372,11 @@ export class ScriptHost {
   #send(seq: number, message: WireInit | WireFrame, images: ImageBitmap[] = []): void {
     this.#inFlight = seq
     // `init`: the runtime prepares the sandbox first, then says when the script starts (`started`).
-    this.#armWatchdog(seq, seq === 0 ? STARTUP_MS : SCRIPT_LIMITS.watchdogMs)
-    const transfer: Transferable[] = message.t === 'frame' ? message.faces.flatMap((f) => (f.landmarks ? [f.landmarks.buffer as ArrayBuffer] : [])) : images
+    this.#watch(seq === 0 ? STARTUP_MS : SCRIPT_LIMITS.watchdogMs)
     try {
-      this.#connection!.port.postMessage(message, transfer)
+      // A frame transfers nothing: its data is reused for the next one, so the structured clone copies it.
+      if (message.t === 'init') this.#connection!.port.postMessage(message, images)
+      else this.#connection!.port.postMessage(message)
     } catch (error) {
       this.#stop(`its frame data could not be sent (${String(error)})`)
     }
@@ -358,15 +394,29 @@ export class ScriptHost {
       // Once, while `init` is in flight: from now on the script runs, and has the watchdog's 1 s (spec §12.7).
       if (this.#started || this.#inFlight !== 0) return
       this.#started = true
-      this.#clearWatchdog()
-      this.#armWatchdog(0, SCRIPT_LIMITS.watchdogMs)
+      this.#watch(SCRIPT_LIMITS.watchdogMs)
+      return
+    }
+    if (m.t === 'wake') {
+      // The idle script did something after an `await`: its output goes with the answer to the next frame (#129).
+      this.#idle = false
       return
     }
     if (m.t !== 'done' || m.seq !== this.#inFlight) return
-    this.#clearWatchdog()
+    // The watchdog timer stays armed: the next message uses it (#129).
     this.#inFlight = -1
+    this.#readIdle((m as WireDone).idle)
     this.#answers.push(m as WireDone)
     this.#settle()
+  }
+
+  /** `WireDone.idle` of an answer (spec §15.1: anything else than numbers means "every frame"). */
+  #readIdle(idle: WireIdle | undefined): void {
+    const timer = idle && typeof idle === 'object' ? wakeTime(idle.timer) : NaN
+    const draw = idle && typeof idle === 'object' ? wakeTime(idle.draw) : NaN
+    this.#idle = !Number.isNaN(timer) && !Number.isNaN(draw)
+    this.#wakeTimer = timer
+    this.#wakeDraw = draw
   }
 
   /** Nothing is in flight any more: resolves the pending `settled()` promises. */
@@ -377,26 +427,47 @@ export class ScriptHost {
     for (const resolve of settling) resolve()
   }
 
-  #armWatchdog(seq: number, ms: number): void {
-    const set = this.#o.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms))
-    this.#armedAt = this.#now()
+  /** The message in flight has `ms` from now to be answered. */
+  #watch(ms: number): void {
+    this.#sentAt = this.#now()
     this.#period = ms
-    this.#watchdog = set(() => this.#onTimeout(seq), ms)
+    // A timer that fires before the deadline is kept: it then waits for what is left.
+    if (this.#watchdog !== undefined && this.#timerAt + this.#timerMs <= this.#sentAt + ms) return
+    this.#clearWatchdog()
+    this.#arm(ms)
+  }
+
+  #arm(ms: number): void {
+    const set = this.#o.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms))
+    this.#timerSeq = this.#inFlight
+    this.#timerAt = this.#now()
+    this.#timerMs = ms
+    this.#watchdog = set(() => this.#onTimeout(), ms)
   }
 
   #now(): number {
-    return (this.#o.now ?? (() => performance.now()))()
+    return this.#clock()
   }
 
-  #onTimeout(seq: number): void {
-    if (this.#state !== 'running' || this.#inFlight !== seq) return
+  #onTimeout(): void {
+    this.#watchdog = undefined
+    // Nothing in flight: the next message arms it again.
+    if (this.#state !== 'running' || this.#inFlight < 0) return
+    const now = this.#now()
     // A late timer means this thread was busy (a long task: rendering, decoding): the script's answer may be waiting
     // behind the timer in the event loop. The script gets another period rather than being stopped for the host's
     // stall; a script stuck in a loop is still stopped by the next timer that fires on time.
-    if (this.#now() - this.#armedAt > this.#period + WATCHDOG_LATE_MS) {
-      this.#armWatchdog(seq, this.#period)
+    if (now - this.#timerAt > this.#timerMs + WATCHDOG_LATE_MS) {
+      this.#sentAt = now
+      this.#arm(this.#period)
       return
     }
+    // Armed for an earlier message: the one in flight has what is left of its period.
+    if (this.#timerSeq !== this.#inFlight) {
+      this.#arm(Math.max(0, this.#sentAt + this.#period - now))
+      return
+    }
+    const seq = this.#inFlight
     if (seq === 0 && !this.#started) this.#stop(`its sandbox was not ready within ${STARTUP_MS / 1000} s`)
     else this.#stop(`it did not answer ${seq === 0 ? 'setup' : 'a frame'} within ${SCRIPT_LIMITS.watchdogMs} ms (an endless loop?)`)
   }
@@ -577,6 +648,12 @@ function flattenProps(props: unknown): Array<[string, unknown]> {
     } else out.push([name, value])
   }
   return out
+}
+
+/** A time of `WireDone.idle`: a missing one is never due; NaN for anything else than a number. */
+function wakeTime(v: unknown): number {
+  if (v === undefined) return Infinity
+  return typeof v === 'number' ? v : NaN
 }
 
 /** `text` cut to `MAX_WARNING_LENGTH` characters. */

@@ -417,7 +417,7 @@ be plain JSON (no `Date`, `Map`, getters, `undefined` in lists). The top level o
 | Function | Called |
 |---|---|
 | `setup(f)` | once, when the filter is activated |
-| `update(f, frame)` | every frame the script receives; avoid it when a binding is enough |
+| `update(f, frame)` | every frame the script receives; avoid it when a binding is enough: a script without `update` gets a frame only for its events, timers and canvas draws, so it costs almost nothing per frame |
 | `on.<event>(f, payload)` | for each event of section 9; face events get `{ face }` (`wink` also `side`), `paramChange` `{ name, value, previous }`, `message:<name>` `{ data }` |
 | `draw.<id>(ctx, f, frame)` | canvas layers: first frame, then up to `fps` times per second, and after `.invalidate()`; `ctx` is an `OffscreenCanvasRenderingContext2D` of `width × height` px, cleared before each call; the `font` assets are its fonts by asset name (`ctx.font = '24px title'`) |
 

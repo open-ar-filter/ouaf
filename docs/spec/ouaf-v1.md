@@ -712,6 +712,10 @@ The sandbox runs the script off the rendering thread: a slow script makes its ow
   in 16.3) MUST be bounded: once it is full, an engine keeps only the last `message:<name>` of each name and the last
   `paramChange` of each parameter (with the `previous` of the first change it replaces), then drops the oldest events.
   The reference engine bounds it at 256 events and warns once.
+- An engine MAY send no frame to a script that has nothing to do with it: no `update`, no queued event, no timer due
+  and no canvas to draw (12.6). The script cannot tell: only `update` and `draw` receive `frame`, `frame.dt` covers the
+  frames not sent, and the next frame sent carries the parameters and the seed that changed meanwhile. The reference
+  engine does so, so that a script that only reacts to events costs the rendering thread almost nothing per frame.
 - **Watchdog**: a script that does not answer within **1 s** (`setup` included) MUST be stopped (the reference
   engine terminates its Worker). The second is the script's: an engine SHOULD NOT count its own preparation of the
   sandbox (canvases, fonts) before `script.js` is evaluated, nor the time a host thread too busy to receive the
