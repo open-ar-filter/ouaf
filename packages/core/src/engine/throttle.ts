@@ -83,6 +83,10 @@ export function throttleTracker(impl: FaceTrackerImpl, throttle: TrackingThrottl
         get sheds() {
           return throttle.ms > 0 ? undefined : inner.sheds
         },
+        // Throttled, the simulated time is a timer: hiding the filters does not shorten it, as for a worker.
+        get offMainThread() {
+          return throttle.ms > 0 || (inner.offMainThread ?? false)
+        },
         configure(next) {
           current = { ...next }
           inner.configure(next)

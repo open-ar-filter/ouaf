@@ -21,6 +21,7 @@ function fakeTracker(options: { faces?: number; mode?: 'sync' | 'manual' | 'thro
     backend: { name: 'fake', source: 'only' },
     timings: { infer: 2 },
     sheds: ['resolution'],
+    offMainThread: true,
     measuring: false,
     track(_i, ts, mediaTime, out, exact) {
       log.push(`track ${ts}${exact ? ' exact' : ''}`)
@@ -90,6 +91,7 @@ describe('TrackingHub: starting and configuring (spec §4.1, §16.2)', () => {
     expect(h.backend).toBeUndefined()
     expect(h.timings).toBeUndefined()
     expect(h.sheds).toBeUndefined()
+    expect(h.offMainThread).toBe(false)
     expect(h.measuring).toBe(false)
     expect(h.starting).toBeUndefined()
     expect(h.config).toEqual({ maxFaces: 2, blendshapes: false, analysisScale: 1 })
@@ -117,6 +119,7 @@ describe('TrackingHub: starting and configuring (spec §4.1, §16.2)', () => {
     expect(h.backend).toEqual({ name: 'fake', source: 'only' })
     expect(h.timings).toEqual({ infer: 2 })
     expect(h.sheds).toEqual(['resolution'])
+    expect(h.offMainThread).toBe(true)
     expect(h.measuring).toBe(false)
 
     // Same needs: nothing to do.

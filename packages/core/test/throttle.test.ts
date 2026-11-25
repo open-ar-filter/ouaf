@@ -63,6 +63,7 @@ function inner(options: { async?: boolean; optional?: boolean } = {}) {
           eager: true,
           timings: { infer: 3 },
           sheds: ['blendshapes' as const],
+          offMainThread: false,
           trackImage(this: FrameTracker) {
             log.push(`trackImage ${this.description}`)
           },
@@ -153,7 +154,8 @@ describe('throttleTracker', () => {
 
   it('without optional members, has none of them', async () => {
     const { impl } = inner()
-    const t = await throttleTracker(impl, { ms: 0 }).create(FULL, ENV)
+    const throttle = { ms: 0 }
+    const t = await throttleTracker(impl, throttle).create(FULL, ENV)
     expect(t.trackImage).toBeUndefined()
     expect(t.reset).toBeUndefined()
     expect(t.benchmark).toBeUndefined()
@@ -162,7 +164,11 @@ describe('throttleTracker', () => {
     expect(t.eager).toBe(false)
     expect(t.timings).toBeUndefined()
     expect(t.sheds).toBeUndefined()
+    expect(t.offMainThread).toBe(false)
     expect(() => t.offer!(input, 1, 0)).not.toThrow()
+    // Throttled, the simulated time is a timer that hiding the filters does not shorten.
+    throttle.ms = 20
+    expect(t.offMainThread).toBe(true)
   })
 
   it('forwards the optional members bound to the inner tracker', async () => {
@@ -179,6 +185,7 @@ describe('throttleTracker', () => {
     // Not throttled: the inner scheduling and sheds.
     expect(t.eager).toBe(true)
     expect(t.sheds).toEqual(['blendshapes'])
+    expect(t.offMainThread).toBe(false)
     t.offer!(input, 5, 0)
     expect(log.at(-1)).toBe('offer 5')
     // Throttled: results come on frame ticks, every capability has a cost, no frames offered.

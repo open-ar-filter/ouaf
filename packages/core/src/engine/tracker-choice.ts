@@ -180,6 +180,10 @@ export class ChoosingFrameTracker implements FrameTracker {
     return this.#current.tracker.sheds
   }
 
+  get offMainThread(): boolean {
+    return this.#current.tracker.offMainThread ?? false
+  }
+
   benchmark(): void {
     const list = this.#toMeasure
     if (!list || !this.#armed || this.#disposed) return
