@@ -252,10 +252,13 @@ test.describe('the GPU', () => {
       }
       slowWindows = 0
       expect(iterations, 'the filter was never disabled').toBeLessThan(1_000_000)
-      // Four times more while frames are quick, twice once they take over a second: the next frames then last under
-      // four times the watchdog's limit, not sixteen (on WebKit's software renderer, 48000 rounds after frames of 3.9 s
-      // held the page for 3 min 30 before the filter was disabled, most of the test's time).
-      iterations = Math.min(iterations * (frameMs > 1000 ? 2 : 4), 1_000_000)
+      // Four times more while frames are quick, twice once they take over a second, a quarter more once they take as
+      // long as the watchdog's limit: the frames that follow stay within reach of the watchdog, which needs two of
+      // them in a row. The time of a frame is far from linear on WebKit's software renderer: after frames of 3.9 s at
+      // 12000 rounds, 48000 rounds held the page for more than 100 s a frame (3 min 30 before the filter was disabled
+      // on one run, never within the 160 s of the slow windows on another).
+      const step = frameMs > GPU_STALL_MS ? 1.25 : frameMs > 1000 ? 2 : 4
+      iterations = Math.min(Math.round(iterations * step), 1_000_000)
       await page.evaluate((n) => window.ouaf!.engine.filters[0]!.setParam('iterations', n), iterations)
       console.log(`evil-heavy-shader: ${Math.round(frameMs)} ms between frames, now ${iterations} iterations`)
     }
