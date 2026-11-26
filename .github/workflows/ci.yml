@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     # The tests run one at a time and mostly wait on real-time clip playback: four machines divide the wall time by
     # about four, while each test still has a machine to itself (timing-sensitive tests are not slowed down).
-    # The groups are made by hand from the durations of the spec files, about 4 minutes each: Playwright's `--shard`
+    # The groups are made by hand from the durations of the spec files on CI, 4 to 5 minutes each: Playwright's `--shard`
     # splits by number of tests, which left one machine with 2 minutes of tests and another with 6. The last group
     # takes every file the others do not name, so a new spec file runs without being added here; a file moved to
     # another group must be added to that list too (else it only runs twice).
@@ -93,13 +93,13 @@ jobs:
       matrix:
         include:
           - shard: 1
-            tests: device-adaptation.spec.ts
+            tests: device-adaptation.spec.ts preview.spec.ts script.spec.ts sources.spec.ts
           - shard: 2
             tests: tracking.spec.ts occlusion.spec.ts
           - shard: 3
-            tests: litert-tracker.spec.ts demos.spec.ts shader.spec.ts package.spec.ts
+            tests: litert-tracker.spec.ts demos.spec.ts shader.spec.ts package.spec.ts warp.spec.ts
           - shard: 4
-            tests: --grep-invert "(evil|device-adaptation|tracking|occlusion|litert-tracker|demos|shader|package)\.spec\.ts"
+            tests: --grep-invert "(evil|device-adaptation|preview|script|sources|tracking|occlusion|litert-tracker|demos|shader|package|warp)\.spec\.ts"
     steps:
       - uses: actions/checkout@v7
 
