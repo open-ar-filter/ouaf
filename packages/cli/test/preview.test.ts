@@ -2,7 +2,7 @@
  * `ouaf preview` without a browser: arguments, reference sets, filter loading, exit codes and output, with the
  * renderer replaced. The real rendering (headless Chromium, determinism) is tested in `e2e/preview.spec.ts`.
  */
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +16,8 @@ import { png } from './helpers.ts'
 
 const fixtures = join(import.meta.dirname, 'fixtures')
 const repo = join(import.meta.dirname, '../../..')
+const FACE_SET = join(repo, 'test-media/faces/all.json')
+const DEFAULT_IDS = ['talk', 'dark-frontal', 'elder-beard-bw', 'mask-hijab', 'three-quarter', 'selfie-lowres', 'two-faces', 'no-face']
 
 let dir: string
 beforeAll(async () => {
@@ -73,16 +75,36 @@ async function preview(args: string[], make: (options: PreviewOptions) => Partia
 }
 
 describe('reference sets', () => {
-  it('the default set lists clips of test-media/ that exist', async () => {
+  it('the default set is a short selection of the reference face set', async () => {
     const refs = await loadReferences(DEFAULT_REFERENCES)
-    expect(refs.map((r) => r.id)).toEqual(['talk', 'walk', 'two-faces', 'no-face'])
+    expect(refs.map((r) => r.id)).toEqual(DEFAULT_IDS)
+    const all = await loadReferences(FACE_SET)
+    for (const r of refs) expect(all.find((a) => a.id === r.id)).toEqual(r)
+    expect(refs.find((r) => r.id === 'two-faces')).toMatchObject({ maxFaces: 2, faces: 2 })
+    expect(refs.find((r) => r.id === 'no-face')).toMatchObject({ faces: 0 })
+  })
+
+  it('the reference face set: files of test-media/ that exist, each documented, each face file credited', async () => {
+    const refs = await loadReferences(FACE_SET)
+    expect(refs.length).toBe(26)
     for (const r of refs) {
       expect(existsSync(r.file)).toBe(true)
       expect(r.file.startsWith(join(repo, 'test-media'))).toBe(true)
-      expect(r.kind).toBe('video')
-      expect(r.from).toBeLessThanOrEqual(r.time)
+      expect(r.faces, r.id).toBeTypeOf('number')
+      expect(r.description, r.id).toBeTruthy()
+      if (r.kind === 'video') expect(r.from).toBeLessThanOrEqual(r.time)
     }
-    expect(refs.find((r) => r.id === 'two-faces')!.maxFaces).toBe(2)
+    // Every photo and clip of test-media/faces/ is in the set and in the credits of its README.
+    const folder = join(repo, 'test-media/faces')
+    const credits = readFileSync(join(folder, 'README.md'), 'utf8')
+    const media = readdirSync(folder).filter((f) => /\.(jpg|mp4)$/.test(f))
+    expect(media.length).toBe(22)
+    for (const f of media) {
+      expect(refs.some((r) => r.file === join(folder, f)), f).toBe(true)
+      expect(credits, f).toContain(`| \`${f}\` |`)
+    }
+    // Hard cases stay documented as such.
+    expect(refs.filter((r) => r.faces === 0).map((r) => r.id)).toEqual(['no-face', 'night-phone', 'profile', 'side-light', 'hand-pencil'])
   })
 
   it('reports a bad set', async () => {
@@ -98,8 +120,10 @@ describe('reference sets', () => {
     await expect(write({ references: [{ id: 'a', file: 'clip.mp4' }] })).rejects.toThrow(/needs "time"/)
     await expect(write({ references: [{ id: 'a', file: 'clip.mp4', from: 2, time: 1 }] })).rejects.toThrow(/"from"/)
     await expect(write({ references: [{ id: 'a', file: 'still.png' }, { id: 'a', file: 'still.png' }] })).rejects.toThrow(/duplicate/)
-    const [image] = await write({ references: [{ id: 'still', file: 'still.png', frames: 3, maxFaces: 2 }] })
-    expect(image).toMatchObject({ id: 'still', kind: 'image', frames: 3, maxFaces: 2, file: join(dir, 'still.png') })
+    await expect(write({ references: [{ id: 'a', file: 'still.png', faces: 2 }] })).rejects.toThrow(/"faces" must be an integer from 0 to "maxFaces"/)
+    await expect(write({ references: [{ id: 'a', file: 'still.png', faces: -1 }] })).rejects.toThrow(/"faces"/)
+    const [image] = await write({ references: [{ id: 'still', file: 'still.png', frames: 3, maxFaces: 2, faces: 0 }] })
+    expect(image).toMatchObject({ id: 'still', kind: 'image', frames: 3, maxFaces: 2, faces: 0, file: join(dir, 'still.png') })
   })
 
   it('an input file is one reference', () => {
@@ -137,13 +161,13 @@ describe('ouaf preview', () => {
   it('renders every reference of the default set, or those chosen', async () => {
     const all = await preview([valid, '-o', 'out'])
     expect(all.code).toBe(EXIT.OK)
-    expect(all.calls[0]!.references.map((r) => r.id)).toEqual(['talk', 'walk', 'two-faces', 'no-face'])
+    expect(all.calls[0]!.references.map((r) => r.id)).toEqual(DEFAULT_IDS)
     expect(all.calls[0]!.outDir).toBe('out')
-    expect(all.out).toMatch(/valid on 4 references: 4 screenshots in out\/ \(Chromium 159\.0\.0\.0, SwiftShader\)/)
-    expect(all.out).toMatch(/^ {2}talk {7}out\/talk\.png {7}360×640, 1 face, 5\.0 % of the pixels changed; frame 48 ms \(p95 60\)/m)
-    const some = await preview([valid, '--ref', 'walk', '--ref', 'talk', '--seed', '7', '--max-size', '0', '--max-faces', '2'])
+    expect(all.out).toMatch(/valid on 8 references: 8 screenshots in out\/ \(Chromium 159\.0\.0\.0, SwiftShader\)/)
+    expect(all.out).toMatch(/^ {2}talk {12}out\/talk\.png {12}360×640, 1 face, 5\.0 % of the pixels changed; frame 48 ms \(p95 60\)/m)
+    const some = await preview([valid, '--ref', 'mask-hijab', '--ref', 'talk', '--seed', '7', '--max-size', '0', '--max-faces', '2'])
     expect(some.calls[0]).toMatchObject({ seed: 7, maxSize: 0, maxFaces: 2, outDir: 'ouaf-preview' })
-    expect(some.calls[0]!.references.map((r) => r.id)).toEqual(['talk', 'walk'])
+    expect(some.calls[0]!.references.map((r) => r.id)).toEqual(['talk', 'mask-hijab'])
   })
 
   it('stacks the filters in the order given', async () => {
@@ -160,7 +184,7 @@ describe('ouaf preview', () => {
 
   it('exit code 2 for usage errors', async () => {
     expect((await preview([])).code).toBe(EXIT.USAGE)
-    expect((await preview([valid, '--ref', 'nope'])).err).toMatch(/Unknown reference "nope"\. References: talk, walk/)
+    expect((await preview([valid, '--ref', 'nope'])).err).toMatch(/Unknown reference "nope"\. References: talk, dark-frontal/)
     expect((await preview([valid, '--at', '1'])).code).toBe(EXIT.USAGE)
     expect((await preview([valid, '--input', join(dir, 'still.png'), '--ref', 'talk'])).code).toBe(EXIT.USAGE)
     expect((await preview([valid, '--input', join(dir, 'missing.mp4')])).code).toBe(EXIT.USAGE)
