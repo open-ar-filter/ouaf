@@ -84,10 +84,22 @@ jobs:
     runs-on: ubuntu-latest
     # The tests run one at a time and mostly wait on real-time clip playback: four machines divide the wall time by
     # about four, while each test still has a machine to itself (timing-sensitive tests are not slowed down).
+    # The groups are made by hand from the durations of the spec files, about 4 minutes each: Playwright's `--shard`
+    # splits by number of tests, which left one machine with 2 minutes of tests and another with 6. The last group
+    # takes every file the others do not name, so a new spec file runs without being added here; a file moved to
+    # another group must be added to that list too (else it only runs twice).
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        include:
+          - shard: 1
+            tests: device-adaptation.spec.ts
+          - shard: 2
+            tests: tracking.spec.ts occlusion.spec.ts
+          - shard: 3
+            tests: litert-tracker.spec.ts demos.spec.ts shader.spec.ts package.spec.ts
+          - shard: 4
+            tests: --grep-invert "(evil|device-adaptation|tracking|occlusion|litert-tracker|demos|shader|package)\.spec\.ts"
     steps:
       - uses: actions/checkout@v7
 
@@ -108,11 +120,24 @@ jobs:
       - name: Download the face model
         run: npm run fetch-models
 
+      # The browser comes from a cache when the lockfile (hence Playwright's version) has not changed; the system
+      # packages are installed apart, so that a slow step says which of the two it was.
+      - name: Cache Chromium
+        id: browser-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium's system packages
+        run: npx playwright install-deps chromium
+
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
 
       - name: Browser tests
-        run: npm run test:browser -- --shard=${{ matrix.shard }}/4
+        run: npm run test:browser -- ${{ matrix.tests }}
 
       - name: Upload test results
         if: failure()
@@ -152,8 +177,19 @@ jobs:
       - name: Download the face model
         run: npm run fetch-models
 
+      - name: Cache ${{ matrix.browser }}
+        id: browser-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ matrix.browser }}-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install the system packages of ${{ matrix.browser }}
+        run: npx playwright install-deps ${{ matrix.browser }}
+
       - name: Install ${{ matrix.browser }}
-        run: npx playwright install --with-deps ${{ matrix.browser }}
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        run: npx playwright install ${{ matrix.browser }}
 
       - name: Malicious filters
         # Under a virtual display: headless Firefox has no WebGL on Linux, so it runs headed (playwright.config.ts).
