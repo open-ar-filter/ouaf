@@ -6,8 +6,9 @@
  * line and column are given when known, so humans and AI agents can go straight to the fix.
  */
 import {
-  assetKind, checkPackageEntries, checkPackageSize, checkShaderSource, closest, createRegistry, formatBytes, kindFromPath, missingManifestHint,
-  PACKAGE_RECOMMENDED_BYTES, parseShaderLog, ShaderDeclarationError, shaderUniformType, shaderVertex, validateManifest, wrapShader,
+  assetKind, checkPackageEntries, checkPackageSize, checkShaderSource, closest, createRegistry, CubeError, formatBytes, gltfChunks, gltfProblems,
+  IMAGE_MAX_SIDE, kindFromPath, missingManifestHint, PACKAGE_RECOMMENDED_BYTES, parseCube, parseShaderLog, ShaderDeclarationError, shaderUniformType,
+  shaderVertex, validateManifest, VIDEO_MAX, wrapShader,
 } from '@ouaf/spec'
 import type { Issue, Severity, ShaderStage, ShaderUniformType, SpecRegistry, TAssetEntry, TAssetKind, WrappedShader } from '@ouaf/spec'
 import type { TSchema } from 'typebox'
@@ -24,10 +25,9 @@ import { ZipError } from './zip.ts'
 
 /** §3: package limits, shared with the engine's package reader. */
 export { PACKAGE_MAX_BYTES, PACKAGE_MAX_ENTRIES, PACKAGE_RECOMMENDED_BYTES } from '@ouaf/spec'
-/** §10.4: images ≤ 4096 px per side. */
-export const IMAGE_MAX_SIDE = 4096
-/** §10.4: videos ≤ 1080p (long side × short side, either orientation), 720p recommended. */
-export const VIDEO_MAX = { long: 1920, short: 1080 }
+/** §10.4: images ≤ 4096 px per side, videos ≤ 1080p (long × short side, either orientation); shared with the engine. */
+export { IMAGE_MAX_SIDE, VIDEO_MAX } from '@ouaf/spec'
+/** §10.4: 720p recommended. */
 export const VIDEO_RECOMMENDED = { long: 1280, short: 720 }
 
 // ---------------------------------------------------------------------------------------------
@@ -350,7 +350,7 @@ async function checkFile(ctx: Ctx, path: string, ref: FileRef) {
     case 'video':
       return checkVideo(ctx, path, loc, info, ref)
     case 'model':
-      return checkModel(ctx, path, loc, bytes, ext)
+      return checkModel(ctx, path, loc, bytes)
     case 'lut':
       return checkCube(ctx, path, loc, bytes)
     case 'shader':
@@ -436,64 +436,92 @@ function checkVideo(ctx: Ctx, path: string, loc: Loc, info: MediaInfo, ref: File
   }
 }
 
-function checkModel(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array, ext: string) {
-  let json: string | undefined
-  if (ext === 'glb') {
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-    if (bytes.length < 20 || view.getUint32(4, true) !== 2) {
-      add(ctx, 'error', 'gltf-version', loc, `"${path}" is not a glTF 2.0 binary.`, 'Export it again as glTF 2.0 (GLB).')
-      return
-    }
-    const length = view.getUint32(12, true)
-    if (view.getUint32(16, true) !== 0x4e4f534a || 20 + length > bytes.length) {
-      add(ctx, 'error', 'gltf-invalid', loc, `"${path}": the GLB has no valid JSON chunk.`, 'Export it again as glTF 2.0 (GLB).')
-      return
-    }
-    json = text(bytes.subarray(20, 20 + length))
-  } else json = text(bytes)
-  if (json === undefined) {
-    add(ctx, 'error', 'encoding', loc, `"${path}": the glTF JSON is not valid UTF-8.`, 'Export it again as glTF 2.0.')
+/**
+ * A glTF / GLB model, by the rules of the engine's loader (`gltfProblems` of `@ouaf/spec`), with two exceptions the
+ * format allows and the engine does not load yet, reported as warnings: files next to a `.gltf`, KTX2 textures.
+ */
+function checkModel(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array) {
+  const again = 'Export it again as glTF 2.0.'
+  const problems = gltfProblems(bytes)
+  const first = problems[0]
+  if (first?.code === 'glb-version') {
+    add(ctx, 'error', 'gltf-version', loc, `"${path}" is not a glTF 2.0 binary.`, 'Export it again as glTF 2.0 (GLB).')
     return
   }
-  const parsed = parseJson(ctx, json, path, loc.path)
-  if (!parsed) return
-  const gltf = parsed.value as { asset?: { version?: unknown }; buffers?: Array<{ uri?: unknown }>; images?: Array<{ uri?: unknown }> }
-  if (typeof gltf.asset?.version !== 'string' || !gltf.asset.version.startsWith('2.')) {
-    add(ctx, 'error', 'gltf-version', loc, `"${path}" is not glTF 2.0 (asset.version is ${JSON.stringify(gltf.asset?.version)}).`,
-      'Export it again as glTF 2.0.')
+  const chunks = gltfChunks(bytes)
+  if ('code' in chunks) {
+    add(ctx, 'error', 'gltf-invalid', loc, `"${path}": the GLB has no valid JSON chunk.`, 'Export it again as glTF 2.0 (GLB).')
+    return
+  }
+  // Stricter than the engine, which reads invalid UTF-8 as replacement characters: glTF JSON is UTF-8.
+  const json = text(chunks.json)
+  if (json === undefined) {
+    add(ctx, 'error', 'encoding', loc, `"${path}": the glTF JSON is not valid UTF-8.`, again)
+    return
+  }
+  if (first?.code === 'gltf-json') {
+    // The same error, with its line and column.
+    if (parseJson(ctx, json, path, loc.path)) add(ctx, 'error', 'gltf-invalid', loc, `"${path}" is ${first.message}.`, again)
     return
   }
   // External resources of a .gltf: local files next to it; remote URLs are forbidden (spec §10.1, §15).
   const dir = path.split('/').slice(0, -1).join('/')
-  const uris = [
-    ...(gltf.buffers ?? []).map((b, i) => [b?.uri, `buffers[${i}]`] as const),
-    ...(gltf.images ?? []).map((b, i) => [b?.uri, `images[${i}]`] as const),
-  ]
   let external: string | undefined
-  for (const [uri, where] of uris) {
-    if (typeof uri !== 'string' || uri.startsWith('data:')) continue
-    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(uri)) {
-      add(ctx, 'error', 'remote-resource', loc, `"${path}" ${where} loads "${uri}": remote resources are forbidden (spec §10.1).`,
-        'Embed the resource (export as GLB) or put the file in the package.')
-      continue
-    }
-    let target = uri
-    try {
-      target = decodeURIComponent(uri)
-    } catch {}
-    const parts: string[] = dir ? dir.split('/') : []
-    for (const s of target.split('/')) {
-      if (s === '..') parts.pop()
-      else if (s !== '.' && s !== '') parts.push(s)
-    }
-    const resolved = parts.join('/')
-    if (!resolved.startsWith('assets/')) {
-      add(ctx, 'error', 'unsafe-path', loc, `"${path}" ${where} points outside assets/ ("${uri}").`, 'Keep the model\'s files under assets/, or export it as GLB.')
-    } else if (!ctx.files.has(resolved)) {
-      missingFile(ctx, resolved, loc)
-    } else {
-      ctx.referenced.add(resolved)
-      external ??= uri
+  for (const p of problems) {
+    const where = p.where ?? ''
+    switch (p.code) {
+      case 'gltf-version':
+        add(ctx, 'error', 'gltf-version', loc, `"${path}" is ${p.message}.`, again)
+        break
+      case 'gltf-external': {
+        const uri = p.uri!
+        if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(uri)) {
+          add(ctx, 'error', 'remote-resource', loc, `"${path}" ${where} loads "${uri}": remote resources are forbidden (spec §10.1).`,
+            'Embed the resource (export as GLB) or put the file in the package.')
+          break
+        }
+        let target = uri
+        try {
+          target = decodeURIComponent(uri)
+        } catch {}
+        const parts: string[] = dir ? dir.split('/') : []
+        for (const s of target.split('/')) {
+          if (s === '..') parts.pop()
+          else if (s !== '.' && s !== '') parts.push(s)
+        }
+        const resolved = parts.join('/')
+        if (!resolved.startsWith('assets/')) {
+          add(ctx, 'error', 'unsafe-path', loc, `"${path}" ${where} points outside assets/ ("${uri}").`, 'Keep the model\'s files under assets/, or export it as GLB.')
+        } else if (!ctx.files.has(resolved)) {
+          missingFile(ctx, resolved, loc)
+        } else {
+          ctx.referenced.add(resolved)
+          external ??= uri
+        }
+        break
+      }
+      case 'gltf-data-uri':
+        add(ctx, 'error', 'gltf-invalid', loc, `"${path}": ${p.message}.`, 'Export the model again as GLB.')
+        break
+      case 'texture-ktx2':
+        add(ctx, 'warning', 'not-loaded-yet', loc,
+          `"${path}": ${where} is a KTX2 texture: valid in the format (spec §10.1), but this engine version does not load models with KTX2 textures yet.`,
+          'Export the model with WebP, AVIF, PNG or JPEG textures until it does.')
+        break
+      case 'texture-format':
+        add(ctx, 'error', 'unsupported-format', loc, `"${path}": ${p.message}.`,
+          'Convert the texture to PNG, JPEG, WebP or AVIF and export the model again.')
+        break
+      case 'texture-unreadable':
+        add(ctx, 'error', 'unreadable-header', loc, `"${path}": ${p.message} from its header.`,
+          'The engine checks them before decoding and refuses the model: export the texture again.')
+        break
+      case 'texture-too-large':
+        add(ctx, 'error', 'image-too-large', loc, `"${path}": ${p.message}.`,
+          `Resize the texture to at most ${IMAGE_MAX_SIDE} px on its longest side and export the model again.`)
+        break
+      default:
+        add(ctx, 'error', 'gltf-invalid', loc, `"${path}" is ${p.message}.`, again)
     }
   }
   if (external !== undefined) {
@@ -502,55 +530,19 @@ function checkModel(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array, ext: st
   }
 }
 
+/** A `.cube` LUT, by the parser of the engine's loader (`parseCube` of `@ouaf/spec`). */
 function checkCube(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array) {
   const src = text(bytes)
   if (src === undefined) {
     add(ctx, 'error', 'encoding', loc, `"${path}" is not valid UTF-8 text.`, 'Export the LUT again as a .cube text file.')
     return
   }
-  const lines = src.split(/\r?\n/)
-  let size: number | undefined
-  let dims = 3
-  let sizeLine = 0
-  let rows = 0
-  const number = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!.trim()
-    if (line === '' || line.startsWith('#')) continue
-    const [word, ...rest] = line.split(/\s+/)
-    if (word === 'LUT_3D_SIZE' || word === 'LUT_1D_SIZE') {
-      dims = word === 'LUT_3D_SIZE' ? 3 : 1
-      size = Number(rest[0])
-      sizeLine = i + 1
-      const max = dims === 3 ? 256 : 65536
-      if (!Number.isInteger(size) || size < 2 || size > max) {
-        add(ctx, 'error', 'lut-syntax', { ...loc, line: i + 1 }, `${word} must be an integer from 2 to ${max}.`, 'E.g. "LUT_3D_SIZE 33".')
-        return
-      }
-    } else if (/^[A-Z][A-Z0-9_]*$/.test(word!)) {
-      continue // TITLE, DOMAIN_MIN, DOMAIN_MAX, LUT_3D_INPUT_RANGE…
-    } else {
-      const values = line.split(/\s+/)
-      if (values.length !== 3 || !values.every((v) => number.test(v))) {
-        add(ctx, 'error', 'lut-syntax', { ...loc, line: i + 1, column: 1 }, `Expected a data row of 3 numbers (R G B), got "${line.slice(0, 40)}".`,
-          'Each data line of a .cube file holds three numbers, e.g. "0.0 0.5 1.0".')
-        return
-      }
-      if (size === undefined) {
-        add(ctx, 'error', 'lut-syntax', { ...loc, line: i + 1 }, 'Data rows before LUT_3D_SIZE.', 'Put "LUT_3D_SIZE <n>" before the data.')
-        return
-      }
-      rows++
-    }
-  }
-  if (size === undefined) {
-    add(ctx, 'error', 'lut-syntax', loc, `"${path}" has no LUT_3D_SIZE line.`, 'Add "LUT_3D_SIZE <n>" before the data, e.g. "LUT_3D_SIZE 33".')
-    return
-  }
-  const expected = dims === 3 ? size ** 3 : size
-  if (rows !== expected) {
-    add(ctx, 'error', 'lut-syntax', { ...loc, line: sizeLine }, `LUT_${dims}D_SIZE ${size} needs ${expected} data rows, the file has ${rows}.`,
-      'Export the LUT again: the file looks truncated.')
+  try {
+    parseCube(src)
+  } catch (e) {
+    if (!(e instanceof CubeError)) throw e
+    if (e.line === undefined) add(ctx, 'error', 'lut-syntax', loc, `"${path}": ${e.reason}`, e.hint)
+    else add(ctx, 'error', 'lut-syntax', { ...loc, line: e.line }, e.reason.charAt(0).toUpperCase() + e.reason.slice(1), e.hint)
   }
 }
 

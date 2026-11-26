@@ -263,8 +263,8 @@ directly (§10.1). **Remote URLs (`http:`, `https:`, `data:`…) are forbidden.*
 | image | PNG, WebP, JPEG, AVIF, SVG (+ inline `svg`, `emoji`) | ≤ 4096 px per side. SVG is rendered as an image (no script, no external resource). KTX2 is accepted by the format but not loaded by the engine yet (`ouaf validate` warns). |
 | spritesheet | an image + `frames: { cols, rows, count?, fps }` | Grid read left to right, top to bottom. |
 | video | MP4 (H.264), WebM (VP9) | ≤ 1080p, 720p recommended; muted; at most 2 playing at once on phones. Transparency: `"alpha": "packed"` (color left half, mask right half), made with `npx ouaf pack-alpha <webm, ProRes 4444 or PNG folder> -o assets/x.mp4` (needs ffmpeg). |
-| model | glTF 2.0 / GLB | Draco and meshopt compression supported. Export as GLB: a `.gltf` with external files (under `assets/`) is valid in the format, but the engine only loads models that embed their buffers and images (`ouaf validate` warns). |
-| lut | `.cube` | 1D or 3D. |
+| model | glTF 2.0 / GLB | Draco and meshopt compression supported. Export as GLB: a `.gltf` with external files (under `assets/`) is valid in the format, but the engine only loads models that embed their buffers and images (`ouaf validate` warns). Embedded textures: PNG, JPEG, WebP or AVIF, ≤ 4096 px per side, checked by `ouaf validate` as the engine does (KTX2 textures: valid in the format, not loaded yet, a warning). |
+| lut | `.cube` | 1D or 3D: one `LUT_3D_SIZE` (2 to 256) or `LUT_1D_SIZE` (2 to 65536) line, then that many rows of three numbers. Optional `DOMAIN_MIN` / `DOMAIN_MAX` (three numbers each, the maximum above the minimum). |
 | shader | `.frag`, `.glsl` | Section 11. |
 | font | WOFF2, WOFF, TTF, OTF | For `text.font`, and by asset name in canvases (`ctx.font`, section 10). |
 
@@ -512,7 +512,7 @@ alpha 0 leaves the image unchanged.
 |---|---|
 | Package | files unpacked: ≤ 5 MB recommended (warning), an engine may refuse above 50 MB or 1000 files |
 | Layers / assets / params | 64 / 256 / 64 |
-| Images | ≤ 4096 px per side |
+| Images | ≤ 4096 px per side (the textures embedded in a model included) |
 | Videos | ≤ 1080p (720p recommended), at most 2 playing at once on phones |
 | Text | 500 characters per layer; inline SVG 100 000 characters |
 | Shader | 32 uniforms, 4 textures, 16 anchors; a shader that keeps the GPU busy over 3 s a frame is disabled |
@@ -764,7 +764,8 @@ then `→` a hint. Fix errors first; warnings do not block (unless `--strict`). 
 | `shader-version`, `shader-main`, `shader-no-effect`, `shader-name` | `#version`, `main()`, no `effect()`, a reserved uniform name | write only `vec4 effect(vec2 uv)`; rename the uniform |
 | `shader-uniform` | a `uniforms` value with no GLSL type (a `map` mixing types, a string) | bind a number, boolean, vec2, vec3 or color |
 | `glsl` | the shader does not compile (line in the `.frag` file) | fix the GLSL at that line: types are strict (`2.0`, not `2`), `ouaf_sample` returns a `vec4` |
-| `lut-syntax` | malformed `.cube` | export the LUT again |
+| `lut-syntax` | malformed `.cube`: a bad or repeated size line, a row that is not three numbers, a wrong row count, a bad `DOMAIN_MIN` / `DOMAIN_MAX` | follow the hint, or export the LUT again |
+| `gltf-version`, `gltf-invalid` | a model that is not glTF 2.0, a broken GLB, a `data:` URI that cannot be decoded | export the model again as GLB (glTF 2.0) |
 | `missing-manifest` | `ouaf validate` on a `filter.ts` folder | run `ouaf pack` |
 | `function-in-data`, `not-json`, `accessor-in-data`, `script-section` | in `filter.ts`: a function outside `setup` / `update` / `on` / `draw`, a non-JSON value, a getter, or `script.<key>` other than `uses` | keep data plain; let `ouaf pack` write the `script` section |
 | `run-error`, `no-default-export`, `build-error` | the top level of `filter.ts` throws, has no default export, or imports something that cannot be bundled (Node built-ins) | `export default defineFilter({ … })`; no browser or Node APIs at the top level |
