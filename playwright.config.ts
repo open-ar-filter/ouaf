@@ -31,7 +31,8 @@ export default defineConfig({
         },
       },
     },
-    // The malicious filters (#27) also run on the other engines: `npm run test:security`.
+    // The malicious filters (#27, e2e/evil.spec.ts) run on the three engines with `npm run test:security`, and only
+    // there: `npm run test:browser` leaves that file out (`--grep-invert`), so that CI does not run it twice on Chromium.
     {
       name: 'firefox',
       testMatch: 'evil.spec.ts',

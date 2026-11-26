@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # The Playwright version of the image the browser jobs run in (their `container.image`, which cannot read this).
+  PLAYWRIGHT_IMAGE_VERSION: 1.65.1
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -82,12 +86,30 @@ jobs:
   browser:
     name: Browser tests (Chromium, test clips, shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    # Playwright's image holds the three browsers and their system packages: nothing to download or install with apt,
+    # which took from 15 seconds to 8 minutes a job. `--user 1001` is the runner's user (files of the workspace,
+    # Firefox refuses to run as root), `--ipc=host` what Chromium needs for its shared memory.
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.1-noble
+      options: --user 1001 --ipc=host
     # The tests run one at a time and mostly wait on real-time clip playback: four machines divide the wall time by
     # about four, while each test still has a machine to itself (timing-sensitive tests are not slowed down).
+    # The groups are made by hand from the durations of the spec files on CI, 4 to 5 minutes each: Playwright's `--shard`
+    # splits by number of tests, which left one machine with 2 minutes of tests and another with 6. The last group
+    # takes every file the others do not name, so a new spec file runs without being added here; a file moved to
+    # another group must be added to that list too (else it only runs twice).
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        include:
+          - shard: 1
+            tests: device-adaptation.spec.ts preview.spec.ts script.spec.ts sources.spec.ts
+          - shard: 2
+            tests: tracking.spec.ts occlusion.spec.ts
+          - shard: 3
+            tests: litert-tracker.spec.ts demos.spec.ts shader.spec.ts package.spec.ts warp.spec.ts
+          - shard: 4
+            tests: --grep-invert "(evil|device-adaptation|preview|script|sources|tracking|occlusion|litert-tracker|demos|shader|package|warp)\.spec\.ts"
     steps:
       - uses: actions/checkout@v7
 
@@ -108,13 +130,22 @@ jobs:
       - name: Download the face model
         run: npm run fetch-models
 
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: The image has the browsers of the installed Playwright
+        # The image tag above is written by hand: after a Playwright update it must follow package-lock.json.
+        run: |
+          node -e '
+            const installed = require("@playwright/test/package.json").version
+            const image = process.env.PLAYWRIGHT_IMAGE_VERSION
+            if (installed !== image) {
+              console.error(`Playwright ${installed} is installed, but the jobs run in the image of ${image}: update the image tags and PLAYWRIGHT_IMAGE_VERSION in .github/workflows/ci.yml.`)
+              process.exit(1)
+            }
+          '
 
       - name: Browser tests
-        run: npm run test:browser -- --shard=${{ matrix.shard }}/4
+        run: npm run test:browser -- ${{ matrix.tests }}
         env:
-          # Each test records the engine code it runs (e2e/coverage/); the `browser-coverage` job adds the shards up.
+          # Each test records the engine code it runs (e2e/coverage/); the `browser-coverage` job adds the groups up.
           OUAF_COVERAGE: 1
 
       - name: Upload recorded coverage
@@ -134,7 +165,8 @@ jobs:
 
   browser-coverage:
     name: Browser test coverage
-    needs: browser
+    # The Chromium job of `security` records coverage too: the malicious filters suite runs there only.
+    needs: [browser, security]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -187,7 +219,14 @@ jobs:
   security:
     name: Malicious filters (${{ matrix.browser }})
     runs-on: ubuntu-latest
-    # The suite of SECURITY.md (#27): every filter of filters/evil/ must fail, on each browser engine.
+    # Playwright's image holds the three browsers and their system packages: nothing to download or install with apt,
+    # which took from 15 seconds to 8 minutes a job. `--user 1001` is the runner's user (files of the workspace,
+    # Firefox refuses to run as root), `--ipc=host` what Chromium needs for its shared memory.
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.1-noble
+      options: --user 1001 --ipc=host
+    # The suite of SECURITY.md (#27): every filter of filters/evil/ must fail, on each browser engine. It runs here
+    # only: `npm run test:browser` leaves e2e/evil.spec.ts out.
     strategy:
       fail-fast: false
       matrix:
@@ -212,12 +251,32 @@ jobs:
       - name: Download the face model
         run: npm run fetch-models
 
-      - name: Install ${{ matrix.browser }}
-        run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: The image has the browsers of the installed Playwright
+        # The image tag above is written by hand: after a Playwright update it must follow package-lock.json.
+        run: |
+          node -e '
+            const installed = require("@playwright/test/package.json").version
+            const image = process.env.PLAYWRIGHT_IMAGE_VERSION
+            if (installed !== image) {
+              console.error(`Playwright ${installed} is installed, but the jobs run in the image of ${image}: update the image tags and PLAYWRIGHT_IMAGE_VERSION in .github/workflows/ci.yml.`)
+              process.exit(1)
+            }
+          '
 
       - name: Malicious filters
         # Under a virtual display: headless Firefox has no WebGL on Linux, so it runs headed (playwright.config.ts).
         run: xvfb-run -a npm run test:security -- --project=${{ matrix.browser }}
+        env:
+          # Recorded on Chromium only (e2e/fixtures.ts): its share of the browser coverage, as the suite runs here only.
+          OUAF_COVERAGE: 1
+
+      - name: Upload recorded coverage
+        if: matrix.browser == 'chromium'
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-coverage-raw-security
+          path: coverage-browser/raw/
+          retention-days: 1
 
       - name: Upload test results
         if: failure()

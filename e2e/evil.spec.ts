@@ -222,7 +222,7 @@ test.describe('the GPU', () => {
     test.slow()
     await start(page, '/engine.html?source=pesquet-talk&autostart')
     // A loop that takes seconds a frame, whatever the GPU: from a few thousand rounds a pixel (seconds on a software
-    // renderer, as in CI), four times more while the frames are still fast, until the engine disables the filter. The
+    // renderer, as in CI), more and more while the frames are still fast, until the engine disables the filter. The
     // filter's default (a million) would hold a software renderer for minutes, during which no page script runs.
     await page.evaluate(() => window.ouaf!.engine.addFilter('/filters/evil/heavy-shader/', { iterations: 3000 }))
     const disabled = /"evil-heavy-shader" was disabled: (its shader kept the GPU busy|the GPU context was lost)/
@@ -247,12 +247,30 @@ test.describe('the GPU', () => {
       // minutes on a slow runner, with the page blocked, until the test times out. Twice the watchdog's limit, as the
       // time between frames is an upper bound of the GPU's.
       if (frameMs > 2 * GPU_STALL_MS) {
-        expect(++slowWindows, `a frame takes ${Math.round(frameMs)} ms at ${iterations} iterations, but the filter was never disabled`).toBeLessThan(8)
+        // No frame at all may also be the clip that stopped playing: WebKit's playback sometimes stalls on CI runners
+        // (see `start`), and with no frame to draw there is nothing for the watchdog to time. The clip is started
+        // again then; its state goes into the failure message, to tell a stalled clip from a shader never stopped.
+        const clip = await page.evaluate(async () => {
+          const video = document.getElementById('video') as HTMLVideoElement
+          const before = video.currentTime
+          await new Promise((resolve) => setTimeout(resolve, 1000))
+          const state = { playing: video.currentTime !== before, paused: video.paused, ended: video.ended, readyState: video.readyState }
+          if (!state.playing) await video.play().catch(() => {})
+          return state
+        })
+        const what = `a frame takes ${Math.round(frameMs)} ms at ${iterations} iterations, but the filter was never disabled`
+        expect(++slowWindows, `${what} (the clip: ${JSON.stringify(clip)})`).toBeLessThan(8)
         continue
       }
       slowWindows = 0
       expect(iterations, 'the filter was never disabled').toBeLessThan(1_000_000)
-      iterations = Math.min(iterations * 4, 1_000_000)
+      // Four times more while frames are quick, twice once they take over a second, a quarter more once they take as
+      // long as the watchdog's limit: the frames that follow stay within reach of the watchdog, which needs two of
+      // them in a row. The time of a frame is far from linear on WebKit's software renderer: after frames of 3.9 s at
+      // 12000 rounds, 48000 rounds held the page for more than 100 s a frame (3 min 30 before the filter was disabled
+      // on one run, never within the 160 s of the slow windows on another).
+      const step = frameMs > GPU_STALL_MS ? 1.25 : frameMs > 1000 ? 2 : 4
+      iterations = Math.min(Math.round(iterations * step), 1_000_000)
       await page.evaluate((n) => window.ouaf!.engine.filters[0]!.setParam('iterations', n), iterations)
       console.log(`evil-heavy-shader: ${Math.round(frameMs)} ms between frames, now ${iterations} iterations`)
     }

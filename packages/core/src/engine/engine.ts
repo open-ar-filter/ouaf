@@ -1140,7 +1140,7 @@ export class Engine {
     if (this.#contextLost) return
     this.#markAuthorShaders(start)
     compositor.render(this.#passes as StagePasses)
-    this.#gpuWatchdog.submitted(this.#authorDraws)
+    this.#gpuWatchdog.submitted(this.#authorDraws, start)
     // Then the frame goes to the scripts that are not busy with a previous one (spec §12.7).
     for (let i = 0; i < this.#stack.length; i++) {
       const filter = this.#stack[i]!

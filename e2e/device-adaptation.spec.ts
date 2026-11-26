@@ -64,12 +64,15 @@ test('slow tracking: capabilities dropped in order, then the face filter hidden;
   // Shown again, then the capabilities come back one by one, last dropped first. Each step waits for its prediction
   // (≥ 14 Hz shown, ≥ 17 Hz with the capability), or on a slow machine for a probe (30 s): up to 4 × 31 s.
   await expect.poll(() => events(page), { ...POLL, timeout: 150_000 }).toContain('ok[]')
-  expect((await events(page)).slice(4)).toEqual([
-    'degraded[blendshapes,extraFaces,resolution]',
-    'degraded[blendshapes,extraFaces]',
-    'degraded[blendshapes]',
-    'ok[]',
-  ])
+  // Without the throttle the governor only keeps dropped what the tracker the benchmark picked can shed
+  // (`FrameTracker.sheds`). MediaPipe computes blendshapes whatever is asked: they come back at once, before the
+  // filter is shown again. Which tracker wins depends on the machine (MediaPipe in Playwright's image on CI).
+  const mediaPipe = await page.evaluate(() => (window.ouaf!.stats?.tracker ?? '').startsWith('MediaPipe'))
+  expect((await events(page)).slice(4)).toEqual(
+    mediaPipe
+      ? ['unsupported[extraFaces,resolution]', 'degraded[extraFaces,resolution]', 'degraded[extraFaces]', 'ok[]']
+      : ['degraded[blendshapes,extraFaces,resolution]', 'degraded[blendshapes,extraFaces]', 'degraded[blendshapes]', 'ok[]'],
+  )
   expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.suspended)).toBe(false)
   expect(await blue(page)).toBeLessThan(5)
   expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
