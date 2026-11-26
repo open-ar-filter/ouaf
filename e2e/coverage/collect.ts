@@ -28,6 +28,21 @@ const WORKER_POLL_MS = 1000
 /** How long a worker has to answer a command before it is taken for gone. */
 const WORKER_TIMEOUT_MS = 5000
 
+/**
+ * How long the page has to answer at the end of a test. A page whose renderer crashed (the heap bomb of
+ * e2e/evil.spec.ts, a known limitation on Chromium) never answers, and never refuses either: without this bound the
+ * teardown of the test waited for its whole timeout.
+ */
+const PAGE_TIMEOUT_MS = 10_000
+
+/** `promise`, or `undefined` once `ms` have passed (the promise is left to end on its own). */
+function within<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(undefined), ms)
+    promise.then(resolve, reject).finally(() => clearTimeout(timer))
+  })
+}
+
 interface ScriptCoverage {
   url: string
   functions: FunctionCoverage[]
@@ -40,6 +55,8 @@ export async function startCoverage(page: Page): Promise<(testInfo: TestInfo) =>
   const readings: ScriptCoverage[] = []
   const pending = new Map<number, (result: unknown) => void>()
   let nextId = 1
+  let crashed = false
+  page.on('crash', () => (crashed = true))
 
   /** A command for a worker, through the page's session. Resolves with `undefined` when the worker is gone. */
   function sendTo(sessionId: string, method: string, params: object = {}): Promise<unknown> {
@@ -86,10 +103,13 @@ export async function startCoverage(page: Page): Promise<(testInfo: TestInfo) =>
   return async (testInfo) => {
     clearInterval(poll)
     try {
-      const fromWorkers = [...workers].map(readWorker)
-      const { result } = await session.send('Profiler.takePreciseCoverage')
-      await Promise.all(fromWorkers)
-      for (const script of result) if (PACKAGE_SOURCE.test(script.url)) readings.push(script)
+      // A crashed page has nothing left to read: what it covered since the last reading of its workers is lost.
+      if (!crashed) {
+        const fromWorkers = [...workers].map(readWorker)
+        const fromPage = await within(session.send('Profiler.takePreciseCoverage'), PAGE_TIMEOUT_MS)
+        await Promise.all(fromWorkers)
+        for (const script of fromPage?.result ?? []) if (PACKAGE_SOURCE.test(script.url)) readings.push(script)
+      }
     } catch {
       // The test closed its page: what the page covered is lost, the test itself is not affected.
     }
@@ -106,7 +126,7 @@ export async function startCoverage(page: Page): Promise<(testInfo: TestInfo) =>
     }
     mkdirSync(RAW_DIR, { recursive: true })
     writeFileSync(join(RAW_DIR, `${testInfo.testId}-${testInfo.retry}.json`), JSON.stringify({ test: testInfo.titlePath.join(' › '), scripts }))
-    await session.detach().catch(() => {})
+    await within(session.detach().catch(() => {}), PAGE_TIMEOUT_MS)
   }
 }
 
