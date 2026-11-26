@@ -11,6 +11,11 @@ export type Format =
   | 'woff2' | 'woff' | 'sfnt' | 'ttc'
   | 'zip' | 'json' | 'text'
 
+/** §10.4: images ≤ 4096 px per side (the textures embedded in a model included). */
+export const IMAGE_MAX_SIDE = 4096
+/** §10.4: videos ≤ 1080p (long side × short side, either orientation). */
+export const VIDEO_MAX = { long: 1920, short: 1080 } as const
+
 export interface MediaInfo {
   format: Format
   width?: number

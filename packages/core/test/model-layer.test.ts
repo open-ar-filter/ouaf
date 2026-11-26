@@ -100,6 +100,10 @@ describe('model loader', () => {
     expect(() => checkGltf(json({ asset: { version: '2.0' }, buffers: [{ uri: 'cube.bin', byteLength: 4 }] }))).toThrow(/"cube.bin": a model must embed/)
     expect(() => checkGltf(json({ asset: { version: '2.0' }, images: [{ uri: 'https://example.com/a.png' }] }))).toThrow(/https:\/\/example.com\/a.png/)
     expect(() => checkGltf(json({ asset: { version: '2.0' }, buffers: [{ uri: 'data:application/octet-stream;base64,AAAA', byteLength: 3 }] }))).not.toThrow()
+    // The rules of `gltfProblems` (@ouaf/spec, tested there): the first problem is the error.
+    expect(() => checkGltf(new TextEncoder().encode('null'))).toThrow('not glTF 2.0 (asset.version is undefined)')
+    expect(() => checkGltf(json({ asset: { version: '2.0' }, buffers: [{ uri: 'data:application/octet-stream;base64,@@@' }] }))).toThrow('the data: URI of buffers[0] cannot be decoded')
+    expect(() => checkGltf(json({ asset: { version: '2.0' }, images: {} }))).toThrow('"images" is not an array')
   })
 
   it('checks textures from their headers before decoding: format, at most 4096 px per side', () => {

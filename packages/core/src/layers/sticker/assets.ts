@@ -13,7 +13,7 @@
  * sRGB-encoded bytes (`NoColorSpace`), uploaded without flipY (v = 0 is the top row), with premultiplied alpha for
  * images; a video's texture is refreshed only when the video presents a new frame.
  */
-import { sniff, type TAssetEntry } from '@ouaf/spec'
+import { IMAGE_MAX_SIDE, VIDEO_MAX, sniff, type TAssetEntry } from '@ouaf/spec'
 import {
   ClampToEdgeWrapping,
   LinearFilter,
@@ -25,10 +25,8 @@ import {
 import type { AssetLoader, AssetRequest } from '../../engine/assets.ts'
 import { AssetError } from '../../engine/errors.ts'
 
-/** §10.4: images ≤ 4096 px per side. */
-export const IMAGE_MAX_SIDE = 4096
-/** §10.4: videos ≤ 1080p (long side × short side, either orientation). */
-export const VIDEO_MAX = { long: 1920, short: 1080 } as const
+/** §10.4 limits, shared with `ouaf validate`: images ≤ 4096 px per side, videos ≤ 1080p. */
+export { IMAGE_MAX_SIDE, VIDEO_MAX }
 /** Long side of rasterized SVG images and emoji (px). */
 export const SVG_RASTER_SIZE = 1024
 export const EMOJI_RASTER_SIZE = 256

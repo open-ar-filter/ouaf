@@ -21,7 +21,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js'
-import { sniff } from '@ouaf/spec'
+import { gltfProblems } from '@ouaf/spec'
 import { AssetError } from '../../engine/errors.ts'
 import type { AssetLoader, AssetRequest } from '../../engine/assets.ts'
 
@@ -118,86 +118,14 @@ function dracoLoader(assetsBaseUrl: string): DRACOLoader {
   return loader
 }
 
-const GLB_MAGIC = 0x46546c67 // 'glTF'
-const BIN_CHUNK = 0x004e4942 // 'BIN\0'
-/** Spec §10.4: images ≤ 4096 px per side (glTF textures included). */
-export const TEXTURE_MAX_SIDE = 4096
-
-interface GltfJson {
-  asset?: { version?: unknown }
-  buffers?: Array<{ uri?: unknown }>
-  bufferViews?: Array<{ buffer?: unknown; byteOffset?: unknown; byteLength?: unknown }>
-  images?: Array<{ uri?: unknown; bufferView?: unknown; mimeType?: unknown }>
-}
-
-/** The glTF JSON of a GLB or `.gltf` file, and the GLB's BIN chunk. */
-function readGltf(bytes: Uint8Array): { json: GltfJson; bin: Uint8Array | undefined } {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  if (bytes.length >= 20 && view.getUint32(0, true) === GLB_MAGIC) {
-    if (view.getUint32(4, true) !== 2) throw new Error('not a glTF 2.0 binary')
-    const length = view.getUint32(12, true)
-    if (view.getUint32(16, true) !== 0x4e4f534a || 20 + length > bytes.length) throw new Error('the GLB has no valid JSON chunk')
-    const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + length))) as GltfJson
-    const at = 20 + length
-    const binLength = at + 8 <= bytes.length ? view.getUint32(at, true) : 0
-    const bin = binLength > 0 && view.getUint32(at + 4, true) === BIN_CHUNK ? bytes.subarray(at + 8, at + 8 + binLength) : undefined
-    return { json, bin }
-  }
-  return { json: JSON.parse(new TextDecoder().decode(bytes)) as GltfJson, bin: undefined }
-}
-
-/** Bytes of a `data:` URI (base64 or percent-encoded). */
-function dataUri(uri: string): Uint8Array {
-  const comma = uri.indexOf(',')
-  const body = uri.slice(comma + 1)
-  if (/;base64$/i.test(uri.slice(0, comma))) return Uint8Array.from(atob(body), (c) => c.charCodeAt(0))
-  return new TextEncoder().encode(decodeURIComponent(body))
-}
-
 /**
  * Checks a glTF before parsing it (throws an `Error` saying why): glTF 2.0; only embedded resources (spec §10.1,
  * §15); textures in PNG, JPEG, WebP or AVIF of at most 4096 px per side, read from their headers (spec §10.4).
+ * The rules are `gltfProblems` of `@ouaf/spec`, the ones `ouaf validate` applies.
  */
 export function checkGltf(bytes: Uint8Array): void {
-  let parsed: { json: GltfJson; bin: Uint8Array | undefined }
-  try {
-    parsed = readGltf(bytes)
-  } catch (cause) {
-    throw new Error(`not a glTF 2.0 / GLB file (${cause instanceof Error ? cause.message : String(cause)})`)
-  }
-  const gltf = parsed.json
-  const version = gltf?.asset?.version
-  if (typeof version !== 'string' || !version.startsWith('2.')) throw new Error(`not glTF 2.0 (asset.version is ${JSON.stringify(version)})`)
-  const uris = [...(gltf.buffers ?? []), ...(gltf.images ?? [])].map((r) => r?.uri).filter((u): u is string => typeof u === 'string')
-  const external = uris.find((u) => !u.startsWith('data:'))
-  if (external !== undefined) {
-    throw new Error(`it loads "${external}": a model must embed its buffers and images (export it as GLB)`)
-  }
-
-  // Bytes of each buffer: the GLB's BIN chunk (buffer 0 without uri) or a data: URI.
-  const buffers = (gltf.buffers ?? []).map((b, i) =>
-    typeof b?.uri === 'string' ? dataUri(b.uri) : i === 0 ? parsed.bin : undefined,
-  )
-  ;(gltf.images ?? []).forEach((image, i) => {
-    let data: Uint8Array | undefined
-    if (typeof image?.uri === 'string') data = dataUri(image.uri)
-    else if (typeof image?.bufferView === 'number') {
-      const view = gltf.bufferViews?.[image.bufferView]
-      const buffer = typeof view?.buffer === 'number' ? buffers[view.buffer] : undefined
-      const offset = typeof view?.byteOffset === 'number' ? view.byteOffset : 0
-      if (buffer && typeof view?.byteLength === 'number') data = buffer.subarray(offset, offset + view.byteLength)
-    }
-    if (!data) return
-    const info = sniff(data)
-    if (info?.format === 'ktx2') throw new Error(`texture ${i} is KTX2, which models do not support yet`)
-    if (!info || !['png', 'jpeg', 'webp', 'avif'].includes(info.format)) {
-      throw new Error(`texture ${i} is not a PNG, JPEG, WebP or AVIF image${info ? ` (its content is ${info.format})` : ''}`)
-    }
-    if (info.width === undefined || info.height === undefined) throw new Error(`could not read the dimensions of texture ${i}`)
-    if (info.width > TEXTURE_MAX_SIDE || info.height > TEXTURE_MAX_SIDE) {
-      throw new Error(`texture ${i} is ${info.width}×${info.height} px: images are limited to ${TEXTURE_MAX_SIDE} px per side (spec §10.4)`)
-    }
-  })
+  const [problem] = gltfProblems(bytes)
+  if (problem) throw new Error(problem.message)
 }
 
 /** Parses a checked glTF / GLB. Exported for tests; `assetsBaseUrl` locates the Draco decoder. */
