@@ -272,10 +272,15 @@ function readOffsets(view: DataView, stbl: Box, sizes: Uint32Array): Float64Arra
   const runs = tableCount(view, stsc, 4, 12)
   const offsets = new Float64Array(n)
   let i = 0
+  let previous = -1
   for (let r = 0; r < runs && i < n; r++) {
     const p = stsc.start + 8 + r * 12
     const first = view.getUint32(p) - 1
     const perChunk = view.getUint32(p + 4)
+    // Runs come in chunk order (ISO/IEC 14496-12 §8.7.4): each chunk is then visited once, whatever the table says.
+    // Without it, runs going back and forth walk the chunk table once each (quadratic on a forged file).
+    if (first <= previous) throw new Mp4Error('The sample-to-chunk table is not in chunk order.')
+    previous = first
     // Chunks past the offset table do not exist: stopping there also bounds the loop when `perChunk` is 0.
     const last = Math.min(r + 1 < runs ? view.getUint32(p + 12) - 1 : chunkCount, chunkCount)
     for (let c = first; c < last && i < n; c++) {

@@ -81,6 +81,17 @@ describe('GPU watchdog', () => {
     expect(s.stalled).toHaveLength(1)
   })
 
+  it('keeps the filters of each frame when the caller reuses its array', () => {
+    const s = setup()
+    const drawn = ['a']
+    s.watchdog.submitted(drawn)
+    // The next frame draws another filter, in the same array, while the first one is still on the GPU.
+    drawn[0] = 'b'
+    s.watchdog.submitted(drawn)
+    s.advance(GPU_STALL_MS * GPU_STALL_FRAMES + 1)
+    expect(s.stalled).toEqual([[['a'], GPU_STALL_MS * GPU_STALL_FRAMES + 1]])
+  })
+
   it('does not blame a single slow frame between fast ones', () => {
     const s = setup()
     for (let i = 0; i < 5; i++) {

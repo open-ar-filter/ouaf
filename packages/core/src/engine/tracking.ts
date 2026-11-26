@@ -163,7 +163,7 @@ export class TrackingHub {
   }
 
   /**
-   * Tracking rate in Hz over the sliding window ending at the last `submit` (spec §16.1), or since the last
+   * Tracking rate in Hz over the sliding window ending at the last `submit` or `track` (spec §16.1), or since the last
    * `restartRate` when that is more recent.
    */
   get rateHz(): number {
@@ -233,8 +233,8 @@ export class TrackingHub {
   }
 
   /**
-   * Restarts the rate window at `now` (same clock as `submit`): the rate then only counts the results completed
-   * since, e.g. after the configuration changed (spec §16.2) or after a pause of frames.
+   * Restarts the rate window at `now` (`performance.now` clock, as `submit`): the rate then only counts the results
+   * completed since, e.g. after the configuration changed (spec §16.2) or after a pause of frames.
    */
   restartRate(now: number): void {
     this.#rateFrom = now
@@ -322,7 +322,17 @@ export class TrackingHub {
    * reported to `onError` and leave the previous result; it never rejects.
    */
   async track(input: TrackerInput, now: number, mediaTime: number, still = false): Promise<void> {
-    this.#lastNow = now
+    // The rate window is on the clock of the results (`performance.now`), which `now` is not for a file source (its
+    // media time): the window ends when this call does.
+    this.#lastNow = performance.now()
+    try {
+      await this.#track(input, now, mediaTime, still)
+    } finally {
+      this.#lastNow = performance.now()
+    }
+  }
+
+  async #track(input: TrackerInput, now: number, mediaTime: number, still: boolean): Promise<void> {
     const starting = this.starting
     if (starting) await starting.catch(() => {})
     while (this.#inflight) await this.#inflight

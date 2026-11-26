@@ -455,8 +455,12 @@ export function scriptRuntime(scope: RuntimeScope, options: RuntimeOptions): voi
       else payload = e.side ? { face: eventFace(e.face ?? 0), side: e.side } : { face: eventFace(e.face ?? 0) }
       run(`on.${e.name}`, () => fn(f, payload))
     }
-    // Per-face state is reset when the face leaves (after its faceLeave handler).
-    if (e.name === 'faceLeave' && e.face !== undefined) faceStates.delete(e.face)
+    // Per-face state is reset when the face leaves (after its faceLeave handler, when it has one: the host sends
+    // this event to every script). Its id is never reused: the layer handles cached for it go too.
+    if (e.name === 'faceLeave' && e.face !== undefined) {
+      faceStates.delete(e.face)
+      for (let i = 0; i < layerIds.length; i++) handles.delete(`${i}:${e.face}`)
+    }
   }
 
   function runTimers(): void {

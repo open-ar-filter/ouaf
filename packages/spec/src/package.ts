@@ -122,7 +122,7 @@ export function formatBytes(n: number): string {
   return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)} MB` : n >= 1000 ? `${(n / 1000).toFixed(0)} kB` : `${n} B`
 }
 
-const SHRINK = 'Compress the assets (KTX2 textures, Draco/meshopt models, shorter or smaller videos).'
+const SHRINK = 'Compress the assets (WebP or AVIF images, Draco/meshopt models, shorter or smaller videos).'
 
 /**
  * The limits a package exceeds (spec §3): its number of entries and the size of its files unpacked. The archive is
