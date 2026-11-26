@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Model layer (#21) on `/engine.html`: `filters/fixtures/model-screen/` lays models out on the screen (no face needed,

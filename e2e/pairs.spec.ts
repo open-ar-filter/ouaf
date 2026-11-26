@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures.ts'
 
 /**
  * Pairs of faces (spec §12.4, §13) with real tracking: `frame.pairs` and the `pairContact` / `pairSeparate` events,

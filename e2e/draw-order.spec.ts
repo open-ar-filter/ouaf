@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures.ts'
 
 /**
  * Draw order of objects on one anchor (#150, spec §7) on `/engine.html` with `filters/fixtures/draw-order/`: two red

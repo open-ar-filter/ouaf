@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { crc32, deflateSync } from 'node:zlib'
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures.ts'
 import { run } from '../packages/cli/src/cli.ts'
 
 /**

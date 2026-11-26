@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Head occluder (#155) on `/engine.html`: `filters/fixtures/glasses/` puts glasses shaped like the `glasses` demo on

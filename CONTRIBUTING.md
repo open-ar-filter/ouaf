@@ -34,6 +34,7 @@ Without `npm run fetch-models` the playground still runs, but face tracking is u
 | `npm run build:schema` | Regenerates the JSON Schema from the TypeBox schemas in `packages/spec` |
 | `npm run fetch-models` | Downloads and checks the face model, extracts its TFLite files |
 | `npm run test:browser` | Browser tests on the test clips (Playwright, Chromium; needs `fetch-models`) |
+| `npm run test:browser:coverage` | The same tests with V8 coverage of the `packages/*/src` code they run in the page and in its workers: summary in the terminal, HTML report in `coverage-browser/index.html` (also `lcov.info`) |
 | `npm run test:security` | The malicious filters suite ([`SECURITY.md`](SECURITY.md)) on Chromium, Firefox and WebKit; on Linux without a display, run it under `xvfb-run -a` (headless Firefox has no WebGL there) |
 | `npx ouaf validate <folder\|file.ouaf>` | Checks a filter (manifest, files, formats, limits); `--json` for tools |
 | `npx ouaf pack <folder> [-o out.ouaf]` | Builds a `.ouaf` package from `filter.ts` / `filter.js` and `assets/` (bundled with Rolldown, validated before it is written) |
@@ -52,6 +53,21 @@ add tests with new code. Modules that cannot run in Node (WebGL context, WebCode
 `ouaf preview` page) are left out of the measure, listed one by one in [`vitest.config.ts`](vitest.config.ts): the
 browser tests (`e2e/`) cover them. Do not add a module to that list to pass the threshold. CI publishes the summary on
 the job page and the HTML report as the `coverage` artifact.
+
+`npm run test:browser:coverage` measures those modules, and the rest of the engine as the browser runs it. It sets
+`OUAF_COVERAGE=1`, with which every test's page records the code it runs ([`e2e/fixtures.ts`](e2e/fixtures.ts),
+[`e2e/coverage/`](e2e/coverage)); `npm run coverage:browser` then writes the reports. Nothing is instrumented: Chromium
+counts, the dev server serves the same code. The report lists only the files the browser loaded, and leaves out what
+runs outside the test's page (the page of `ouaf preview`, the script host inside its sandbox). A spec imports `test`
+and `expect` from `./fixtures.ts`, not from `@playwright/test`, or its tests are not measured.
+
+That run fails when the modules left out of the unit measure
+([`e2e/coverage/browser-only.ts`](e2e/coverage/browser-only.ts)) are, taken together, below **80 %** of lines,
+statements, functions or branches: a change to one of them comes with browser tests
+([`e2e/edges.spec.ts`](e2e/edges.spec.ts) has their error paths). The other files are reported without a threshold,
+since the unit run answers for them. CI records the coverage in the browser test shards, and the
+`Browser test coverage` job adds them up, applies the threshold and publishes the summary, with the HTML report as the
+`coverage-browser` artifact.
 
 ## Before opening a pull request
 

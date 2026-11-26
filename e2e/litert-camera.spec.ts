@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures.ts'
 
 /**
  * The LiteRT.js tracker on a camera (#165): its worker reads the frames straight from the camera's track
