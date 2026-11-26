@@ -222,7 +222,7 @@ test.describe('the GPU', () => {
     test.slow()
     await start(page, '/engine.html?source=pesquet-talk&autostart')
     // A loop that takes seconds a frame, whatever the GPU: from a few thousand rounds a pixel (seconds on a software
-    // renderer, as in CI), four times more while the frames are still fast, until the engine disables the filter. The
+    // renderer, as in CI), more and more while the frames are still fast, until the engine disables the filter. The
     // filter's default (a million) would hold a software renderer for minutes, during which no page script runs.
     await page.evaluate(() => window.ouaf!.engine.addFilter('/filters/evil/heavy-shader/', { iterations: 3000 }))
     const disabled = /"evil-heavy-shader" was disabled: (its shader kept the GPU busy|the GPU context was lost)/
@@ -252,7 +252,10 @@ test.describe('the GPU', () => {
       }
       slowWindows = 0
       expect(iterations, 'the filter was never disabled').toBeLessThan(1_000_000)
-      iterations = Math.min(iterations * 4, 1_000_000)
+      // Four times more while frames are quick, twice once they take over a second: the next frames then last under
+      // four times the watchdog's limit, not sixteen (on WebKit's software renderer, 48000 rounds after frames of 3.9 s
+      // held the page for 3 min 30 before the filter was disabled, most of the test's time).
+      iterations = Math.min(iterations * (frameMs > 1000 ? 2 : 4), 1_000_000)
       await page.evaluate((n) => window.ouaf!.engine.filters[0]!.setParam('iterations', n), iterations)
       console.log(`evil-heavy-shader: ${Math.round(frameMs)} ms between frames, now ${iterations} iterations`)
     }
