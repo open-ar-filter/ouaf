@@ -309,6 +309,7 @@ describe('choosingFaceTracker: edge cases', () => {
     const make = (name: string, eager: boolean) => (): FrameTracker => ({
       description: `${name} tracker`,
       eager,
+      ...(eager ? { offMainThread: true } : {}),
       timings: { [name]: 1 },
       sheds: [name === 'LiteRT' ? 'resolution' : 'blendshapes'],
       track(_i, _t, _m, out) {
@@ -327,6 +328,7 @@ describe('choosingFaceTracker: edge cases', () => {
     expect(t.description).toBe('LiteRT.js (LiteRT tracker) (pending)')
     expect(t.timings).toEqual({ LiteRT: 1 })
     expect(t.sheds).toEqual(['resolution'])
+    expect(t.offMainThread).toBe(true)
     t.offer!(input, 1, 0)
     expect(offers).toEqual(['LiteRT 1'])
     t.benchmark!()

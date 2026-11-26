@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Text layer (#19) on `/engine.html` with the `filters/fixtures/text/` fixture: built-in fonts loaded through the

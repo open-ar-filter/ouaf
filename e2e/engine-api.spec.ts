@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Public engine API (#11) on `/engine.html`: `engine.send` reaches every filter's script, `engine.on('filter:<name>')`

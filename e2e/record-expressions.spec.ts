@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { test } from '@playwright/test'
+import { test } from './fixtures.ts'
 import { BLENDSHAPE_NAMES } from '../packages/core/src/face.ts'
 import { EXPRESSION_FIXTURE_BLENDSHAPES, type ExpressionFixture } from '../packages/core/test/expression-fixture.ts'
 

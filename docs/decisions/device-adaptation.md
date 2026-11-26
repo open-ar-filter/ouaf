@@ -32,7 +32,7 @@ enabled and tracking runs; file sources (image, offline video, `pushFrame`) are 
 | Settle after each change | 1 s | MediaPipe reconfigures asynchronously; the rate window needs a few results |
 | Drop the next optional capability | settled rate < 13 Hz | 1 Hz of margin above the floor, so that the filter is not hidden when a drop is enough |
 | Hide the face filters | < 12 Hz for 3 s, nothing left to drop | spec §16.3 |
-| Show them again | predicted rate *with the filters shown* > 14 Hz for 1 s | spec §16.3; doubled after each quick re-hide |
+| Show them again | predicted rate *with the filters shown* > 14 Hz for 1 s | spec §16.3; doubled after each quick re-hide; tracker in a worker: the rate while hidden, capped by `1000 / frameMs` (#180) |
 | Restore the last capability dropped | predicted rate ≥ 17 Hz for 5 s | 4 Hz above the drop level; doubled when it had to be dropped again within 10 s |
 | Tracker warm-up | first 1 s after the governor starts | its first results are slower (7.4 Hz for a worker tracker's first results on the Redmi) |
 | Faces | showing and restoring judge only the results with the faces of the drop or hide (rate from their intervals, their pipeline time); none in the window: no decision, timers kept | without a face MediaPipe runs only its detector (Redmi: 11 → 23 Hz); the test clips lose the face at cuts and profiles, so a time-based gate blocked recovery |
@@ -60,6 +60,23 @@ with no face in view, MediaPipe running only its detector). Such a rate still co
 `DeviceGovernor` unit tests and by `e2e/device-adaptation.spec.ts` (fixture `busy`: a layer that blocks the main
 thread 85 ms per frame). The doubling after a failed show did apply on the phone (the delay went from 1 s to 2 s), but
 a doubled 1 s delay cannot prevent a flicker that the prediction lets through.
+
+**Tracker in a worker (#180).** That prediction assumes that hiding the filters is what sped tracking up. With the
+LiteRT.js tracker in its worker (the default since #165), hiding them frees the main thread, not the tracker: the gain
+stays about 1 and the prediction stays at the rate before hiding, below 12 Hz by definition. A filter hidden by a
+short dip (the face lost at a cut of a looping clip, a moment of load) then stayed hidden until the probe, 30 s or
+more after tracking had recovered. A dip that ends during the 6 s baseline has the same effect with any tracker: the
+baseline already holds the recovered rate. So when the tracker says it runs off the main thread
+(`FrameTracker.offMainThread`), the show is judged on the rate measured while hidden, from the first settled second:
+shown again about 2 s after tracking is back above 14 Hz. Two limits keep the flicker protection:
+- the rate is capped by `1000 / frameMs`, the engine's own main-thread time per frame measured just before the hide:
+  the worker's results are handled on the main thread between frames, so a filter that blocks it (fixture `busy`,
+  85 ms per frame: 11.8 Hz at most) is not shown again on the hidden rate;
+- after a quick re-hide (hidden again within 10 s of a show, which doubles the show delay), the governor goes back to
+  the prediction and the probes until the filters have stayed shown for 30 s: drawing them did slow tracking after all.
+
+A main-thread tracker (MediaPipe) whose dip ends during the baseline still waits for the probe: from the rates alone,
+a hidden rate that recovered cannot be told from one that hiding freed, which is the Redmi case above.
 
 The root cause on that phone is the main-thread MediaPipe tracker (8–12 Hz there). The decision of #83 / #6 (our
 LiteRT.js pipeline in a worker: 15–18 Hz on the same phone, rendering at 29 fps whatever the tracking rate) is not in

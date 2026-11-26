@@ -23,6 +23,7 @@ npm run fetch-models   # downloads the MediaPipe models (needed for face trackin
 npm run dev            # serves the playground over HTTPS on the LAN
 npm run build          # production build of the playground
 npm run test:browser   # browser tests on the test clips (Playwright; needs `npm run fetch-models`)
+npm run test:browser:coverage  # same, with a coverage report in coverage-browser/
 ```
 
 ### Testing on a phone

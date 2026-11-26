@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 import type { OuafTestHook } from '../apps/playground/src/test-hook.ts'
 
 type Snapshot = Pick<OuafTestHook, 'frames' | 'faceCounts' | 'orderedFrames' | 'error' | 'delegate' | 'lastAnchors'>

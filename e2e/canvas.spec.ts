@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Canvas layer (#25) on `/engine.html`, in the real script sandbox: `filters/fixtures/canvas-screen/` lays canvases

@@ -830,7 +830,9 @@ To keep the tracking rate above the floor, an engine MAY drop the following capa
 - **While running**, the filter is hidden once the rate has stayed below **12 Hz for 3 s**, and shown again once the
   rate is back above **14 Hz**. The gap between the two thresholds prevents flicker. The rate that counts is the one
   with the filter shown and the faces tracked: hiding the filter frees the device, and a tracker is faster without a
-  face to analyse, so neither is a recovery by itself.
+  face to analyse, so neither is a recovery by itself. A tracker that runs off the main thread (a worker) gains little
+  from the hide: the engine MAY then judge on the rate measured while the filter is hidden, so that a filter hidden by
+  a short dip is shown again within seconds.
 - While a filter is hidden, the engine renders the **raw camera image**, without any part of the filter. The filter is
   suspended: no layers are drawn, no events are delivered and its script is not called. Tracking keeps running, to
   measure when the filter can be shown again.

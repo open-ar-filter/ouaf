@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Device adaptation (#90, spec §16) on `/engine.html`, with tracking slowed down by the page's throttle
@@ -52,8 +52,9 @@ test('slow tracking: capabilities dropped in order, then the face filter hidden;
   expect(await page.evaluate(() => window.ouaf!.engine.performance.state)).toBe('unsupported')
 
   // The device frees up *later* (throttle off): the machine's own speed (the benchmark picked its faster backend).
-  // Not at the hide itself: for its first `hiddenBaselineMs` hidden, the governor learns what hiding gained, and a
-  // speed-up then is what hiding the filter freed (the flicker case, which waits for a probe).
+  // Not at the hide itself: with a main-thread tracker, for its first `hiddenBaselineMs` hidden, the governor learns
+  // what hiding gained, and a speed-up then is what hiding the filter freed (the flicker case, which waits for a probe).
+  // The short dip with a worker tracker is the next test.
   test.setTimeout(300_000)
   await page.waitForTimeout(await page.evaluate(() => window.ouaf!.core.DEFAULT_GOVERNOR_TUNING.hiddenBaselineMs + 1000))
   await page.evaluate(() => (window.ouaf!.throttle.ms = 0))
@@ -72,6 +73,38 @@ test('slow tracking: capabilities dropped in order, then the face filter hidden;
   expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.suspended)).toBe(false)
   expect(await blue(page)).toBeLessThan(5)
   expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
+})
+
+test('worker tracker: a filter hidden by a short dip is shown again within seconds (#180)', async ({ page }) => {
+  // LiteRT.js in its worker: hiding the filter frees the main thread, not the tracker. Slow (250 ms per result) until
+  // the hide, then the machine's own speed at once, during the 6 s the governor would otherwise spend learning what
+  // hiding gained (and then predict the rate before the hide, below the floor: shown only by the 30 s probe).
+  await open(page, 'backend=litert&throttle=250&filter=/filters/fixtures/dot-tint/')
+  await page.evaluate(() => {
+    const { engine, throttle } = window.ouaf!
+    const off = engine.on('performance', (e) => {
+      if (e.state !== 'unsupported') return
+      off()
+      throttle.ms = 0
+      ;(window as { hiddenAt?: number }).hiddenAt = performance.now()
+    })
+  })
+  await expect.poll(() => events(page), POLL).toContain('unsupported[blendshapes,resolution]')
+  // Settle (1 s) + 1 s above 14 Hz, the first settled rates being still a little slow: well within 10 s, not 30 s.
+  const shown = await page
+    .waitForFunction(() => !window.ouaf!.engine.filters[0]!.suspended, undefined, { timeout: 10_000, polling: 250 })
+    .then(() => true, () => false)
+  if (!shown) {
+    const rate = await page.evaluate(() => window.ouaf!.stats?.trackingHz ?? 0)
+    test.skip(rate < 16, `this machine tracks at ${rate.toFixed(1)} Hz in the worker without throttle: too slow to check`)
+  }
+  expect(shown).toBe(true)
+  const shownAfter = await page.evaluate(() => performance.now() - (window as { hiddenAt?: number }).hiddenAt!)
+  console.log(`worker tracker: shown again ${(shownAfter / 1000).toFixed(1)} s after the hide`)
+  expect(shownAfter).toBeLessThan(10_000)
+  // Throttle off, LiteRT.js gains nothing from the analysis resolution (`sheds`): restored at once, still hidden.
+  expect((await events(page)).slice(2, 5)).toEqual(['unsupported[blendshapes,resolution]', 'unsupported[blendshapes]', 'degraded[blendshapes]'])
+  expect(await blue(page)).toBeLessThan(5)
 })
 
 test('no flicker when hiding the filter is what frees the device: no re-show before the slow probe', async ({ page }) => {

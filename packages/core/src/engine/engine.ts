@@ -339,6 +339,8 @@ export class Engine {
   #statsStart = 0
   #statsFrames = 0
   #statsMs = 0
+  /** `frameMs` of the last stats period, for the device governor (`GovernorMeasures.frameMs`); NaN before the first. */
+  #frameMs = Number.NaN
   #statsMaxMs = 0
   #statsTrackMs = 0
   /** Main-thread time of the tracker call of the frame being drawn (ms). */
@@ -781,6 +783,7 @@ export class Engine {
     this.#statsMs = 0
     this.#statsMaxMs = 0
     this.#statsTrackMs = 0
+    this.#frameMs = Number.NaN
     this.#resetFaces()
     // A new source starts with every capability on (spec §16.3: judged again over its first seconds).
     this.#resetGovernor()
@@ -1271,6 +1274,7 @@ export class Engine {
     if (elapsed < 1000) return
     const fps = (this.#statsFrames * 1000) / elapsed
     const frameMs = this.#statsMs / this.#statsFrames
+    this.#frameMs = frameMs
     if (this.#events.has('stats')) {
       this.#events.emit('stats', {
         fps,
@@ -1538,6 +1542,8 @@ export class Engine {
     const measures = this.#governorMeasures
     measures.pipelineMs = tracking.pipelineMs
     measures.faces = tracking.faces.count
+    measures.offMainThread = tracking.offMainThread
+    measures.frameMs = this.#frameMs
     if (reference > 0) {
       tracking.rateWithFaces(reference, this.#recovery)
       measures.recoveryHz = this.#recovery[0]!

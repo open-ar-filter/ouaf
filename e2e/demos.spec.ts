@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures.ts'
 
 /**
  * Demo filters (#37): each one, rendered on its test clip (`filters/demos.json`), matches its reference image

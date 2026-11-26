@@ -7,6 +7,8 @@ const port = Number(process.env.OUAF_PORT) || 5173
 
 export default defineConfig({
   testDir: 'e2e',
+  // `OUAF_COVERAGE=1` (`npm run test:browser:coverage`): the tests record the engine code they run (e2e/coverage/).
+  globalSetup: './e2e/coverage/global-setup.ts',
   timeout: 120_000,
   // Tests still run one at a time (one worker), but CI shards (`--shard`) split them per test rather than per file.
   fullyParallel: true,

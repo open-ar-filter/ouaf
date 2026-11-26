@@ -109,6 +109,12 @@ export interface FrameTracker {
    */
   readonly eager?: boolean
   /**
+   * The tracker's work runs off the main thread (a worker): hiding the filters, which frees the main thread, does not
+   * make it faster, so the device governor judges a show on the rate measured while they are hidden (spec §16.3,
+   * `GovernorMeasures.offMainThread`). Read on every governor step. Default: false.
+   */
+  readonly offMainThread?: boolean
+  /**
    * An eager tracker's chance to start on a live frame that came while its call is in flight (a worker queues it and
    * starts it as soon as its run ends, without waiting for the page). The engine still calls `track` once the call
    * completes, on the newest frame; the tracker may answer it with the result of an offered frame of the same input

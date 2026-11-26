@@ -129,6 +129,11 @@ export class TrackingHub {
     return this.#tracker?.sheds
   }
 
+  /** The tracker runs off the main thread (`FrameTracker.offMainThread`). */
+  get offMainThread(): boolean {
+    return this.#tracker?.offMainThread ?? false
+  }
+
   /** The tracker is measuring its backends: the tracking rate is not representative meanwhile. */
   get measuring(): boolean {
     return this.#tracker?.measuring ?? false
