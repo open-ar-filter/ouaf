@@ -8,7 +8,8 @@
  * context loss. The watchdog shortens the stall to a couple of frames: the engine disables the filter it blames, as
  * after a context loss.
  *
- * Each such frame gets a fence (`fenceSync`), polled with a timer rather than at the next frame, so that a host that
+ * Each such frame gets a fence (`fenceSync`) and is timed from the start of its drawing to the fence. The fence is
+ * polled with a timer rather than at the next frame, so that a host that
  * renders rarely (file regime, `pushFrame`) does not make its frames look slow. The measure is an upper bound: it also
  * counts the time this thread could not poll (a long task); two slow frames in a row are needed, and frames
  * submitted or finished while the page is hidden (no timers, no rendering) are not counted. Frames are never skipped:
@@ -83,8 +84,13 @@ export class GpuWatchdog<T> {
   /**
    * A frame that drew the author shaders of `filters` was just submitted (nothing to do when `filters` is empty).
    * The list is copied (when it differs from the previous frame's): the caller may reuse the array.
+   *
+   * `startedAt` (same clock as `now`): when the frame started to be drawn. The time of a frame is counted from there,
+   * not from this call, because a GL implementation may do the work inside the draw calls (WebKit's software renderer
+   * does): the frame is then finished when it is submitted, after having held this thread for as long as the GPU would
+   * have been busy. Counted from this call, such a frame was never slow and its filter never disabled.
    */
-  submitted(filters: readonly T[]): void {
+  submitted(filters: readonly T[], startedAt = this.#now()): void {
     if (filters.length === 0) return
     if (!sameList(filters, this.#last)) this.#last = [...filters]
     const gl = this.#o.gl
@@ -92,7 +98,7 @@ export class GpuWatchdog<T> {
     const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
     if (!sync) return
     gl.flush()
-    this.#pending.push({ sync, at: this.#now(), filters: this.#last, hidden: this.#hidden() })
+    this.#pending.push({ sync, at: startedAt, filters: this.#last, hidden: this.#hidden() })
     this.#schedule()
   }
 
