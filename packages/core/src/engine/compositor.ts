@@ -155,6 +155,8 @@ export class Compositor implements ObjectsView {
   #projection = new Matrix4()
   #fixed: Size | undefined
   #scale: number
+  /** Adaptive scale of the internal resolution (`setRenderScale`), on top of the host's. */
+  #renderScale = 1
   #fit: FitMode
   #size: Size = { width: 0, height: 0 }
   #next: Size = { width: 0, height: 0 }
@@ -331,6 +333,21 @@ export class Compositor implements ObjectsView {
     this.#updateLayout()
   }
 
+  /**
+   * Scale of the internal resolution on top of the host's (`scale` or the fixed size): the engine lowers it when it
+   * cannot render every frame (spec §16.5). 1: the host's resolution.
+   */
+  setRenderScale(scale: number): void {
+    if (!(scale > 0 && scale <= 1)) throw new RangeError(`render scale must be in (0, 1], got ${scale}`)
+    if (scale === this.#renderScale) return
+    this.#renderScale = scale
+    this.#updateLayout()
+  }
+
+  get renderScale(): number {
+    return this.#renderScale
+  }
+
   /** Call before layers update: picks up source size changes (rotation) so the camera and sizes are current. */
   beginFrame(): void {
     const image = this.#image
@@ -454,7 +471,7 @@ export class Compositor implements ObjectsView {
   #updateLayout(): void {
     const vw = this.#videoWidth
     const vh = this.#videoHeight
-    const next = resolveRenderSize(vw, vh, this.#fixed, this.#scale, this.#next)
+    const next = resolveRenderSize(vw, vh, this.#fixed, this.#scale, this.#next, this.#renderScale)
     if (next.width !== this.#size.width || next.height !== this.#size.height) {
       this.#size.width = next.width
       this.#size.height = next.height

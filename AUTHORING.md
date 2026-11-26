@@ -527,7 +527,9 @@ On a slow device (§16), the engine first drops blendshapes (`face.blendshapes.*
 scripts get none, expression events still fire, from the landmarks), then the faces beyond those tracked, then the
 analysis resolution; below 12 Hz of tracking for 3 s it hides face filters and shows the plain camera until the rate
 is back above 14 Hz. Give blendshape bindings a sensible `default`. To see it on a desktop, open
-`/engine.html?throttle=120&filter=…` (simulated slow tracking, also a slider in the panel).
+`/engine.html?throttle=120&filter=…` (simulated slow tracking, also a slider in the panel). When the device cannot
+draw every camera frame, the engine also renders at a lower resolution (down to half size) until it can: in shaders,
+use `ouaf_resolution` and `uv`, never a size in pixels.
 
 ## 13. Privacy and security
 
@@ -545,8 +547,6 @@ is back above 14 Hz. Give blendshape bindings a sensible `default`. To see it on
 
 Specified, or reserved, but not working in the reference engine today. Do not rely on them:
 
-- Lowering the rendering resolution when the frame budget is exceeded (#34): the engine only adapts face tracking
-  (§16) and warns about heavy stacks.
 - A host file as a video or spritesheet sticker (only images), or as a shader texture: `textures` take assets only.
 - Starting a sticker with `autoplay: false` from a script; `f.sound()` and audio assets; `lottie` and `data` assets
   (reserved: import JSON in `filter.ts`, section 6).

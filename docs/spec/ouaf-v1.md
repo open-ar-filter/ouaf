@@ -848,6 +848,22 @@ To keep the tracking rate above the floor, an engine MAY drop the following capa
   first start and caches the result locally, keyed by engine version.
 - The benchmark result stays on the device: it MUST NOT be transmitted (15).
 
+### 16.5 Rendering resolution
+
+- An engine MAY lower its internal rendering resolution while it cannot render every frame of a live source, and
+  SHOULD raise it again once it can, one step at a time and with hysteresis, so that the image does not switch back
+  and forth between two sizes. This is independent of the tracking rate (16.1): the image is drawn smaller, then
+  scaled to the host's display, and nothing else changes.
+- Filters therefore MUST NOT depend on the internal resolution in pixels: shaders read `ouaf_resolution` (11.1),
+  which follows it, and positions are in `uv` or anchor units. A change of size clears `ouaf_prevFrame` (black, as at
+  the first frame).
+- A file source (12.1) is never adapted: its frames are rendered at the host's resolution, whatever the time they
+  take.
+- Informative: the reference engine measures the share of the camera's frames it did not render
+  (`requestVideoFrameCallback`'s presented frames), lowers the resolution in steps down to half of the host's, keeps
+  a step only when it reduced that share (otherwise the bottleneck was not the pixels: it goes back), and reports the
+  scale in its `stats` event (`renderScale`, `missedFrames`).
+
 ## 17. Versioning and compatibility
 
 - The `ouaf` field changes value only for a breaking change.

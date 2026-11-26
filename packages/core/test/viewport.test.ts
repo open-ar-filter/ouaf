@@ -121,8 +121,14 @@ describe('resolveRenderSize', () => {
     expect(resolveRenderSize(1280, 720, { width: 720, height: 1280 }, 0.5, out())).toEqual({ width: 720, height: 1280 })
   })
 
+  it('applies the adaptive scale on top of either (spec §16.5)', () => {
+    expect(resolveRenderSize(1280, 720, undefined, 0.5, out(), 0.7)).toEqual({ width: 448, height: 252 })
+    expect(resolveRenderSize(1280, 720, { width: 720, height: 1280 }, 1, out(), 0.5)).toEqual({ width: 360, height: 640 })
+  })
+
   it('never returns an empty size', () => {
     expect(resolveRenderSize(0, 0, undefined, 1, out())).toEqual({ width: 1, height: 1 })
+    expect(resolveRenderSize(1, 1, undefined, 1, out(), 0.1)).toEqual({ width: 1, height: 1 })
   })
 })
 
