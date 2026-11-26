@@ -4,54 +4,71 @@ import { expect, test, type Page } from './fixtures.ts'
  * Head occluder (#155) on `/engine.html`: `filters/fixtures/glasses/` puts glasses shaped like the `glasses` demo on
  * `pesquet-turn`, where the head is turned by 25–45° all along (the person's left side, +x of the unmirrored head
  * frame, towards the camera). Their parts have flat colors: a red front, a green temple on +x, a magenta one on -x.
- * On still frames of the clip (the video paused), the same frame is drawn with the occluded glasses, with glasses
- * that ignore the head, and with the face oval turned blue (a color layer, `region: "face"`), so that:
+ * On frames of the clip given to the engine as still images, the same frame is drawn with the occluded glasses, with
+ * glasses that ignore the head, and with the face oval turned blue (a color layer, `region: "face"`), so that:
  * - no pixel of the far temple is over the face oval, though the temple without occlusion crosses it;
  * - the near temple is drawn along most of its length, up to the ear, as without occlusion.
- * Normal and mirrored (`&mirror=1`): mirroring swaps the sides of the face the temples are on (the anchor frame's +x
- * is the screen's right), so the near temple is the magenta one then.
+ * Normal and mirrored (the `mirror` option of the source): mirroring swaps the sides of the face the temples are on (the
+ * anchor frame's +x is the screen's right), so the near temple is the magenta one then.
  */
 
 const FIXTURE = '/filters/fixtures/glasses/'
+const CLIP = '/test-media/pesquet-turn.mp4'
 const SHOTS = process.env.SHOTS
 
-async function open(page: Page, query: string): Promise<void> {
-  await page.goto(`/engine.html?${query}`)
-  await page.waitForFunction(() => ((window.ouaf?.stats?.faces ?? 0) > 0 && (window.ouaf?.stats?.trackingHz ?? 0) > 0) || (window.ouaf?.errors.length ?? 0) > 0, undefined, { timeout: 60_000 })
+/** Opens the engine page with the fixture, without a source. */
+async function open(page: Page): Promise<void> {
+  await page.goto('/engine.html')
+  await page.waitForFunction(() => !!window.ouaf)
+  await page.evaluate((fixture) => window.ouaf!.engine.addFilter(fixture), FIXTURE)
   expect(await page.evaluate(() => [window.ouaf!.errors, window.ouaf!.warnings])).toEqual([[], []])
 }
 
-/** Draws the paused video at `time` again with the given params, and keeps the canvas pixels under `name`. */
+/**
+ * Makes the frame of the clip at `time` the engine's source, as a still image, and waits for its tracking result and
+ * its rendering. A still image is tracked once, on its own (file regime, spec §12.1): the pose the glasses get does not
+ * depend on the frames shown before, nor on how fast the tracker answers. The video paused on that frame, which this
+ * test used before, was tracked as a live source: the smoothing still carried the motion of the frames before it,
+ * and how much depended on the tracker's latency (the first sample was at times off by a quarter of the temple).
+ */
+async function still(page: Page, time: number, mirror: boolean): Promise<void> {
+  await page.evaluate(
+    async ([clip, t, mirrored]) => {
+      const w = window as unknown as { clip?: HTMLVideoElement; frame?: ImageBitmap }
+      if (!w.clip) {
+        w.clip = document.createElement('video')
+        w.clip.muted = true
+        w.clip.src = clip
+        await new Promise((resolve) => w.clip!.addEventListener('loadeddata', resolve, { once: true }))
+      }
+      const video = w.clip
+      video.currentTime = t
+      await new Promise((resolve) => video.addEventListener('seeked', resolve, { once: true }))
+      const previous = w.frame
+      w.frame = await createImageBitmap(video)
+      const { engine, results } = window.ouaf!
+      const before = results.count
+      await engine.setSource(w.frame, { mirror: mirrored })
+      previous?.close()
+      const frame = () => new Promise((resolve) => requestAnimationFrame(resolve))
+      // The first image also waits for the tracker to start.
+      const deadline = performance.now() + 60_000
+      while (results.count === before && performance.now() < deadline) await frame()
+      if (results.count === before) throw new Error(`no tracking result for the frame at ${t} s`)
+      for (let i = 0; i < 3; i++) await frame()
+    },
+    [CLIP, time, mirror] as const,
+  )
+}
+
+/** Draws the still image again with the given params, and keeps the canvas pixels under `name`. */
 async function shot(page: Page, name: string, params: Record<string, boolean>, time: number): Promise<void> {
-  await page.evaluate((p) => {
+  await page.evaluate(async (p) => {
     const filter = window.ouaf!.engine.filters[0]!
     for (const [k, v] of Object.entries(p)) filter.setParam(k, v)
+    // Applied at the start of the next frame; a still image is rendered again on every animation frame.
+    for (let i = 0; i < 4; i++) await new Promise((resolve) => requestAnimationFrame(resolve))
   }, params)
-  // Each seek presents the frame again, so the engine tracks and draws it once more, until three tracking results of
-  // this still frame have come (`window.ouaf.results`: a result describing a frame presented after the first seek), so
-  // that the smoothing settles on it. Seeking a fixed number of times depended on the tracker's latency: the default
-  // one (LiteRT.js, #165) answers a live frame a call or two later (its queued frame, the async readback), so the first
-  // results after a seek are of a frame shown before.
-  const since = await page.evaluate(() => performance.now() / 1000)
-  let fresh = 0
-  for (let i = 0; i < 12 && fresh < 3; i++) {
-    const count = await page.evaluate(() => window.ouaf!.results.count)
-    await page.evaluate(
-      (t) =>
-        new Promise<void>((resolve) => {
-          const video = document.getElementById('video') as HTMLVideoElement
-          video.pause()
-          video.addEventListener('seeked', () => resolve(), { once: true })
-          setTimeout(resolve, 3000) // in case the seek never completes
-          video.currentTime = t
-        }),
-      time + (i % 3) * 0.001, // the same frame of the clip, but a new seek each time
-    )
-    // This seek's result (of this frame or an earlier one), then its rendering.
-    await page.waitForFunction((n) => window.ouaf!.results.count > n, count, { timeout: 5000 }).catch(() => {})
-    await page.waitForTimeout(150)
-    if (await page.evaluate((s) => window.ouaf!.results.time >= s, since)) fresh++
-  }
   const png = await page.locator('#canvas').screenshot(SHOTS ? { path: `${SHOTS}/occlusion-${time.toFixed(2)}-${name}.png` } : {})
   await page.evaluate(
     async ([bytes, key]) => {
@@ -139,13 +156,12 @@ function analyse(page: Page, nearIsGreen: boolean): Promise<Temples> {
 
 for (const mirror of [false, true]) {
   test(`glasses on a turned head: the far temple is hidden over the face, the near one shows up to the ear${mirror ? ' (mirrored)' : ''}`, async ({ page }) => {
-    await open(page, `source=pesquet-turn&autostart${mirror ? '&mirror=1' : ''}&filter=${FIXTURE}`)
-    // Still frames where the head is turned (the tracker finds no face before 0.8 s), until five are usable: a face
-    // found, and the far temple crossing the face without occlusion (else hiding it proves nothing).
+    await open(page)
+    // Frames where the head is turned (the tracker finds no face before 0.8 s), until five are usable: a face found,
+    // and the far temple crossing the face without occlusion (else hiding it proves nothing).
     const samples: Temples[] = []
-    // A first shot, not analysed: right after the clip stops playing, the smoothing still carries its motion.
-    await shot(page, 'warm-up', { occluded: true, plain: false, face: false }, 0.85 + 1 / 60)
     for (let t = 0.85 + 1 / 60; t < 2.3 && samples.length < 5; t += 0.2) {
+      await still(page, t, mirror)
       await shot(page, 'occluded', { occluded: true, plain: false, face: false }, t)
       await shot(page, 'plain', { occluded: false, plain: true, face: false }, t)
       await shot(page, 'face', { occluded: false, plain: false, face: true }, t)
