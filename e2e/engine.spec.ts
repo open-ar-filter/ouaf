@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Engine skeleton (#11, #12, #17) through its public API, on `/engine.html` with the playground's test plugin:

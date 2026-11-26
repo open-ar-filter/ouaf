@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Color layer (#23) on `/engine.html`: a built-in LUT (`builtin:lut/noir`, served under `<base>builtins/`), chaining

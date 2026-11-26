@@ -15,3 +15,5 @@ dist/
 /ouaf-preview/
 # Unit test coverage reports (`npm run test:coverage`)
 /coverage/
+# Browser test coverage (`npm run test:browser:coverage`)
+/coverage-browser/

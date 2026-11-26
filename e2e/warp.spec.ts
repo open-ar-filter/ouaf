@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Warp layer (#22) on `/engine.html`: a swirl between the eyes of each face (`filters/fixtures/warp-eyes/`), one face

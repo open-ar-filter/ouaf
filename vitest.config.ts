@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config'
+import { BROWSER_ONLY } from './e2e/coverage/browser-only.ts'
 
 // Unit tests only; browser tests live in e2e/ and run with Playwright (`npm run test:browser`).
 export default defineConfig({
@@ -14,16 +15,10 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['packages/*/src/**/*.ts'],
-      // Code that cannot run in Node: it holds a WebGL context, decodes with WebCodecs, runs in a Worker or an iframe,
-      // or is a page loaded in Chromium. The browser tests (e2e/) cover it; keep this list to such modules only.
+      // Code that cannot run in Node. The browser tests (e2e/) cover it: `npm run test:browser:coverage` holds
+      // `BROWSER_ONLY` to the same threshold. Keep this list to such modules only.
       exclude: [
-        'packages/core/src/engine/engine.ts', // creates the compositor, hence a WebGLRenderer, in its constructor
-        'packages/core/src/engine/compositor.ts', // three.js WebGLRenderer and render targets
-        'packages/core/src/litert/pipeline.ts', // LiteRT.js models on WebGPU / Wasm, in the tracking worker
-        'packages/core/src/litert/face.worker.ts', // the tracking worker itself
-        'packages/core/src/litert/gpu-crop.ts', // WebGL2 crops on an OffscreenCanvas
-        'packages/core/src/offline-video.ts', // WebCodecs VideoDecoder
-        'packages/core/src/script/sandbox.ts', // sandboxed iframe running a Worker
+        ...BROWSER_ONLY,
         'packages/cli/src/preview/page.ts', // page of `ouaf preview`, bundled and run in headless Chromium
         'packages/cli/src/bin.ts', // process entry point of `ouaf`; its body is cli.ts, which is tested
       ],

@@ -37,6 +37,7 @@ npm run build          # playground production build
 npm run build:schema   # regenerate the JSON Schema; commit docs/spec/ and packages/spec/schema/ changes
 npm run fetch-models   # face model into apps/playground/models/ (gitignored); needed by the browser tests
 npm run test:browser   # Playwright (starts `npm run dev` itself; all of e2e/ but evil.spec.ts); first run: npx playwright install chromium
+npm run test:browser:coverage  # same with V8 coverage (page and workers) → coverage-browser/index.html; fails below 80 % on the browser-only modules
 npm run test:security  # malicious filters (filters/evil/) on Chromium, Firefox, WebKit; Linux: xvfb-run -a …
 npm run dev            # playground on https://localhost:5173 (self-signed); /?source=<clip> plays a test clip
 npx ouaf validate <folder|file.ouaf> [--json]   # check a filter; exit 0 valid, 1 invalid, 2 usage error
@@ -46,7 +47,8 @@ npx ouaf pack-alpha <video|png-folder> -o out.mp4   # packed-alpha H.264 MP4 (sp
 ```
 
 Run `npm run typecheck` and `npm test` before every commit, and `npm run test:coverage` when adding code (CI fails
-below 80 % coverage: add tests, never exclude a module that runs in Node); `npm run build:schema` whenever
+below 80 % coverage: add tests, never exclude a module that runs in Node; the modules that cannot run in Node are
+listed in `e2e/coverage/browser-only.ts` and held to 80 % by the browser tests instead); `npm run build:schema` whenever
 `packages/spec/src` changes (CI fails on an uncommitted schema diff).
 
 ## Conventions
