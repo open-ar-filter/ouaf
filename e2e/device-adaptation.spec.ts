@@ -88,7 +88,8 @@ test('no flicker when hiding the filter is what frees the device: no re-show bef
       setTimeout(() => (throttle.ms = 0), 2500)
     })
   })
-  await expect.poll(() => events(page), POLL).toContain('unsupported[blendshapes,resolution]')
+  // No throttle here: the MediaPipe tracker says that dropping blendshapes gains nothing (`sheds`), so they stay.
+  await expect.poll(() => events(page), POLL).toContain('unsupported[resolution]')
   const hz = async () => (await page.evaluate(() => window.ouaf!.engine.performance.trackingHz))
   // Hidden: the rate climbs above 14 Hz (unless this machine is too slow even then).
   await page.waitForTimeout(8000)
@@ -96,7 +97,7 @@ test('no flicker when hiding the filter is what frees the device: no re-show bef
   test.skip(hidden <= 14, `this machine tracks at ${hidden.toFixed(1)} Hz even with the filter hidden`)
   // Seen live: shown again 9 s after the hide, hidden again 6 s later. Now only the probe, 30 s after the hide.
   await page.waitForTimeout(16_000)
-  expect(await events(page)).toEqual(['degraded[blendshapes]', 'degraded[blendshapes,resolution]', 'unsupported[blendshapes,resolution]'])
+  expect(await events(page)).toEqual(['degraded[resolution]', 'unsupported[resolution]'])
   expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.suspended)).toBe(true)
 })
 
