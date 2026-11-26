@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * `scale` of the text, sticker and canvas layers (spec §6.2, #116) on `/engine.html`: `filters/fixtures/scale/` lays

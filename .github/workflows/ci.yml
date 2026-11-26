@@ -113,6 +113,16 @@ jobs:
 
       - name: Browser tests
         run: npm run test:browser -- --shard=${{ matrix.shard }}/4
+        env:
+          # Each test records the engine code it runs (e2e/coverage/); the `browser-coverage` job adds the shards up.
+          OUAF_COVERAGE: 1
+
+      - name: Upload recorded coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-coverage-raw-${{ matrix.shard }}
+          path: coverage-browser/raw/
+          retention-days: 1
 
       - name: Upload test results
         if: failure()
@@ -121,6 +131,49 @@ jobs:
           name: playwright-results-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
+
+  browser-coverage:
+    name: Browser test coverage
+    needs: browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download the coverage recorded by every shard
+        uses: actions/download-artifact@v8
+        with:
+          pattern: browser-coverage-raw-*
+          path: coverage-browser/raw/
+          merge-multiple: true
+
+      - name: Coverage report
+        run: npm run coverage:browser
+
+      - name: Coverage summary
+        run: |
+          node -e '
+            const total = require("./coverage-browser/coverage-summary.json").total
+            const rows = ["lines", "statements", "functions", "branches"]
+              .map((k) => `| ${k} | ${total[k].pct} % | ${total[k].covered} / ${total[k].total} |`)
+            console.log(["### Browser test coverage", "", "| | % | covered |", "|---|---|---|", ...rows].join("\n"))
+          ' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-browser
+          path: |
+            coverage-browser/
+            !coverage-browser/raw/
+          retention-days: 14
 
 
   security:

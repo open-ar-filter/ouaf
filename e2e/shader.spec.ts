@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Shader layer (#24) on `/engine.html`, with the fixtures `filters/fixtures/shader-*`: uniforms bound to params,

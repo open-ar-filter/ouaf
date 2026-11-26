@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Content properties bound to params (#140) on `/engine.html`: `filters/fixtures/content/` lays screen layers out on

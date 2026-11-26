@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Sources (#32) on `/engine.html`, driven through the public API: an offline video (every frame, exact timestamps,

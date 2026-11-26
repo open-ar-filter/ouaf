@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Sticker layer (#20) on `/engine.html`: `filters/fixtures/sticker-screen/` lays stickers out on the screen (no face

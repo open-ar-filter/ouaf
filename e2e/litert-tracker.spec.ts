@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * The LiteRT.js face tracker in a worker (#165, docs/decisions/face-runtime.md) on `/engine.html`: forced with

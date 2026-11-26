@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Device adaptation (#90, spec §16) on `/engine.html`, with tracking slowed down by the page's throttle

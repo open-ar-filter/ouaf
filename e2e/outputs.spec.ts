@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures.ts'
 
 /**
  * Outputs (#33) on `/engine.html` with `filters/fixtures/capture/` on the `no-face` clip: a yellow overlay square on
