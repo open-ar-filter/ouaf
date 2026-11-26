@@ -16,3 +16,4 @@ export { choosingFaceTracker, ChoosingFrameTracker, MAIN_THREAD_WEIGHT, type Cho
 export * from './governor.ts'
 export * from './throttle.ts'
 export * from './backend-choice.ts'
+export * from './resolution-governor.ts'

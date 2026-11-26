@@ -33,6 +33,7 @@ import { GeometrySignals, PairGeometry, blendshapeSignals, createSignals, maxEye
 import { Matrix4 } from 'three'
 import { DeviceGovernor, type Capability, type GovernorMeasures, type GovernorTuning, type PerformanceState } from './governor.ts'
 import { BACKEND_STORE_PREFIX, localBackendStore } from './backend-choice.ts'
+import { ResolutionGovernor, type ResolutionTuning } from './resolution-governor.ts'
 import { FaceAnchors } from './anchor-provider.ts'
 import { CORE_LOADERS, memorySource, urlSource, type AssetLoader, type FilterSource, type LoaderKind, type PreloadedAssets } from './assets.ts'
 import { fetchPackage, isPackageUrl, packageSource } from './package.ts'
@@ -116,6 +117,13 @@ export interface EngineOptions {
    */
   adaptation?: boolean | Partial<GovernorTuning>
   /**
+   * Adaptive rendering resolution (spec §16.5, #34): with a live video source, lower the internal resolution (down to
+   * half of the host's `scale` or fixed size) while the engine cannot render every frame, and raise it again once it
+   * can (`EngineStats.renderScale`). Default: true, unless `adaptation` is `false`; an object tunes it
+   * (`DEFAULT_RESOLUTION_TUNING`). Recordings and output streams keep the resolution they started with.
+   */
+  adaptiveResolution?: boolean | Partial<ResolutionTuning>
+  /**
    * Inference backend of the face tracker (built-in tracker, case-insensitive: `litert` for our LiteRT.js pipeline in
    * a worker, `GPU` or `CPU` for MediaPipe's delegates on the main thread). Default: chosen by measuring them on the
    * first frames of a live source, then cached on the device per engine version (`localStorage`, never transmitted;
@@ -187,6 +195,16 @@ export interface EngineStats {
   /** Internal resolution (px) the engine renders at. */
   width: number
   height: number
+  /**
+   * Scale the engine applies to the host's resolution while it cannot render every frame (spec §16.5): 1 at full
+   * resolution, down to 0.5. `width` and `height` include it.
+   */
+  renderScale: number
+  /**
+   * Share of the live video source's frames that were not rendered over the last measure (0 to 1). `NaN` when the
+   * browser does not report presented frames, for other sources, and with `adaptiveResolution` off.
+   */
+  missedFrames: number
 }
 
 /**
@@ -350,6 +368,8 @@ export class Engine {
   #heavyWarned = false
   /** Device governor (spec §16); undefined when `adaptation` is off. */
   #governor: DeviceGovernor | undefined
+  /** Adaptive rendering resolution (spec §16.5); undefined when off. */
+  #resolution: ResolutionGovernor | undefined
   #performance: PerformanceEvent = { state: 'ok', dropped: [], trackingHz: 0 }
   /** Capabilities the enabled stack may lose (recomputed on stack changes). */
   #droppable = new Set<Capability>()
@@ -449,6 +469,8 @@ export class Engine {
     this.#openSandbox = options.openSandbox ?? openSandbox
     const adaptation = options.adaptation ?? true
     if (adaptation !== false) this.#governor = new DeviceGovernor(adaptation === true ? {} : adaptation)
+    const resolution = adaptation === false ? false : (options.adaptiveResolution ?? true)
+    if (resolution !== false) this.#resolution = new ResolutionGovernor(resolution === true ? {} : resolution)
   }
 
   /**
@@ -785,8 +807,10 @@ export class Engine {
     this.#statsTrackMs = 0
     this.#frameMs = Number.NaN
     this.#resetFaces()
-    // A new source starts with every capability on (spec §16.3: judged again over its first seconds).
+    // A new source starts with every capability on (spec §16.3: judged again over its first seconds), and at full
+    // resolution (§16.5).
     this.#resetGovernor()
+    this.#resetResolution()
     for (const f of this.#stack) f.reseed(this.#filterSeed(f.manifest.id))
     this.#compositor.setSource(image, mirrored)
   }
@@ -858,6 +882,34 @@ export class Engine {
     this.#frameTrackMs = tracked - start
     this.#compositor.beginFrame()
     this.#draw(time, info.now, tracked)
+    this.#adaptResolution(info)
+  }
+
+  /**
+   * Adaptive rendering resolution (spec §16.5), after each frame of a live video source: the share of its frames the
+   * engine could not render. Paused while an output records (a recording keeps its size) or the context is lost; back
+   * to full resolution when nothing but the raw video is drawn.
+   */
+  #adaptResolution(info: VideoFrameInfo): void {
+    const g = this.#resolution
+    if (!g || this.#disposed) return
+    if (!this.#stack.some((f) => f.active) && this.#renderPasses.length === 0) {
+      this.#resetResolution()
+      return
+    }
+    if (this.#contextLost || this.#outputs.active) {
+      g.pause()
+      return
+    }
+    const change = g.frame(info.now, info.presentedFrames)
+    if (change) this.#compositor.setRenderScale(change.scale)
+  }
+
+  #resetResolution(): void {
+    const g = this.#resolution
+    if (!g) return
+    g.reset()
+    this.#compositor.setRenderScale(1)
   }
 
   /** A canvas the host draws into (live regime): read on every animation frame. */
@@ -1288,6 +1340,8 @@ export class Engine {
         tracker: this.#tracking.description,
         width: this.#compositor.width,
         height: this.#compositor.height,
+        renderScale: this.#compositor.renderScale,
+        missedFrames: this.#feed?.kind === 'video' && this.#resolution ? this.#resolution.missed : Number.NaN,
       })
     }
     this.#checkHeavyStack(frameMs, fps)

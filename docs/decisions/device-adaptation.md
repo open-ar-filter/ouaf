@@ -211,6 +211,46 @@ GPU 101.0, CPU 66.3 ms → LiteRT.js.
 tracker's; `trackMs` is a main-thread tracker's time per frame, `frameMsMax` the worst frame of the second. A warning
 fires once per stack change when `frameMs` exceeds half the frame interval for 3 s in a row.
 
+## Rendering resolution (#34, spec §16.5)
+
+`ResolutionGovernor` (`packages/core/src/engine/resolution-governor.ts`, thresholds in `DEFAULT_RESOLUTION_TUNING`)
+lowers the internal resolution while the engine cannot render every frame of a live video source. It runs apart from
+the tracking governor: the two measure different things (frames drawn, tracking results).
+
+**What is measured.** The share of the source's frames that were not rendered, from `requestVideoFrameCallback`'s
+`presentedFrames` (a jump of more than one between two callbacks: frames went by while the engine was busy). It
+catches a GPU-bound frame as well as a main-thread-bound one, since WebGL calls wait once the GPU's queue is full;
+`frameMs` alone does not (it is main-thread time, render submission only). A portable GPU timer does not exist
+(`EXT_disjoint_timer_query_webgl2` is missing on most phones and on WebKit), and the GPU watchdog's fences are polled
+every 20 ms, too coarse for a 33 ms budget. Without `presentedFrames` (`requestAnimationFrame` mode, canvas sources)
+nothing is adapted.
+
+| Rule | Value | Why |
+|---|---|---|
+| Levels | 1, 0.85, 0.7, 0.6, 0.5 of the host's resolution (`scale` or fixed size) | each step about 28 % fewer pixels; below half size the image is visibly soft on a phone |
+| Drop a level | missed share > 10 % for 2 s (1 s windows) | a stutter or two is not a reason |
+| Settle | 1 s after each change, not measured | resizing the render targets |
+| Judge a drop | over the next 2 s: kept when the missed share fell below 10 % or by 5 points | learn by trying: the GPU time is not measured |
+| Trial | up to 2 levels below where it started | frames take whole periods of the source: 50 ms and 36 ms both take two 33 ms periods, so a level can show no gain where the next does |
+| Undo | when no level of the trial helped: back where it started, no trial for 30 s, doubling to 10 min | the bottleneck was not the pixels (a busy main thread, a main-thread tracker) |
+| Restore a level | missed share ≤ 2 % for 5 s | |
+| Probation | dropped again within 10 s of a restore: the next restore waits twice as long, up to 120 s | a device that keeps up only at the lower level tries the higher one rarely: about 3 s over budget per try |
+| Pause | > 1.5 s between frames, or a frame counter that went back | background tab, new video |
+
+The scale multiplies the host's resolution (`EngineOptions.scale`, `width` / `height`), so photos and the output
+stream are taken at the reduced size. While an output is active (a recording, a stream, a pending photo) the governor
+pauses: a recording keeps the size it started with. While nothing but the raw video is drawn (no enabled filter, or
+the face filters hidden below the tracking floor) the resolution goes back to full at once. A new source starts at
+full resolution. `adaptation: false` turns it off with the tracking governor; `adaptiveResolution` alone turns it off
+or tunes it. `EngineStats.renderScale` and `missedFrames` report it (the engine page's panel shows both).
+
+Simulated in `packages/core/test/resolution-governor.test.ts` (a 30 fps source, a render time following the pixels or
+not); in the browser by the `busy-pixels` fixture (`playground:busy` with `msPerMegapixel`: main-thread time per
+megapixel of the internal resolution, a fill-bound GPU on any machine). On the CI machine, 57 % of the frames were
+missed at 720×1280, 10 % at 0.6. To measure on phones: the levels reached by `stress` on the Redmi Note 11S, and
+whether `presentedFrames` jumps when the GPU is the bottleneck there (if not, the drop is never triggered and nothing
+changes).
+
 ## Testing without a slow device
 
 `throttlePlugin({ ms })` (`/engine.html?throttle=<ms>`, and a slider in the page's panel) holds each tracking result

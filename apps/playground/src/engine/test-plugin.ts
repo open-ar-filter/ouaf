@@ -7,7 +7,9 @@
  * - `playground:probe` (object, draws nothing): records each frame it sees into `window.ouafProbe` (time, faces, the
  *   first landmark, one draw of the layer's seeded generator), for the source tests (#32).
  * - `playground:busy` (object, draws nothing): blocks the main thread `ms` per drawn frame, like a heavy filter, for
- *   the device adaptation tests (#90): drawing it slows a main-thread tracker down, hiding it frees it.
+ *   the device adaptation tests (#90): drawing it slows a main-thread tracker down, hiding it frees it. Plus
+ *   `msPerMegapixel` (bindable) per million pixels of the internal resolution: a cost that follows the resolution, as
+ *   a fill-bound GPU's does, to test the adaptive rendering resolution (#34) on any machine.
  */
 import type { LayerContext, LayerDecl, ObjectLayer, OuafPlugin, PassLayer } from '@ouaf/core'
 import { FULLSCREEN_VERTEX, compileNumberBinding } from '@ouaf/core'
@@ -180,18 +182,26 @@ function createProbe(_decl: LayerDecl, ctx: LayerContext): ObjectLayer {
 }
 
 const BusySchema = Type.Object(
-  { type: Type.Literal('playground:busy'), id: Type.Optional(Type.String()), ms: Type.Number({ minimum: 0, maximum: 500 }) },
+  {
+    type: Type.Literal('playground:busy'),
+    id: Type.Optional(Type.String()),
+    ms: Type.Number({ minimum: 0, maximum: 500 }),
+    msPerMegapixel: Type.Optional(Bindable(Type.Number({ minimum: 0, maximum: 500 }))),
+  },
   { additionalProperties: false },
 )
 
-function createBusy(decl: LayerDecl): ObjectLayer {
+function createBusy(decl: LayerDecl, ctx: LayerContext): ObjectLayer {
   const ms = Number(decl.ms)
+  const perPixel = compileNumberBinding(decl.msPerMegapixel ?? 0, { fallback: 0, path: 'msPerMegapixel' }, ctx.bindings)
+  const out = new Float64Array(1)
   return {
     kind: 'object',
     stage: 'objects',
     object: new Group(),
-    update() {
-      const end = performance.now() + ms
+    update(frame) {
+      perPixel.write(0, out, 0)
+      const end = performance.now() + ms + (out[0]! * frame.width * frame.height) / 1e6
       while (performance.now() < end) {
         // Busy: the main thread's time, as a heavy filter would take it.
       }

@@ -272,7 +272,7 @@ export function createPerfPanel(throttle: TrackingThrottle, options: { signals: 
         set('track', fmt(s.trackMs))
         set('hz', fmt(s.trackingHz))
         set('faces', String(s.faces))
-        set('size', `${s.width}×${s.height}`)
+        set('size', `${s.width}×${s.height}${s.renderScale < 1 ? ` (×${s.renderScale})` : ''}${Number.isNaN(s.missedFrames) ? '' : `, ${fmt(100 * s.missedFrames, 0)} % missed`}`)
         tracker.textContent = s.tracker ?? 'no tracker'
         steps.textContent = describeSteps(s)
         showState(engine.performance)

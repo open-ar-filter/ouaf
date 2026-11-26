@@ -95,8 +95,9 @@ export interface Size {
 }
 
 /**
- * Internal render resolution: `fixed` when the host set one, otherwise the video frame size times `scale`.
- * Always at least 1×1 (a WebGL drawing buffer cannot be empty), rounded to whole pixels. Writes into `out`.
+ * Internal render resolution: `fixed` when the host set one, otherwise the video frame size times `scale`; then times
+ * `adaptive`, the engine's own scale when it cannot keep up (spec §16.5). Always at least 1×1 (a WebGL drawing buffer
+ * cannot be empty), rounded to whole pixels. Writes into `out`.
  */
 export function resolveRenderSize(
   videoWidth: number,
@@ -104,9 +105,10 @@ export function resolveRenderSize(
   fixed: Readonly<Size> | undefined,
   scale: number,
   out: Size,
+  adaptive = 1,
 ): Size {
-  const w = fixed ? fixed.width : videoWidth * scale
-  const h = fixed ? fixed.height : videoHeight * scale
+  const w = (fixed ? fixed.width : videoWidth * scale) * adaptive
+  const h = (fixed ? fixed.height : videoHeight * scale) * adaptive
   out.width = Math.max(1, Math.round(w))
   out.height = Math.max(1, Math.round(h))
   return out

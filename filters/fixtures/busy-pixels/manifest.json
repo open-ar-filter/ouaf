@@ -1,0 +1,15 @@
+{
+  "ouaf": "1",
+  "id": "busy-pixels",
+  "name": "Busy pixels (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Adaptive resolution fixture (#34): a layer whose cost follows the internal resolution (ms per megapixel, a parameter), as a fill-bound GPU's does. No face tracking.",
+  "requires": { "plugins": ["playground@^1"] },
+  "params": {
+    "msPerMegapixel": { "type": "number", "default": 50, "min": 0, "max": 500, "label": { "en": "ms per megapixel" } }
+  },
+  "layers": [
+    { "type": "playground:busy", "ms": 0, "msPerMegapixel": { "param": "msPerMegapixel" } }
+  ]
+}

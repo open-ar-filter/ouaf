@@ -186,11 +186,61 @@ test('?signals: peaks of the last 1.5 s, and blink counts that match the events 
   expect(Number(blink[2])).toBe(0)
 })
 
+test('adaptive resolution: lowered while frames are missed, back to full once the load is gone (#34, spec §16.5)', async ({ page }) => {
+  test.setTimeout(180_000)
+  // `busy-pixels`: 50 ms per megapixel of the internal resolution, as a fill-bound GPU: 46 ms at 720×1280, on top of
+  // what the machine spends anyway (about 12 ms per frame here); every frame of the 30 fps clip only at about 0.6. No
+  // face tracking: the tracking governor stays out of it.
+  await open(page, 'adapt=1&filter=/filters/fixtures/busy-pixels/')
+  const stats = () => page.evaluate(() => window.ouaf!.stats && { scale: window.ouaf!.stats.renderScale, missed: window.ouaf!.stats.missedFrames, width: window.ouaf!.stats.width, height: window.ouaf!.stats.height })
+  await page.evaluate(() => {
+    const w = window as unknown as { atFull: number[] }
+    w.atFull = []
+    window.ouaf!.engine.on('stats', (s) => s.renderScale === 1 && !Number.isNaN(s.missedFrames) && w.atFull.push(s.missedFrames))
+  })
+  // Down, level by level (a few seconds each), until every frame is rendered, or to the last level on a slow machine.
+  await expect.poll(async () => {
+    const s = await stats()
+    return !!s && s.scale < 1 && (s.missed <= 0.1 || s.scale === 0.5)
+  }, { ...POLL, timeout: 60_000 }).toBe(true)
+  const low = (await stats())!
+  const full = { missed: Math.max(...(await page.evaluate(() => (window as unknown as { atFull: number[] }).atFull))) }
+  console.log(`adaptive resolution: ${(100 * full.missed).toFixed(0)} % of frames missed at full size, ${(100 * low.missed).toFixed(0)} % at ${low.width}×${low.height} (scale ${low.scale})`)
+  expect(low.missed).toBeLessThan(full.missed - 0.2)
+  expect(low.width).toBe(Math.round(720 * low.scale))
+  expect(low.height).toBe(Math.round(1280 * low.scale))
+  expect(await page.evaluate(() => window.ouaf!.engine.performance.state)).toBe('ok')
+
+  // The load goes: restored one level at a time (5 s each when the previous restore held), up to full size.
+  await page.evaluate(() => window.ouaf!.engine.filters[0]!.setParam('msPerMegapixel', 0))
+  await expect.poll(async () => (await stats())?.scale ?? 0, { ...POLL, timeout: 90_000 }).toBe(1)
+  expect((await stats())!.width).toBe(720)
+  expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
+})
+
+test('adaptive resolution: a load the pixels do not cause is left at full resolution', async ({ page }) => {
+  // `busy`: 85 ms of main-thread work per frame whatever the size. Each trial (two levels) is undone.
+  await open(page, 'adapt=1&backend=litert&filter=/filters/fixtures/busy/')
+  const scales: number[] = []
+  await page.exposeFunction('noteScale', (s: number) => scales.push(s))
+  await page.evaluate(() => window.ouaf!.engine.on('stats', (s) => (window as unknown as { noteScale(s: number): void }).noteScale(s.renderScale)))
+  await page.waitForTimeout(20_000)
+  // The filter may be hidden by the tracking governor meanwhile (then the raw video is drawn at full size).
+  expect(scales.at(-1)).toBe(1)
+  expect(scales.filter((s) => s < 1).length).toBeLessThanOrEqual(8)
+})
+
 test('adaptation can be turned off', async ({ page }) => {
   await open(page, 'filter=/filters/fixtures/dot-tint/&adapt=0&throttle=200')
   await page.waitForTimeout(8000)
   expect(await events(page)).toEqual([])
   expect(await page.evaluate(() => window.ouaf!.engine.performance.state)).toBe('ok')
+})
+
+test('adaptive resolution is off with adaptation', async ({ page }) => {
+  await open(page, 'filter=/filters/fixtures/busy-pixels/&adapt=0')
+  await page.waitForTimeout(8000)
+  expect(await page.evaluate(() => [window.ouaf!.stats!.renderScale, window.ouaf!.stats!.missedFrames])).toEqual([1, Number.NaN])
 })
 
 test('the tracker backend is measured on the first live frames, cached on the device, or forced', async ({ page }) => {
