@@ -13,7 +13,7 @@
     "fetch-models": "npm run fetch-models -w @ouaf/playground",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:browser": "playwright test --project=chromium",
+    "test:browser": "playwright test --project=chromium --grep-invert evil.spec.ts",
     "test:security": "playwright test evil.spec.ts",
     "test:coverage": "vitest run --coverage"
   },

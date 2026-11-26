@@ -126,13 +126,12 @@ jobs:
   security:
     name: Malicious filters (${{ matrix.browser }})
     runs-on: ubuntu-latest
-    # The suite of SECURITY.md (#27): every filter of filters/evil/ must fail, on each browser engine. Chromium is not
-    # in this matrix: the browser tests above already run e2e/evil.spec.ts on it (the `chromium` project runs every
-    # spec), a job here would only run it a second time.
+    # The suite of SECURITY.md (#27): every filter of filters/evil/ must fail, on each browser engine. It runs here
+    # only: `npm run test:browser` leaves e2e/evil.spec.ts out.
     strategy:
       fail-fast: false
       matrix:
-        browser: [firefox, webkit]
+        browser: [chromium, firefox, webkit]
     steps:
       - uses: actions/checkout@v7
 

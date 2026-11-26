@@ -33,7 +33,7 @@ Without `npm run fetch-models` the playground still runs, but face tracking is u
 | `npm run typecheck` | TypeScript type check of every workspace, scripts and tests |
 | `npm run build:schema` | Regenerates the JSON Schema from the TypeBox schemas in `packages/spec` |
 | `npm run fetch-models` | Downloads and checks the face model, extracts its TFLite files |
-| `npm run test:browser` | Browser tests on the test clips (Playwright, Chromium; needs `fetch-models`) |
+| `npm run test:browser` | Browser tests on the test clips (Playwright, Chromium; needs `fetch-models`), without the malicious filters suite |
 | `npm run test:security` | The malicious filters suite ([`SECURITY.md`](SECURITY.md)) on Chromium, Firefox and WebKit; on Linux without a display, run it under `xvfb-run -a` (headless Firefox has no WebGL there) |
 | `npx ouaf validate <folder\|file.ouaf>` | Checks a filter (manifest, files, formats, limits); `--json` for tools |
 | `npx ouaf pack <folder> [-o out.ouaf]` | Builds a `.ouaf` package from `filter.ts` / `filter.js` and `assets/` (bundled with Rolldown, validated before it is written) |

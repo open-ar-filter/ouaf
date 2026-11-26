@@ -36,7 +36,7 @@ npm run test:coverage  # same with V8 coverage → coverage/index.html; fails be
 npm run build          # playground production build
 npm run build:schema   # regenerate the JSON Schema; commit docs/spec/ and packages/spec/schema/ changes
 npm run fetch-models   # face model into apps/playground/models/ (gitignored); needed by the browser tests
-npm run test:browser   # Playwright (starts `npm run dev` itself); first run: npx playwright install chromium
+npm run test:browser   # Playwright (starts `npm run dev` itself; all of e2e/ but evil.spec.ts); first run: npx playwright install chromium
 npm run test:security  # malicious filters (filters/evil/) on Chromium, Firefox, WebKit; Linux: xvfb-run -a …
 npm run dev            # playground on https://localhost:5173 (self-signed); /?source=<clip> plays a test clip
 npx ouaf validate <folder|file.ouaf> [--json]   # check a filter; exit 0 valid, 1 invalid, 2 usage error
