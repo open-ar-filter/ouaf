@@ -215,6 +215,25 @@ describe('bindingParams', () => {
     expect(reader.get('size')).toBe(3)
   })
 
+  it('color and vector bindings follow a running transition too, then give the committed value', () => {
+    const store = new ParamStore({
+      tint: { type: 'color', default: '#000000', transition: 100 },
+      at: { type: 'vec2', default: [0, 0], transition: 100 },
+      to: { type: 'vec3', default: [0, 0, 0] },
+    } as never)
+    const reader = bindingParams(store)
+    store.setMany({ tint: '#ff8000', at: [2, -4], to: [1, 2, 3] })
+    store.beginFrame(0)
+    expect(reader.get('tint')).toBe('#000000ff')
+    store.beginFrame(50)
+    expect(reader.get('tint')).toBe('#804000ff')
+    expect(reader.get('at')).toEqual([1, -2])
+    expect(reader.get('to')).toEqual([1, 2, 3]) // no transition: at once
+    store.beginFrame(100)
+    expect(reader.get('tint')).toBe('#ff8000')
+    expect(reader.get('at')).toBe(store.get('at'))
+  })
+
   it('writes only number parameters', () => {
     const reader = bindingParams(new ParamStore(params as never))
     const out = new Float64Array(1)

@@ -368,6 +368,8 @@ export class Engine {
   #gpuWatchdog!: GpuWatchdog<FilterInstance>
   /** Filters whose author shaders draw in the frame being rendered. */
   readonly #authorDraws: FilterInstance[] = []
+  /** Counts the changes of source: a `setSource` that awaits gives up when another change came meanwhile. */
+  #sourceRequest = 0
   #onContextLost = (event: Event) => this.#contextLostHandler(event)
   #onContextRestored = () => this.#contextRestoredHandler()
 
@@ -553,10 +555,12 @@ export class Engine {
    * yourself), and a still image or canvas must stay readable while it is the source. A source that a source plugin
    * creates is the engine's: it is disposed when it stops being the source. Throws `IncompatibleSourceError`:
    * unsupported input, disposed source, the engine's own canvas, an image without pixels, a tainted (cross-origin)
-   * image or canvas.
+   * image or canvas. The last call wins: a call still loading its source when `setSource`, `clearSource` or a
+   * `pushFrame` comes resolves without becoming the source.
    */
   async setSource(input: SourceInput, options: SourceOptions = {}): Promise<void> {
     this.#assertAlive()
+    const request = ++this.#sourceRequest
     if (input instanceof OfflineVideoSource) {
       if (input.disposed) throw new IncompatibleSourceError('The offline video source has been disposed.')
       this.#begin({ kind: 'offline', source: input }, 'file', undefined, input.mirrored)
@@ -567,6 +571,7 @@ export class Engine {
     if (isFrameImage(input)) {
       const image = await this.#checkImage(input, true)
       this.#assertAlive()
+      if (request !== this.#sourceRequest) return
       if (isCanvas(image)) {
         const feed = { kind: 'canvas' as const, canvas: image, raf: 0 }
         this.#begin(feed, 'live', image, options.mirror ?? false)
@@ -594,6 +599,10 @@ export class Engine {
       if (this.#disposed) {
         source.dispose()
         throw disposedError('The engine')
+      }
+      if (request !== this.#sourceRequest) {
+        source.dispose()
+        return
       }
     }
     if (source.disposed) throw new IncompatibleSourceError('The source has been disposed.')
@@ -783,6 +792,8 @@ export class Engine {
   }
 
   #stopFeed(): void {
+    // A `setSource` still loading its source no longer applies.
+    this.#sourceRequest++
     const feed = this.#feed
     this.#feed = undefined
     if (!feed) return

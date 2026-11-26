@@ -193,6 +193,17 @@ describe('ouaf pack-alpha', () => {
     expect(r.code).toBe(EXIT.OK)
   })
 
+  it('reports a usage error before looking for ffmpeg', async () => {
+    const input = join(dir, 'a.webm')
+    await writeFile(input, 'webm')
+    const { runner, calls } = fakeTools(VP9_ALPHA, { missing: 'ffmpeg' })
+    const usage = await cli(runner, join(dir, 'nope.webm'), '-o', join(dir, 'o.mp4'))
+    expect([usage.code, calls.length]).toEqual([EXIT.USAGE, 0])
+    expect(usage.err).toContain('does not exist')
+    // Valid arguments: ffmpeg is what is missing.
+    expect((await cli(runner, input, '-o', join(dir, 'o.mp4'))).code).toBe(EXIT.FAILED)
+  })
+
   it('prints its help', async () => {
     const r = await cli(fakeTools(undefined).runner, '--help')
     expect(r.code).toBe(EXIT.OK)
