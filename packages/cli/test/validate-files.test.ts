@@ -220,7 +220,10 @@ describe('glTF models', () => {
     })
     expect(codes(r.errors)).toEqual(['missing-file@assets/m.gltf#/assets/m'])
     expect(r.errors[0]!.message).toBe('File "assets/bad%zz.png" not found in the package.')
-    expect(r.warnings).toEqual([])
+    // Valid in the format, but the engine refuses a model that does not embed its files: said once per model.
+    expect(r.warnings.map((w) => [w.code, w.message, w.hint])).toEqual([
+      ['not-loaded-yet', '"assets/m.gltf" loads "sub%20dir/m.bin": this engine version only loads models that embed their buffers and images.', 'Export the model as GLB.'],
+    ])
   })
 
   it('a missing file that differs only by case says so', async () => {

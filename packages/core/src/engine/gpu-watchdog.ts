@@ -63,9 +63,16 @@ export class GpuWatchdog<T> {
   /** Slow frames in a row, and the filters drawn in all of them. */
   #slow = 0
   #suspects: T[] = []
+  /** Copy of the last list given to `submitted`: the caller reuses its array from one frame to the next. */
+  #last: readonly T[] = []
+  readonly #now: () => number
+  readonly #setTimeout: (fn: () => void, ms: number) => unknown
+  readonly #poll = (): void => this.poll()
 
   constructor(options: GpuWatchdogOptions<T>) {
     this.#o = options
+    this.#now = options.now ?? (() => performance.now())
+    this.#setTimeout = options.setTimeout ?? ((fn, ms) => setTimeout(fn, ms))
   }
 
   /** Frames submitted and not finished yet. */
@@ -73,15 +80,19 @@ export class GpuWatchdog<T> {
     return this.#pending.length
   }
 
-  /** A frame that drew the author shaders of `filters` was just submitted (nothing to do when `filters` is empty). */
+  /**
+   * A frame that drew the author shaders of `filters` was just submitted (nothing to do when `filters` is empty).
+   * The list is copied (when it differs from the previous frame's): the caller may reuse the array.
+   */
   submitted(filters: readonly T[]): void {
     if (filters.length === 0) return
+    if (!sameList(filters, this.#last)) this.#last = [...filters]
     const gl = this.#o.gl
     if (gl.isContextLost()) return
     const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
     if (!sync) return
     gl.flush()
-    this.#pending.push({ sync, at: this.#now(), filters, hidden: this.#hidden() })
+    this.#pending.push({ sync, at: this.#now(), filters: this.#last, hidden: this.#hidden() })
     this.#schedule()
   }
 
@@ -141,14 +152,16 @@ export class GpuWatchdog<T> {
 
   #schedule(): void {
     if (this.#timer !== undefined) return
-    this.#timer = (this.#o.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms)))(() => this.poll(), POLL_MS)
-  }
-
-  #now(): number {
-    return (this.#o.now ?? (() => performance.now()))()
+    this.#timer = this.#setTimeout(this.#poll, POLL_MS)
   }
 
   #hidden(): boolean {
     return this.#o.hidden ? this.#o.hidden() : typeof document !== 'undefined' && document.visibilityState === 'hidden'
   }
+}
+
+function sameList<T>(a: readonly T[], b: readonly T[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
 }

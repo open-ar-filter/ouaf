@@ -186,6 +186,12 @@ describe('formats and limits (spec §10)', () => {
     expect(r.errors[0]!.message).toContain('4097×1 px')
   })
 
+  it('warns that the engine does not load KTX2 images yet', async () => {
+    const r = await run(pkg({ a: 'assets/a.ktx2' }, { 'assets/a.ktx2': ktx2(64, 64) }))
+    expect(r.errors).toEqual([])
+    expect(codes(r.warnings)).toContain('not-loaded-yet@assets/a.ktx2#/assets/a')
+  })
+
   it('warns when a spritesheet does not divide into its grid', async () => {
     const r = await run(pkg({ walk: { src: 'assets/walk.png', frames: { cols: 3, rows: 2, fps: 12 } } }, { 'assets/walk.png': png(100, 64) }))
     expect(codes(r.warnings)).toEqual(['spritesheet-grid@assets/walk.png#/assets/walk'])
@@ -226,7 +232,7 @@ describe('formats and limits (spec §10)', () => {
       'gltf-version@assets/old.glb#/assets/old',
     ])
     // hat.bin is used by the model, so it is not reported as unreferenced.
-    expect(r.warnings).toEqual([])
+    expect(codes(r.warnings)).toEqual(['not-loaded-yet@assets/hat.gltf#/assets/hat'])
   })
 
   it('accepts a GLB with an embedded JSON chunk', async () => {

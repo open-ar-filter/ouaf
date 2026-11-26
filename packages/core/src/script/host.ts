@@ -252,22 +252,25 @@ export class ScriptHost {
     if (this.#state !== 'idle') return
     this.#state = 'starting'
     const canvases = this.#o.canvases ?? []
-    let connection: ScriptConnection
-    let images: Record<string, ImageBitmap> = {}
-    try {
-      ;[connection, images] = await Promise.all([this.#o.connect(), canvases.length > 0 && this.#o.images ? this.#o.images() : {}])
-    } catch (error) {
-      if ((this.#state as State) === 'disposed') return
+    // Both are awaited to their end: when one fails, what the other opened is released (a sandbox left running, the
+    // copies of the images).
+    const [opened, loaded] = await Promise.allSettled([
+      this.#o.connect(),
+      canvases.length > 0 && this.#o.images ? this.#o.images() : ({} as Record<string, ImageBitmap>),
+    ])
+    const failure = opened.status === 'rejected' ? opened : loaded.status === 'rejected' ? loaded : undefined
+    if (failure || (this.#state as State) === 'disposed') {
+      if (opened.status === 'fulfilled') opened.value.terminate()
+      if (loaded.status === 'fulfilled') for (const image of Object.values(loaded.value)) image.close()
+      if (!failure || (this.#state as State) === 'disposed') return
+      const error: unknown = failure.reason
       this.#state = 'stopped'
       this.#settle()
       this.#o.error(error instanceof OuafError ? error : new OuafError('script', `Filter "${this.#o.filterId}": ${String(error)}`, { cause: error }))
       return
     }
-    if ((this.#state as State) === 'disposed') {
-      connection.terminate()
-      for (const image of Object.values(images)) image.close()
-      return
-    }
+    const connection = (opened as PromiseFulfilledResult<ScriptConnection>).value
+    const images = (loaded as PromiseFulfilledResult<Record<string, ImageBitmap>>).value
     this.#connection = connection
     connection.port.onmessage = (e) => this.#onMessage(e.data)
     connection.port.start?.()
@@ -288,10 +291,14 @@ export class ScriptHost {
     this.#send(0, init, Object.values(images))
   }
 
-  /** Queues an event for the script (only those it handles). */
+  /**
+   * Queues an event for the script: only those it handles, and `faceLeave` in any case, on which its runtime frees
+   * what it keeps for the face (`face.state`), handler or not. It tells the script nothing new: every script gets
+   * the ids of the faces of each frame.
+   */
   queue(event: WireEvent): void {
     if (this.#state === 'stopped' || this.#state === 'disposed') return
-    if (!this.#on.has(event.name)) return
+    if (event.name !== 'faceLeave' && !this.#on.has(event.name)) return
     if (this.#events.length >= MAX_QUEUED_EVENTS) {
       this.#events = compactEvents(this.#events)
       if (this.#events.length >= MAX_QUEUED_EVENTS) this.#events.shift()
