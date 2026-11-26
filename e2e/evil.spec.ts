@@ -247,7 +247,19 @@ test.describe('the GPU', () => {
       // minutes on a slow runner, with the page blocked, until the test times out. Twice the watchdog's limit, as the
       // time between frames is an upper bound of the GPU's.
       if (frameMs > 2 * GPU_STALL_MS) {
-        expect(++slowWindows, `a frame takes ${Math.round(frameMs)} ms at ${iterations} iterations, but the filter was never disabled`).toBeLessThan(8)
+        // No frame at all may also be the clip that stopped playing: WebKit's playback sometimes stalls on CI runners
+        // (see `start`), and with no frame to draw there is nothing for the watchdog to time. The clip is started
+        // again then; its state goes into the failure message, to tell a stalled clip from a shader never stopped.
+        const clip = await page.evaluate(async () => {
+          const video = document.getElementById('video') as HTMLVideoElement
+          const before = video.currentTime
+          await new Promise((resolve) => setTimeout(resolve, 1000))
+          const state = { playing: video.currentTime !== before, paused: video.paused, ended: video.ended, readyState: video.readyState }
+          if (!state.playing) await video.play().catch(() => {})
+          return state
+        })
+        const what = `a frame takes ${Math.round(frameMs)} ms at ${iterations} iterations, but the filter was never disabled`
+        expect(++slowWindows, `${what} (the clip: ${JSON.stringify(clip)})`).toBeLessThan(8)
         continue
       }
       slowWindows = 0
