@@ -51,7 +51,7 @@ function setup(options: { hidden?: () => boolean } = {}) {
     f.done = true
     advance(0)
   }
-  return { watchdog, fences, stalled, advance, frame, lose: () => (lost = true), hasTimer: () => timer !== undefined }
+  return { watchdog, fences, stalled, advance, frame, clock: () => now, lose: () => (lost = true), hasTimer: () => timer !== undefined }
 }
 
 describe('GPU watchdog', () => {
@@ -90,6 +90,28 @@ describe('GPU watchdog', () => {
     s.watchdog.submitted(drawn)
     s.advance(GPU_STALL_MS * GPU_STALL_FRAMES + 1)
     expect(s.stalled).toEqual([[['a'], GPU_STALL_MS * GPU_STALL_FRAMES + 1]])
+  })
+
+  it('counts a frame from the start of its drawing: work done inside the draw calls is slow too', () => {
+    const s = setup()
+    // A synchronous renderer: each frame held the thread for 4 s, and is finished when it is submitted.
+    for (let i = 0; i < GPU_STALL_FRAMES; i++) {
+      const started = s.clock()
+      s.advance(4000)
+      s.watchdog.submitted(['a'], started)
+      s.fences.at(-1)!.done = true
+      s.advance(20)
+    }
+    expect(s.stalled.map(([filters]) => filters)).toEqual([['a']])
+    // Without a start time, the frame is counted from the call, as before.
+    const t = setup()
+    for (let i = 0; i < 5; i++) {
+      t.advance(4000)
+      t.watchdog.submitted(['a'])
+      t.fences.at(-1)!.done = true
+      t.advance(20)
+    }
+    expect(t.stalled).toEqual([])
   })
 
   it('does not blame a single slow frame between fast ones', () => {
