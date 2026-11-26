@@ -82,23 +82,6 @@ describe('script host', () => {
     expect(s.warnings).toEqual([])
   })
 
-  it('sends faceLeave to a script that does not handle it: its runtime frees the state of the face', async () => {
-    const s = hostSetup(`export default { on: { 'message:go'() {} } }`)
-    await s.host.start({}, 0)
-    await idle(s.host)
-    s.host.beginFrame()
-    const sends = countSends(s.conn())
-    s.host.queue({ name: 'faceEnter', face: 1 }) // not handled: not sent
-    s.host.endFrame(0, s.source)
-    await idle(s.host)
-    expect(sends.n).toBe(0)
-    s.host.queue({ name: 'faceLeave', face: 1 })
-    s.host.beginFrame()
-    s.host.endFrame(0.033, s.source)
-    await idle(s.host)
-    expect([sends.n, s.warnings, s.errors]).toEqual([1, [], []])
-  })
-
   it('sends a script without update a frame only for an event, a due timer or a due canvas draw (#129)', async () => {
     const s = hostSetup(`export default {
       on: { 'message:go'(f, { data }) { f.after(data, () => f.emit('timer', f.params.size)) } },
@@ -921,32 +904,6 @@ describe('script host: start', () => {
     open({ port: { postMessage: () => {}, onmessage: null }, terminate: () => void (terminated = true) })
     await starting
     expect([s.host.state, terminated, closed]).toEqual(['disposed', true, ['star']])
-  })
-
-  it('releases what did open when the sandbox or the images fail', async () => {
-    const canvases = [{ layer: 0, width: 4, height: 4, fps: 0 }]
-    // The images fail first; the sandbox opens afterwards and must not be left running.
-    let open!: (c: ScriptConnection) => void
-    let terminated = false
-    const s = hostSetup('', {
-      connect: () => new Promise((resolve) => (open = resolve)),
-      canvases,
-      images: () => Promise.reject(new Error('out of memory')),
-    })
-    const starting = s.host.start({}, 0)
-    await Promise.resolve()
-    open({ port: { postMessage: () => {}, onmessage: null }, terminate: () => void (terminated = true) })
-    await starting
-    expect([s.host.state, terminated, s.errors.map((e) => e.message)]).toEqual(['stopped', true, ['Filter "test": Error: out of memory']])
-    // The sandbox fails: the copies of the images are closed.
-    const closed: string[] = []
-    const t = hostSetup('', {
-      connect: () => Promise.reject(new Error('blocked by the CSP')),
-      canvases,
-      images: async () => ({ star: { close: () => void closed.push('star') } as unknown as ImageBitmap }),
-    })
-    await t.host.start({}, 0)
-    expect([t.host.state, closed, t.errors.length]).toEqual(['stopped', ['star'], 1])
   })
 
   it('wraps a failure that is not an OuafError, and reports nothing when disposed meanwhile', async () => {

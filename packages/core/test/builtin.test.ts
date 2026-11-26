@@ -176,8 +176,6 @@ describe('MediaPipeFrameTracker', () => {
     const t = new MediaPipeFrameTracker(fakeMediaPipe('GPU').tracker, CONFIG, ENV())
     expect(t.backend).toEqual({ name: 'GPU', source: 'only' })
     expect(t.description).toBe('MediaPipe GPU (only), main thread')
-    // Blendshapes are always computed: dropping them would gain nothing.
-    expect(t.sheds).toEqual(['extraFaces', 'resolution'])
     t.benchmark() // nothing to measure
     expect(t.measuring).toBe(false)
   })

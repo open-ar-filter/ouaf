@@ -208,13 +208,6 @@ function drop(msg: FrameMessage): void {
 }
 
 async function run(msg: FrameMessage, receivedAt: number): Promise<void> {
-  // A frame to read from a camera stream that is closed: the page posted it before it learned that the stream's
-  // frames cannot stand for the element's (`streamUnusable`, answered to the frame before). It never runs, as a frame
-  // replaced by a newer one; the page sends the next ones with their image. A stream that ended is an error, below.
-  if (!msg.frame && !stream) {
-    drop(msg)
-    return
-  }
   running = true
   const startedAt = wallNow()
   const idleMs = startedAt - Math.max(lastPostedAt, receivedAt)

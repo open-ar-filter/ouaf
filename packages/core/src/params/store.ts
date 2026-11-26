@@ -302,11 +302,6 @@ export class ParamStore<R = unknown> implements ParamReader {
     return this.#slotAt(index).value
   }
 
-  /** A `transition` of the parameter is running: its components in `numbers` are between two values. */
-  animatingAt(index: number): boolean {
-    return this.#slotAt(index).duration > 0
-  }
-
   // Host side
 
   /** Committed value of `name` (changes set since the last frame are not visible yet). */

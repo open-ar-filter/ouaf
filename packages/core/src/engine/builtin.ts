@@ -8,7 +8,6 @@ import { createFaceTracker, trackerInputHeight, trackerInputWidth } from '../fac
 import type { Delegate, FaceFrame, FaceTracker, TrackerInput } from '../face.ts'
 import { BackendBenchmark, currentUserAgent, readStoredBackend, type StoredBackend } from './backend-choice.ts'
 import type { BackendInfo, FaceTrackerImpl, FrameTracker, OuafPlugin, TrackerConfig, TrackerEnv } from './plugin.ts'
-import type { Capability } from './governor.ts'
 import { choosingFaceTracker, MAIN_THREAD_WEIGHT, type TrackerCandidate } from './tracker-choice.ts'
 import { openLiteRtTracker, type LiteRtFrameTracker, type LiteRtTrackerOptions } from '../litert/tracker.ts'
 import { canvasPlugin } from '../layers/canvas/index.ts'
@@ -65,8 +64,6 @@ export const mediaPipeFaceTracker: FaceTrackerImpl = {
   },
 }
 
-const MEDIAPIPE_SHEDS: readonly Capability[] = ['extraFaces', 'resolution']
-
 /**
  * `FrameTracker` over the synchronous MediaPipe tracker. `configure` changes the number of faces through
  * `FaceTracker.reconfigure` (asynchronous: a `track` meanwhile waits for it) and the analysis resolution by drawing
@@ -111,14 +108,6 @@ export class MediaPipeFrameTracker implements FrameTracker {
 
   get measuring(): boolean {
     return this.#measuring
-  }
-
-  /**
-   * Fewer faces and a smaller analysis image make it faster; dropping the blendshapes does not (they are always
-   * computed, see `mediaPipeFaceTracker`): the governor must not spend a step on them, nor filters lose them.
-   */
-  get sheds(): readonly Capability[] {
-    return MEDIAPIPE_SHEDS
   }
 
   benchmark(): void {

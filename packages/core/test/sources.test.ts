@@ -177,17 +177,6 @@ describe('demuxMp4 on forged files (#123)', () => {
     // 0 samples per chunk over chunks 1 to 2³² − 2, past the 1-chunk offset table: the loop stops at the table end.
     expect(forged({ stsc: box('stsc', u32(0, 2, 1, 0, 1, 0xffffffff, 3, 1)) })).toThrow(/does not cover every sample/)
   })
-
-  it('refuses sample-to-chunk runs that are not in chunk order, before walking the chunk table for each', () => {
-    // Empty runs alternating between chunk 1 and chunk 2³² − 1: each odd run would walk the whole offset table.
-    const runs = 20_000
-    const stsc = box('stsc', u32(0, runs, ...Array.from({ length: runs }, (_, r) => [r % 2 ? 0xffffffff : 1, 0, 1]).flat()))
-    const stco = box('stco', u32(0, runs), new Uint8Array(runs * 4))
-    const start = performance.now()
-    expect(forged({ stsc, stco })).toThrow(/not in chunk order/)
-    expect(performance.now() - start).toBeLessThan(500)
-    expect(forged({ stsc: box('stsc', u32(0, 1, 0, 3, 1)) })).toThrow(/not in chunk order/) // chunks are numbered from 1
-  })
 })
 
 describe('SeededRandom', () => {
@@ -273,24 +262,6 @@ describe('TrackingHub (file sources)', () => {
     await tracked
     expect(h.faces.mediaTime).toBe(2)
     expect(h.results).toBe(2)
-  })
-
-  it('measures the rate on the clock of the results, whatever the media time of the frames', async () => {
-    const { tracker } = asyncTracker()
-    const { h } = await hub(tracker)
-    let clock = 50_000
-    const now = vi.spyOn(performance, 'now').mockImplementation(() => clock)
-    try {
-      // Frames 1/30 s apart in media time, each tracked in 10 ms: 100 results a second.
-      for (let i = 0; i < 20; i++) {
-        clock += 10
-        await h.track(input, (i * 1000) / 30, i / 30, true)
-      }
-      expect(h.rateHz).toBeCloseTo(100, 5)
-      expect(h.pipelineMs).toBe(0)
-    } finally {
-      now.mockRestore()
-    }
   })
 
   it('tracks still images with trackImage and resets the tracker on demand', async () => {

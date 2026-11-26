@@ -112,22 +112,8 @@ export async function openPackage(input: string): Promise<PackageSource> {
     throw new SourceError('not-found', `${input}: no such file or folder.`)
   }
   // Following a link given on the command line is fine; links inside the package are reported.
-  if (st.isSymbolicLink()) {
-    try {
-      st = await stat(input)
-    } catch {
-      throw new SourceError('not-found', `${input}: a symbolic link to a file or folder that does not exist.`)
-    }
-  }
+  if (st.isSymbolicLink()) st = await stat(input)
   if (st.isDirectory()) return openFolder(input)
-  if (st.isFile()) {
-    let bytes
-    try {
-      bytes = await readFile(input)
-    } catch (e) {
-      throw new SourceError('not-found', `${input}: cannot be read (${(e as NodeJS.ErrnoException).code ?? (e as Error).message}).`)
-    }
-    return zipSource(new Uint8Array(bytes), input)
-  }
+  if (st.isFile()) return openZip(input)
   throw new SourceError('not-found', `${input}: not a folder or a .ouaf file.`)
 }

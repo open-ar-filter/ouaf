@@ -260,10 +260,10 @@ directly (§10.1). **Remote URLs (`http:`, `https:`, `data:`…) are forbidden.*
 
 | Kind | Formats | Notes |
 |---|---|---|
-| image | PNG, WebP, JPEG, AVIF, SVG (+ inline `svg`, `emoji`) | ≤ 4096 px per side. SVG is rendered as an image (no script, no external resource). KTX2 is accepted by the format but not loaded by the engine yet (`ouaf validate` warns). |
+| image | PNG, WebP, JPEG, AVIF, SVG (+ inline `svg`, `emoji`) | ≤ 4096 px per side. SVG is rendered as an image (no script, no external resource). KTX2 is accepted by the format but not loaded by the engine yet. |
 | spritesheet | an image + `frames: { cols, rows, count?, fps }` | Grid read left to right, top to bottom. |
 | video | MP4 (H.264), WebM (VP9) | ≤ 1080p, 720p recommended; muted; at most 2 playing at once on phones. Transparency: `"alpha": "packed"` (color left half, mask right half), made with `npx ouaf pack-alpha <webm, ProRes 4444 or PNG folder> -o assets/x.mp4` (needs ffmpeg). |
-| model | glTF 2.0 / GLB | Draco and meshopt compression supported. Export as GLB: a `.gltf` with external files (under `assets/`) is valid in the format, but the engine only loads models that embed their buffers and images (`ouaf validate` warns). |
+| model | glTF 2.0 / GLB | Draco and meshopt compression supported; external files must stay under `assets/` (prefer GLB). |
 | lut | `.cube` | 1D or 3D. |
 | shader | `.frag`, `.glsl` | Section 11. |
 | font | WOFF2, WOFF, TTF, OTF | For `text.font`, and by asset name in canvases (`ctx.font`, section 10). |
@@ -550,9 +550,6 @@ Specified, or reserved, but not working in the reference engine today. Do not re
 - A host file as a video or spritesheet sticker (only images), or as a shader texture: `textures` take assets only.
 - Starting a sticker with `autoplay: false` from a script; `f.sound()` and audio assets; `lottie` and `data` assets
   (reserved: import JSON in `filter.ts`, section 6).
-- `apply: "reload"` on a parameter: it is applied at the next frame like a `live` one (no preload and swap of the
-  filter), and without its `transition`.
-- A `.gltf` model with external buffers or images (use GLB).
 - KTX2 textures; reserved `requires` (`hands`, `segmentation`, `pose`, `audio`)
   and reserved events (`tap`…): warnings.
 

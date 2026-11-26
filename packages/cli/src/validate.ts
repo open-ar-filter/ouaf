@@ -387,10 +387,6 @@ function formatMismatch(ctx: Ctx, path: string, loc: Loc, kind: TAssetKind, expe
 
 function checkImage(ctx: Ctx, path: string, loc: Loc, info: MediaInfo, ref: FileRef) {
   if (!RASTER.includes(info.format)) return // SVG: rendered as an image, no pixel size to check
-  if (info.format === 'ktx2') {
-    add(ctx, 'warning', 'not-loaded-yet', loc, `"${path}" is a KTX2 texture: valid in the format (spec §10.1), but this engine version does not load KTX2 yet.`,
-      'Use WebP, AVIF, PNG or JPEG until it does.')
-  }
   const { width, height } = info
   if (!width || !height) {
     add(ctx, 'warning', 'unreadable-header', loc, `Could not read the dimensions of "${path}" from its header.`,
@@ -469,7 +465,6 @@ function checkModel(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array, ext: st
     ...(gltf.buffers ?? []).map((b, i) => [b?.uri, `buffers[${i}]`] as const),
     ...(gltf.images ?? []).map((b, i) => [b?.uri, `images[${i}]`] as const),
   ]
-  let external: string | undefined
   for (const [uri, where] of uris) {
     if (typeof uri !== 'string' || uri.startsWith('data:')) continue
     if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(uri)) {
@@ -491,14 +486,7 @@ function checkModel(ctx: Ctx, path: string, loc: Loc, bytes: Uint8Array, ext: st
       add(ctx, 'error', 'unsafe-path', loc, `"${path}" ${where} points outside assets/ ("${uri}").`, 'Keep the model\'s files under assets/, or export it as GLB.')
     } else if (!ctx.files.has(resolved)) {
       missingFile(ctx, resolved, loc)
-    } else {
-      ctx.referenced.add(resolved)
-      external ??= uri
-    }
-  }
-  if (external !== undefined) {
-    add(ctx, 'warning', 'not-loaded-yet', loc, `"${path}" loads "${external}": this engine version only loads models that embed their buffers and images.`,
-      'Export the model as GLB.')
+    } else ctx.referenced.add(resolved)
   }
 }
 
@@ -711,7 +699,7 @@ function checkBudget(ctx: Ctx) {
     const unpacked = archiveBytes !== undefined ? ' unpacked' : ''
     add(ctx, 'warning', 'package-size', { file: '' },
       `The package files total ${formatBytes(bytes)}${unpacked}: 5 MB or less is recommended (spec §3).`,
-      'Compress the assets (WebP or AVIF images, Draco/meshopt models, shorter or smaller videos).')
+      'Compress the assets (KTX2 textures, Draco/meshopt models, shorter or smaller videos).')
   }
 }
 

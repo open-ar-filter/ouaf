@@ -2,7 +2,7 @@ import { basename } from 'node:path'
 import { parseArgs } from 'node:util'
 import { EXIT, UsageError, type Command } from '../command.ts'
 import { findFfmpeg, spawnRunner, ToolError, type ProcessRunner } from '../ffmpeg.ts'
-import { checkOptions, PACK_DEFAULTS, packAlpha, PackError, PackInputError, resolveInput, type PackResult } from '../pack-alpha.ts'
+import { PACK_DEFAULTS, packAlpha, PackError, PackInputError, type PackResult } from '../pack-alpha.ts'
 
 export interface PackAlphaDeps {
   /** Runs ffmpeg and ffprobe (default: child processes). */
@@ -99,9 +99,6 @@ export function createPackAlpha(deps: PackAlphaDeps = {}): Command {
         return EXIT.FAILED
       }
       try {
-        // The arguments first: a usage error is one (exit 2) with or without ffmpeg installed.
-        await checkOptions(options)
-        await resolveInput(options.input)
         const tools = await findFfmpeg(runner, values.ffmpeg ?? env.OUAF_FFMPEG ?? 'ffmpeg')
         const result = await packAlpha(runner, tools, options)
         io.out(values.json ? JSON.stringify({ ok: true, ...json(result) }, null, 2) : summary(result))

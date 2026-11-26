@@ -198,35 +198,6 @@ test('a canvas is read directly on every animation frame, as a live source', asy
   expect(new Set(tracked.map((s: Sample) => s.x)).size).toBeGreaterThan(1)
 })
 
-test('the last setSource wins over one that is still loading its image; clearSource cancels it', async ({ page }) => {
-  await open(page)
-  const result = await page.evaluate(async () => {
-    const { engine } = window.ouaf!
-    const canvas = document.createElement('canvas')
-    canvas.getContext('2d')!.fillRect(0, 0, 10, 10)
-    /** An image that is not decoded yet: `setSource` waits for it. */
-    const image = () => {
-      const img = new Image()
-      img.src = canvas.toDataURL()
-      return img
-    }
-    const slow = engine.setSource(image())
-    await engine.setSource(canvas)
-    await slow
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    const afterCanvas = engine.regime
-    // A cleared source stays cleared: nothing is rendered once the image is ready.
-    const cleared = engine.setSource(image())
-    engine.clearSource()
-    await cleared
-    window.ouafProbe = []
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    return { afterCanvas, rendered: window.ouafProbe.length }
-  })
-  expect(await errors(page)).toEqual([])
-  expect(result).toEqual({ afterCanvas: 'live', rendered: 0 })
-})
-
 /** First seeded draws of the probe layer after setting a live canvas source, for two successive sources. */
 async function liveDraws(page: Page): Promise<number[][]> {
   return page.evaluate(async () => {

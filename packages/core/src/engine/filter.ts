@@ -65,9 +65,8 @@ export interface FilterHandle {
   readonly presets: readonly string[]
   /**
    * Validates and queues a change, applied at the start of the next frame (spec §9). Numbers, colors and vectors
-   * animate over the parameter's `transition` (ms), or `options.transition`; `apply: "reload"` parameters are applied
-   * at the next frame like the others for now (the engine does not preload and swap the filter yet), without
-   * transition. Throws `InvalidParamError`; nothing is applied then. The file
+   * animate over the parameter's `transition` (ms), or `options.transition`; `apply: "reload"` parameters preload the
+   * filter again and swap it in without an empty frame. Throws `InvalidParamError`; nothing is applied then. The file
    * of an `asset` parameter a layer shows is then loaded and checked on its content (spec §15) and swapped in at a
    * frame start once ready; a file refused then is reported as an `InvalidParamError` (reason `content`) on
    * `engine.on('error')`, and the parameter keeps its previous file.
@@ -427,9 +426,8 @@ export async function loadFilter(
 }
 
 /**
- * Params as bindings read them (`{ "param": "name" }`): numbers from the animated components, so that a binding
- * follows a running `transition`; colors and vectors too while one runs (a new value per read then: a transition is
- * short), everything else as committed.
+ * Params as bindings read them (`{ "param": "name" }`): numbers and booleans from the animated components (a number
+ * binding follows a running `transition`), everything else as committed.
  */
 export function bindingParams(store: ParamStore): ParamsReader {
   return {
@@ -440,15 +438,7 @@ export function bindingParams(store: ParamStore): ParamsReader {
     get(name) {
       const i = store.indexOf(name)
       if (i < 0) return undefined
-      const type = store.defAt(i).type
-      if (type === 'number') return store.numberAt(i)
-      if ((type === 'color' || type === 'vec2' || type === 'vec3') && store.animatingAt(i)) {
-        const n = store.numbers
-        const o = store.offsetOf(i)
-        if (type === 'color') return `#${hexByte(n[o]!)}${hexByte(n[o + 1]!)}${hexByte(n[o + 2]!)}${hexByte(n[o + 3]!)}`
-        return type === 'vec2' ? [n[o]!, n[o + 1]!] : [n[o]!, n[o + 1]!, n[o + 2]!]
-      }
-      return store.valueAt(i)
+      return store.defAt(i).type === 'number' ? store.numberAt(i) : store.valueAt(i)
     },
     writeNumber(name, out, index) {
       const i = store.indexOf(name)
@@ -457,11 +447,6 @@ export function bindingParams(store: ParamStore): ParamsReader {
       return true
     },
   }
-}
-
-/** A color component in 0–1 as two hex digits. */
-function hexByte(v: number): string {
-  return Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')
 }
 
 /** `requires.plugins` against the installed plugins, before validation, for a precise error (spec §4.1). */
