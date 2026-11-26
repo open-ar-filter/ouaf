@@ -159,8 +159,8 @@ describe('ouaf preview', () => {
   it('progress lines, except with --json', async () => {
     const lines: string[] = []
     const { c } = command(() => ({}), {}, (t) => lines.push(t))
-    await cli([c], 'preview', valid, '--ref', 'talk', '--ref', 'walk')
-    expect(lines).toEqual(['[1/2] talk…', '[2/2] walk…'])
+    await cli([c], 'preview', valid, '--ref', 'talk', '--ref', 'no-face')
+    expect(lines).toEqual(['[1/2] talk…', '[2/2] no-face…'])
     await cli([c], 'preview', valid, '--ref', 'talk', '--json')
     expect(lines).toHaveLength(2)
   })
@@ -173,6 +173,15 @@ describe('ouaf preview', () => {
     expect(json.browser).toBeNull()
     expect(json.references[0]).toMatchObject({ id: 'still', kind: 'image', frames: 10, maxFaces: 3, ok: true })
     expect(json.references[0]).not.toHaveProperty('from')
+    expect(json.references[0]).not.toHaveProperty('expectedFaces')
+  })
+
+  it('a reference of the set: the faces it documents and its description in the JSON', async () => {
+    const { c } = command(() => ({}))
+    const json = JSON.parse((await cli([c], 'preview', valid, '--ref', 'no-face', '--ref', 'two-faces', '--json')).out)
+    // In the order of the set.
+    expect(json.references[0]).toMatchObject({ id: 'two-faces', maxFaces: 2, expectedFaces: 2 })
+    expect(json.references[1]).toMatchObject({ id: 'no-face', expectedFaces: 0, description: expect.stringMatching(/without a face/) })
   })
 
   it('a setup error without a hint', async () => {

@@ -98,3 +98,19 @@ test('an image input, and a filter that fails in the engine', async () => {
   expect(broken.json.ok).toBe(false)
   expect(broken.json.references[0]!.error).toMatch(/does not compile[\s\S]*line 4/)
 })
+
+test('the reference face set: the tracker finds the faces each reference documents, and the filter shows', async () => {
+  test.setTimeout(240_000)
+  // #31: every photo and clip of test-media/faces/ and the licensed test clips. `faces` in all.json is what the
+  // reference engine finds; when a tracker change makes this fail, look at the screenshots and update the file.
+  const set = JSON.parse(await readFile('test-media/faces/all.json', 'utf8')) as { references: Array<{ id: string; faces: number }> }
+  const { code, json } = await preview('filters/glasses', '--references', 'test-media/faces/all.json', '--max-size', '256', '-o', join(dir, 'faces'))
+  expect(code).toBe(0)
+  expect(json.references.map((r) => [r.id, r.faces])).toEqual(set.references.map((r) => [r.id, r.faces]))
+  for (const shot of json.references) {
+    expect(shot.errors, shot.id).toEqual([])
+    // Glasses and a moustache where a face is found; next to nothing changes elsewhere (video decoding, scaling).
+    if (shot.faces > 0) expect(shot.changed, shot.id).toBeGreaterThan(0.005)
+    else expect(shot.changed, shot.id).toBeLessThan(0.003)
+  }
+})

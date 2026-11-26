@@ -46,8 +46,8 @@ npx ouaf preview filters/hello         # screenshots on reference faces: ouaf-pr
 npm run dev                            # https://localhost:5173 (self-signed certificate: accept it)
 ```
 
-`ouaf preview` renders the filter in headless Chromium on a few frames of the test clips and writes one screenshot
-per reference face (section 17); it needs Playwright's Chromium once: `npx playwright install chromium`. To see it
+`ouaf preview` renders the filter in headless Chromium on reference faces (photos and frames of the test clips) and
+writes one screenshot per reference (section 17); it needs Playwright's Chromium once: `npx playwright install chromium`. To see it
 live, open `https://localhost:5173/engine.html?filter=/filters/hello/&source=pesquet-talk&autostart`: the engine page
 plays a [test clip](test-media/README.md) (`source=<clip>`, `autostart` starts it) with your filter on top. Without
 `source`, click **Start** to use the camera. Other query parameters: `filter` can be repeated to stack filters,
@@ -785,14 +785,17 @@ spec and the schema. An agent writing a filter follows this loop:
    for `filter.ts`. Exit code 0 means valid. Each issue has a `code`, a `file` (with `line` / `column` when known), a
    JSON `path` and a `hint`: apply the hint, then validate again until there are no errors and, ideally, no warnings.
 3. **Preview**: `npx ouaf preview filters/<id> --json` (a manifest folder, a `filter.ts` folder or a `.ouaf`; several
-   stack, the first at the bottom). It renders the filter in headless Chromium on reference faces, frames of the test
-   clips (`talk`, `walk`, `two-faces`, `no-face`; `--ref <id>` picks some, `--input <clip.mp4 | image.png>` uses
-   another file, `--at <s>` its time) and writes `ouaf-preview/<reference>.png` (`-o <dir>` elsewhere). Look at
+   stack, the first at the bottom). It renders the filter in headless Chromium on reference faces, photos and frames
+   of the test clips (`talk`, `dark-frontal`, `elder-beard-bw`, `mask-hijab`, `three-quarter`, `selfie-lowres`,
+   `two-faces`, `no-face`, which has no face; `--ref <id>` picks some, `--references test-media/faces/all.json` uses
+   the full set, with hard cases where no face is found, `--input <clip.mp4 | image.png>` another file, `--at <s>`
+   its time) and writes `ouaf-preview/<reference>.png` (`-o <dir>` elsewhere). Look at
    each screenshot: is every layer where it should be, at the right size? In the JSON, each reference has
    `errors` and `warnings` from the engine (an asset that fails to decode, a script error: things `validate` cannot
-   see), `faces` (faces tracked), `changed` (share of the pixels the filter changed: near 0 means
-   nothing shows), `pixelsSha256` and `perf` (frame times, measured with software rendering: compare filters, do
-   not predict a phone). Exit code 0: rendered without engine errors; 1: errors; 2: usage error (also when
+   see), `faces` (faces tracked; `expectedFaces` is what the reference set documents: 0 on `no-face` and on the hard
+   cases of the full set, where a filter rightly shows nothing), `changed` (share of the pixels the filter changed:
+   near 0 means nothing shows), `pixelsSha256` and `perf` (frame times, measured with software rendering: compare
+   filters, do not predict a phone). Exit code 0: rendered without engine errors; 1: errors; 2: usage error (also when
    Playwright's Chromium is missing: `npx playwright install chromium`). The same command gives the same pixels on
    every run on one machine. For a live view, `npm run dev`, then
    `https://localhost:5173/engine.html?filter=/filters/<id>/&source=pesquet-talk&autostart` (section 1).

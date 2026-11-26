@@ -1,9 +1,13 @@
 {
-  "$comment": "Reference inputs of `ouaf preview` (#30): the frames a filter is rendered on when no --input is given. Each reference is a clip of this folder (file, relative to this file) rendered frame by frame from `from` to `time` (media time, s; the screenshot is the frame at `time`), or an image (file .png/.jpg/.webp, `frames` copies). maxFaces: faces the host tracks. Until the reference face set of #31 exists, they are frames of the licensed test clips (README.md); `ouaf preview --references <file.json>` takes another set in this format.",
+  "$comment": "Default reference set of `ouaf preview` (#30): a short selection of the reference face set test-media/faces/all.json (#31), varied and fast to render. `ouaf preview --references test-media/faces/all.json` renders on the full set, hard cases included. Fields: id (screenshot name), file (relative to this file: a clip rendered frame by frame from `from` to `time`, media time in s, the screenshot being the frame at `time`; or an image, rendered `frames` times, 10 by default), maxFaces (faces the host tracks), faces (faces the reference engine finds at the screenshot, checked by the browser tests: 0 for a negative or a hard case), description.",
   "references": [
-    { "id": "talk", "file": "pesquet-talk.mp4", "from": 6.1, "time": 6.8, "maxFaces": 1, "description": "One face in close-up, frontal, mouth open" },
-    { "id": "walk", "file": "pesquet-walk.mp4", "from": 5.5, "time": 6.3, "maxFaces": 1, "description": "One face walking towards the camera, head slightly turned" },
-    { "id": "two-faces", "file": "two-faces-stacked.mp4", "from": 0.5, "time": 1.5, "maxFaces": 2, "description": "Two frontal faces, one above the other" },
-    { "id": "no-face", "file": "no-face.mp4", "from": 0, "time": 0.5, "maxFaces": 1, "description": "Underwater footage without a face (negative case)" }
+    {"id": "talk", "file": "pesquet-talk.mp4", "from": 6.1, "time": 6.8, "maxFaces": 1, "faces": 1, "description": "One face in close-up, frontal, mouth open"},
+    {"id": "dark-frontal", "file": "faces/dark-frontal.jpg", "maxFaces": 1, "faces": 1, "description": "Close-up, frontal, dark skin, beard stubble, hand under the chin"},
+    {"id": "elder-beard-bw", "file": "faces/elder-beard-bw.jpg", "maxFaces": 1, "faces": 1, "description": "Older man, white beard and moustache, glasses, black and white"},
+    {"id": "mask-hijab", "file": "faces/mask-hijab.jpg", "maxFaces": 1, "faces": 1, "description": "Hijab and surgical mask: nose and mouth hidden"},
+    {"id": "three-quarter", "file": "faces/three-quarter.jpg", "maxFaces": 1, "faces": 1, "description": "Three-quarter view, side light, long hair over one cheek"},
+    {"id": "selfie-lowres", "file": "faces/selfie-lowres.mp4", "from": 1.0, "time": 2.0, "maxFaces": 1, "faces": 1, "description": "Selfie clip at 352×640 (low resolution), dark skin, talking"},
+    {"id": "two-faces", "file": "two-faces-stacked.mp4", "from": 0.5, "time": 1.5, "maxFaces": 2, "faces": 2, "description": "Two frontal faces, one above the other"},
+    {"id": "no-face", "file": "no-face.mp4", "from": 0, "time": 0.5, "maxFaces": 1, "faces": 0, "description": "Underwater footage without a face (negative case)"}
   ]
 }

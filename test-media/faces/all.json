@@ -1,0 +1,31 @@
+{
+  "$comment": "The full reference face set (#31): the licensed test clips of test-media/ and the faces of this folder (README.md for their sources and licences). `ouaf preview --references test-media/faces/all.json` renders on all of them; test-media/references.json, the default set, is a short selection. Fields: id (screenshot name), file (relative to this file: a clip rendered frame by frame from `from` to `time`, media time in s, the screenshot being the frame at `time`; or an image, rendered `frames` times, 10 by default), maxFaces (faces the host tracks), faces (faces the reference engine finds at the screenshot, checked by the browser tests: 0 for a negative or a hard case), description.",
+  "references": [
+    {"id": "talk", "file": "../pesquet-talk.mp4", "from": 6.1, "time": 6.8, "maxFaces": 1, "faces": 1, "description": "One face in close-up, frontal, mouth open"},
+    {"id": "walk", "file": "../pesquet-walk.mp4", "from": 5.5, "time": 6.3, "maxFaces": 1, "faces": 1, "description": "One face walking towards the camera, head slightly turned"},
+    {"id": "two-faces", "file": "../two-faces-stacked.mp4", "from": 0.5, "time": 1.5, "maxFaces": 2, "faces": 2, "description": "Two frontal faces, one above the other"},
+    {"id": "no-face", "file": "../no-face.mp4", "from": 0, "time": 0.5, "maxFaces": 1, "faces": 0, "description": "Underwater footage without a face (negative case)"},
+    {"id": "dark-frontal", "file": "dark-frontal.jpg", "maxFaces": 1, "faces": 1, "description": "Close-up, frontal, dark skin, beard stubble, hand under the chin"},
+    {"id": "flower-crown", "file": "flower-crown.jpg", "maxFaces": 1, "faces": 1, "description": "Frontal, dark skin, big smile, flower crown on the forehead, plain background"},
+    {"id": "glasses-dim", "file": "glasses-dim.jpg", "maxFaces": 1, "faces": 1, "description": "Dark skin, glasses, dim light, dark background"},
+    {"id": "glasses-crowd", "file": "glasses-crowd.jpg", "maxFaces": 1, "faces": 1, "description": "Glasses, smile, curly hair, a street crowd behind (small background faces)"},
+    {"id": "elder-beard-bw", "file": "elder-beard-bw.jpg", "maxFaces": 1, "faces": 1, "description": "Older man, white beard and moustache, glasses, black and white"},
+    {"id": "elder-smile", "file": "elder-smile.jpg", "maxFaces": 1, "faces": 1, "description": "Older woman, close-up, wrinkles, mouth open, the face fills the frame"},
+    {"id": "elder-sari", "file": "elder-sari.jpg", "maxFaces": 1, "faces": 1, "description": "Older woman, deep wrinkles, head covered by a sari, outdoor light, head tilted"},
+    {"id": "headscarf-smile", "file": "headscarf-smile.jpg", "maxFaces": 1, "faces": 1, "description": "Older woman, patterned headscarf, smile, indoor"},
+    {"id": "mask-hijab", "file": "mask-hijab.jpg", "maxFaces": 1, "faces": 1, "description": "Hijab and surgical mask: nose and mouth hidden"},
+    {"id": "full-body", "file": "full-body.jpg", "maxFaces": 1, "faces": 1, "description": "Standing man, beard, full body: a small face (about 15 % of the width)"},
+    {"id": "night-phone", "file": "night-phone.jpg", "maxFaces": 1, "faces": 0, "description": "Night street, looking down at a phone, coloured lights: small, dim face"},
+    {"id": "shadow-cap", "file": "shadow-cap.jpg", "maxFaces": 1, "faces": 1, "description": "Low-key light from above, cap shading the eyes, dark background"},
+    {"id": "profile", "file": "profile.jpg", "maxFaces": 1, "faces": 0, "description": "Woman in a headwrap, strict profile (negative or hard case: one eye visible)"},
+    {"id": "sunglasses", "file": "sunglasses.jpg", "maxFaces": 1, "faces": 1, "description": "Sunglasses hide the eyes, hand on the chin, curly hair"},
+    {"id": "three-quarter", "file": "three-quarter.jpg", "maxFaces": 1, "faces": 1, "description": "Three-quarter view, side light, long hair over one cheek"},
+    {"id": "side-light", "file": "side-light.jpg", "maxFaces": 1, "faces": 0, "description": "Older man, long beard, hard side light, pipe near the mouth, black and white"},
+    {"id": "hand-pencil", "file": "hand-pencil.jpg", "maxFaces": 1, "faces": 0, "description": "Glasses, biting a pencil (hand and pencil in front of the mouth), looking down, 960×640"},
+    {"id": "selfie-lowres", "file": "selfie-lowres.mp4", "from": 1.0, "time": 2.0, "maxFaces": 1, "faces": 1, "description": "Selfie clip at 352×640 (low resolution), dark skin, talking"},
+    {"id": "elder-glasses", "file": "elder-glasses.mp4", "from": 1.0, "time": 2.0, "maxFaces": 1, "faces": 1, "description": "Older woman with glasses talking, phone selfie, burnt-in subtitles"},
+    {"id": "selfie-bali", "file": "selfie-bali.mp4", "from": 1.0, "time": 2.0, "maxFaces": 1, "faces": 1, "description": "Phone selfie, talking, head moves, close to the camera"},
+    {"id": "webcam-ladakhi", "file": "webcam-ladakhi.mp4", "from": 1.0, "time": 2.0, "maxFaces": 1, "faces": 1, "description": "Landscape webcam framing (1280×720), the face small in the frame, talking"},
+    {"id": "backlit", "file": "backlit.mp4", "from": 1.0, "time": 2.0, "maxFaces": 1, "faces": 1, "description": "Backlit against a window: the face is a silhouette (hard or negative case)"}
+  ]
+}

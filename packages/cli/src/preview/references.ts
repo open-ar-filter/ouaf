@@ -1,14 +1,15 @@
 /**
  * Reference inputs of `ouaf preview`: the frames a filter is rendered on. A reference set is a JSON file
  * (`test-media/references.json` by default) listing clips or images with the frames to render; `--input` gives a
- * single file instead. The reference face set of #31 plugs in as another set file in the same format.
+ * single file instead. `test-media/faces/all.json` is the full reference face set (#31), the default set a short
+ * selection of it.
  */
 import { existsSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, extname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-/** The default reference set: frames of the licensed test clips (test-media/README.md). */
+/** The default reference set: a short selection of the reference face set (test-media/faces/README.md). */
 export const DEFAULT_REFERENCES = fileURLToPath(new URL('../../../../test-media/references.json', import.meta.url))
 
 /** Still images a reference can be (decoded by the browser). */
@@ -37,6 +38,11 @@ export interface Reference {
   frames: number
   /** Faces the host tracks. */
   maxFaces: number
+  /**
+   * Faces the reference engine finds at the screenshot, as the set documents it (checked by the browser tests): 0 for
+   * a negative or a hard case (a profile, a face too small or too dark), where a filter rightly shows nothing.
+   */
+  faces?: number
   description?: string
 }
 
@@ -82,6 +88,12 @@ export async function loadReferences(path: string): Promise<Reference[]> {
     const maxFaces = r.maxFaces ?? 1
     if (!Number.isInteger(maxFaces) || (maxFaces as number) < 1) throw new ReferenceError(`${where}: "maxFaces" must be a positive integer.`)
     const ref: Reference = { id: r.id, file, kind, from: 0, time: 0, frames: IMAGE_FRAMES, maxFaces: maxFaces as number }
+    if (r.faces !== undefined) {
+      if (!Number.isInteger(r.faces) || (r.faces as number) < 0 || (r.faces as number) > ref.maxFaces) {
+        throw new ReferenceError(`${where}: "faces" must be an integer from 0 to "maxFaces".`)
+      }
+      ref.faces = r.faces as number
+    }
     if (typeof r.description === 'string') ref.description = r.description
     if (kind === 'video') {
       if (!isNumber(r.time) || r.time < 0) throw new ReferenceError(`${where}: a clip needs "time" (s), the frame of the screenshot.`)

@@ -33,9 +33,11 @@ Each reference is rendered as the browser tests render the demos: every frame of
 tracked then rendered (the file regime, spec §12.1), with media time and a fixed seed, in a fresh page. The
 screenshot is the frame at "time", as the canvas shows it.
 
-Inputs (default: every reference of test-media/references.json: talk, walk, two-faces, no-face):
+Inputs (default: every reference of test-media/references.json, a short selection of the reference face set: talk,
+dark-frontal, elder-beard-bw, mask-hijab, three-quarter, selfie-lowres, two-faces, no-face):
   --ref <id>            Render only this reference of the set (repeatable)
-  --references <file>   Another reference set (JSON, in the format of test-media/references.json)
+  --references <file>   Another reference set (JSON, in the format of test-media/references.json); the full
+                        reference face set, hard cases included: test-media/faces/all.json
   --input <file>        A clip (.mp4, .mov) or an image (.png, .jpg, .webp) instead of a reference set
   --at <s>              With a clip --input: media time of the screenshot (default 1)
   --from <s>            With a clip --input: first frame rendered (default: half a second before --at)
@@ -189,7 +191,14 @@ function json(r: PreviewResult, references: Reference[], outDir: string, ok: boo
     references: r.shots.map((s, i) => {
       const ref = references[i]!
       const frames = ref.kind === 'video' ? { from: ref.from, time: ref.time } : { frames: ref.frames }
-      const input = { input: relative('.', ref.file) || ref.file, kind: ref.kind, ...frames, maxFaces: ref.maxFaces }
+      const input = {
+        input: relative('.', ref.file) || ref.file,
+        kind: ref.kind,
+        ...frames,
+        maxFaces: ref.maxFaces,
+        ...(ref.faces === undefined ? {} : { expectedFaces: ref.faces }),
+        ...(ref.description === undefined ? {} : { description: ref.description }),
+      }
       if (!s.ok) return { id: s.reference, ...input, ok: false, error: s.error, warnings: s.warnings, errors: s.errors }
       const { reference, ok: _, time: _time, ...shot } = s
       return { id: reference, ...input, ok: s.errors.length === 0, ...shot }
