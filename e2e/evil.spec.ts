@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from './fixtures.ts'
 import { zipBombs } from '../filters/evil/zip-bombs.ts'
+import { GPU_STALL_MS } from '../packages/core/src/engine/gpu-watchdog.ts'
 
 /**
  * Malicious filters (#27, `filters/evil/`): each one attacks the engine from inside a filter (the script sandbox, the
@@ -221,19 +222,39 @@ test.describe('the GPU', () => {
     test.slow()
     await start(page, '/engine.html?source=pesquet-talk&autostart')
     // A loop that takes seconds a frame, whatever the GPU: from a few thousand rounds a pixel (seconds on a software
-    // renderer, as in CI), four times more every few seconds until the engine disables the filter. The filter's
-    // default (a million) would hold a software renderer for minutes, during which no page script runs.
+    // renderer, as in CI), four times more while the frames are still fast, until the engine disables the filter. The
+    // filter's default (a million) would hold a software renderer for minutes, during which no page script runs.
     await page.evaluate(() => window.ouaf!.engine.addFilter('/filters/evil/heavy-shader/', { iterations: 3000 }))
     const disabled = /"evil-heavy-shader" was disabled: (its shader kept the GPU busy|the GPU context was lost)/
-    for (let iterations = 3000; ; iterations *= 4) {
+    let iterations = 3000
+    let slowWindows = 0
+    for (;;) {
+      await page.evaluate(() => ((window as unknown as { statsBefore: unknown }).statsBefore = window.ouaf!.stats))
       const done = await expect
         .poll(() => errors(page), { timeout: 20_000, intervals: [1000] })
         .toEqual([expect.stringMatching(disabled)])
         .then(() => true, () => false)
       if (done) break
       // Disabled by the engine's GPU watchdog, or after the browser reset the GPU (context loss): either way reported.
+      // Time between two frames now, from the engine's stats (one report a second, at a frame): none since the window
+      // started means that a frame takes about as long as the window.
+      const frameMs = await page.evaluate(() => {
+        const stats = window.ouaf!.stats
+        return stats === (window as unknown as { statsBefore: unknown }).statsBefore || !stats ? Infinity : 1000 / stats.fps
+      })
+      // Frames that slow are the watchdog's: it needs `GPU_STALL_FRAMES` of them in a row, which may take longer than
+      // this window. Wait for it: a heavier shader then (as this test asked for, every 20 s) makes each frame last
+      // minutes on a slow runner, with the page blocked, until the test times out. Twice the watchdog's limit, as the
+      // time between frames is an upper bound of the GPU's.
+      if (frameMs > 2 * GPU_STALL_MS) {
+        expect(++slowWindows, `a frame takes ${Math.round(frameMs)} ms at ${iterations} iterations, but the filter was never disabled`).toBeLessThan(8)
+        continue
+      }
+      slowWindows = 0
       expect(iterations, 'the filter was never disabled').toBeLessThan(1_000_000)
-      await page.evaluate((n) => window.ouaf!.engine.filters[0]!.setParam('iterations', n), Math.min(iterations * 4, 1_000_000))
+      iterations = Math.min(iterations * 4, 1_000_000)
+      await page.evaluate((n) => window.ouaf!.engine.filters[0]!.setParam('iterations', n), iterations)
+      console.log(`evil-heavy-shader: ${Math.round(frameMs)} ms between frames, now ${iterations} iterations`)
     }
     expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.enabled)).toBe(false)
     // The page renders at its pace again.
