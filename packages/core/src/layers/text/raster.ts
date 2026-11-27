@@ -3,8 +3,12 @@
  * style changes"). A `TextRaster` owns one canvas; `update` redraws it only when the text, its color or its wrap width
  * changed since the last call, so transforms, opacity and visibility (which change every frame) never redraw it.
  *
- * The canvas only grows (in steps of 64 px), so text that changes often (a counter) reuses it: the part in use is
- * given by `uScale`/`vScale`, and `resized` tells the caller when the GPU texture must be reallocated.
+ * The canvas grows in steps of 64 px, so text that changes often (a counter) reuses it: the part in use is given by
+ * `uScale`/`vScale`, and `resized` tells the caller when the GPU texture must be reallocated. It shrinks only when
+ * the image takes less than half of it each way (a lower resolution, a much shorter text).
+ *
+ * The font size in pixels (`pixelsPerEm`) is set by the layer from the text's size on screen (`resolution.ts`, #147);
+ * a new one redraws on the next update.
  */
 import { layoutBox, wrapText, type TextAlign, type TextBox } from './layout.ts'
 
@@ -28,6 +32,7 @@ export interface TextContext {
   fillText(text: string, x: number, y: number): void
   strokeText(text: string, x: number, y: number): void
   measureText(text: string): Pick<TextMetrics, 'width'> & Partial<Pick<TextMetrics, 'fontBoundingBoxAscent' | 'fontBoundingBoxDescent'>>
+  drawImage(image: never, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number): void
 }
 
 export interface TextSurface {
@@ -54,7 +59,10 @@ export interface TextStyle {
 }
 
 export interface RasterOptions {
-  /** Font size in pixels of the raster; smaller when the text would not fit in `maxSize`. Default: 96. */
+  /**
+   * Initial font size in pixels of the raster (`pixelsPerEm`); smaller when the text would not fit in `maxSize`.
+   * Default: 96.
+   */
   basePx?: number
   /** Maximum width and height of the canvas in pixels. Default: 2048. */
   maxSize?: number
@@ -63,6 +71,13 @@ export interface RasterOptions {
 /** Distance used to draw shapes off the canvas so only their shadow lands on it (device pixels). */
 const SHADOW_SHIFT = 16384
 const STEP = 64
+/**
+ * A blurred shadow is drawn smaller, then enlarged: by a factor that keeps its blur at about this many pixels (at most
+ * `MAX_SHADOW_REDUCTION`). Canvas 2D blurs cost grow with the radius: a 0.15 em blur at 362 px per em took 12 ms per
+ * text in Chromium (#147), and the enlarged blur looks the same.
+ */
+const SHADOW_DETAIL = 8
+const MAX_SHADOW_REDUCTION = 4
 
 /** `#rgb[a]` / `#rrggbb[aa]` → opaque `#rrggbb` and the alpha in [0, 1]. */
 export function splitAlpha(color: string): { rgb: string; alpha: number } {
@@ -77,8 +92,11 @@ export function splitAlpha(color: string): { rgb: string; alpha: number } {
 
 export class TextRaster {
   readonly surface: TextSurface
+  readonly #createSurface: SurfaceFactory
+  /** Where a reduced shadow is drawn, created on first use. */
+  #shadowSurface: TextSurface | undefined
   #style: TextStyle
-  readonly #basePx: number
+  #basePx: number
   readonly #maxSize: number
   #ascent = 0.8
   #descent = 0.2
@@ -102,8 +120,22 @@ export class TextRaster {
     this.#style = style
     this.#basePx = options.basePx ?? 96
     this.#maxSize = options.maxSize ?? 2048
+    this.#createSurface = createSurface
     this.surface = createSurface()
     this.#measure()
+  }
+
+  /** Font size of the raster in pixels (before the `maxSize` limit). */
+  get pixelsPerEm(): number {
+    return this.#basePx
+  }
+
+  /** Draws at `px` pixels per em from now on: redrawn next update when it differs. */
+  setPixelsPerEm(px: number): void {
+    if (!(px > 0) || px === this.#basePx) return
+    this.#basePx = px
+    this.#measure()
+    this.#text = undefined
   }
 
   /** Draws with another font face from now on (a `font` bound to a parameter or set by a script): redrawn next update. */
@@ -172,11 +204,13 @@ export class TextRaster {
     const px = Math.max(1, Math.min(base, room / Math.max(box.width, 1e-6), room / Math.max(box.height, 1e-6)))
     const w = Math.min(this.#maxSize, Math.ceil(box.width * px) + 2)
     const h = Math.min(this.#maxSize, Math.ceil(box.height * px) + 2)
-    this.resized = w > canvas.width || h > canvas.height
+    const shrink = w * 2 <= canvas.width && h * 2 <= canvas.height
+    this.resized = w > canvas.width || h > canvas.height || shrink
     if (this.resized) {
       // Resizing resets the context state; everything is set again below.
-      canvas.width = Math.min(this.#maxSize, Math.max(canvas.width, Math.ceil(w / STEP) * STEP))
-      canvas.height = Math.min(this.#maxSize, Math.max(canvas.height, Math.ceil(h / STEP) * STEP))
+      const fit = (size: number, current: number) => Math.min(this.#maxSize, shrink ? Math.ceil(size / STEP) * STEP : Math.max(current, Math.ceil(size / STEP) * STEP))
+      canvas.width = fit(w, canvas.width)
+      canvas.height = fit(h, canvas.height)
     }
     this.width = w / px
     this.height = h / px
@@ -200,31 +234,57 @@ export class TextRaster {
     if (shadow) {
       // The shadow of the whole silhouette (outline and fill), drawn opaque then faded once, so overlapping shapes do
       // not darken it twice. The shapes themselves are drawn far off the canvas: only their shadow lands on it
-      // (shadow offsets and blur are in canvas pixels, outside the transform).
+      // (shadow offsets and blur are in canvas pixels, outside the transform). A large blur is drawn `f` times smaller
+      // on its own canvas, then enlarged into this one.
       const { rgb, alpha } = splitAlpha(shadow.color)
-      ctx.setTransform(s, 0, 0, s, 1 - SHADOW_SHIFT, 1)
-      ctx.shadowColor = rgb
-      ctx.shadowBlur = shadow.blur * px
-      ctx.shadowOffsetX = SHADOW_SHIFT + shadow.offset[0] * px
-      ctx.shadowOffsetY = -shadow.offset[1] * px
-      ctx.fillStyle = '#000'
-      ctx.strokeStyle = '#000'
-      ctx.lineWidth = stroke
+      const f = Math.min(MAX_SHADOW_REDUCTION, Math.max(1, Math.floor((shadow.blur * px) / SHADOW_DETAIL)))
+      const target = f > 1 ? (this.#shadowSurface ??= this.#createSurface()) : this.surface
+      const c = target.ctx
+      if (f > 1) {
+        const sw = Math.ceil(w / f) + 1
+        const sh = Math.ceil(h / f) + 1
+        if (target.canvas.width < sw || target.canvas.height < sh || target.canvas.width > 2 * sw || target.canvas.height > 2 * sh) {
+          target.canvas.width = Math.ceil(sw / 16) * 16
+          target.canvas.height = Math.ceil(sh / 16) * 16
+        }
+        c.setTransform(1, 0, 0, 1, 0, 0)
+        c.globalCompositeOperation = 'source-over'
+        c.clearRect(0, 0, target.canvas.width, target.canvas.height)
+        c.font = this.font
+        c.textAlign = 'left'
+        c.textBaseline = 'alphabetic'
+        c.lineJoin = 'round'
+      }
+      const q = px / f
+      c.setTransform(s / f, 0, 0, s / f, 1 / f - SHADOW_SHIFT, 1 / f)
+      c.shadowColor = rgb
+      c.shadowBlur = shadow.blur * q
+      c.shadowOffsetX = SHADOW_SHIFT + shadow.offset[0] * q
+      c.shadowOffsetY = -shadow.offset[1] * q
+      c.fillStyle = '#000'
+      c.strokeStyle = '#000'
+      c.lineWidth = stroke
       for (let i = 0; i < lines.lines.length; i++) {
         const line = lines.lines[i]!
-        if (outline) ctx.strokeText(line, box.x[i]! * base, box.y[i]! * base)
-        ctx.fillText(line, box.x[i]! * base, box.y[i]! * base)
+        if (outline) c.strokeText(line, box.x[i]! * base, box.y[i]! * base)
+        c.fillText(line, box.x[i]! * base, box.y[i]! * base)
       }
-      ctx.shadowColor = 'transparent'
-      ctx.shadowBlur = 0
-      ctx.shadowOffsetX = 0
-      ctx.shadowOffsetY = 0
+      c.shadowColor = 'transparent'
+      c.shadowBlur = 0
+      c.shadowOffsetX = 0
+      c.shadowOffsetY = 0
       if (alpha < 1) {
+        c.setTransform(1, 0, 0, 1, 0, 0)
+        c.globalCompositeOperation = 'destination-in'
+        c.fillStyle = `rgba(0, 0, 0, ${alpha})`
+        c.fillRect(0, 0, target.canvas.width, target.canvas.height)
+        c.globalCompositeOperation = 'source-over'
+      }
+      if (f > 1) {
+        const sw = Math.ceil(w / f) + 1
+        const sh = Math.ceil(h / f) + 1
         ctx.setTransform(1, 0, 0, 1, 0, 0)
-        ctx.globalCompositeOperation = 'destination-in'
-        ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-        ctx.globalCompositeOperation = 'source-over'
+        ctx.drawImage(target.canvas as never, 0, 0, sw, sh, 0, 0, sw * f, sh * f)
       }
     }
 

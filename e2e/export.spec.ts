@@ -251,6 +251,7 @@ test('an audio track that cannot be copied is left out with a warning', async ({
   })
   expect(result.audio).toBeUndefined()
   expect(result.audioError).toBe('Unsupported audio codec "twos" (supported: AAC, Opus, FLAC).')
-  expect(result.warnings).toEqual([expect.stringContaining('the audio track cannot be copied (Unsupported audio codec "twos"')])
+  // Only the audio warning: a slow CI machine may add a performance one.
+  expect(result.warnings.filter((w) => w.includes('audio'))).toEqual([expect.stringContaining('the audio track cannot be copied (Unsupported audio codec "twos"')])
   expect(result.copied).toBeUndefined()
 })

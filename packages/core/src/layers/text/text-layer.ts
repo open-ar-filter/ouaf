@@ -4,8 +4,10 @@
  *
  * - `font`: a font asset, or chosen by a param, or set by the script (spec §8.1, `compileContent`): none gives the
  *   default font. A new font redraws the texture.
- * - The texture is redrawn only when the text, its color or its wrap width change (`TextRaster`); the transform
- *   (`offset`, `rotation`, `size`), `opacity` and `visible` are applied on the GPU side every frame.
+ * - The texture is redrawn only when the text, its color or its wrap width change (`TextRaster`), or when its size on
+ *   screen calls for another resolution (`resolution.ts`, #147: by √2 steps, with hysteresis, `scale` counted once
+ *   settled); the transform (`offset`, `rotation`, `size`, `scale`), `opacity` and `visible` are applied on the GPU
+ *   side every frame.
  * - One plane per selected face (`faces`). When neither `text` nor `color` (nor `size`, with `maxWidth`) reads face
  *   data, every face shares one texture; otherwise each face slot has its own.
  * - `size` is the font size (em) in anchor units; the anchor point is on the alignment edge of the text block
@@ -36,6 +38,7 @@ import { compileContent } from '../../engine/content.ts'
 import { isLoadedFont, type LoadedFont } from './font-loader.ts'
 import type { TextAlign } from './layout.ts'
 import { TextRaster, type SurfaceFactory, type TextContext, type TextStyle } from './raster.ts'
+import { Resolution, SettledScale } from './resolution.ts'
 
 export const DEFAULT_FONT = 'builtin:font/sans-bold'
 /** Shadow defaults, relative to the font size (the schema leaves them open). */
@@ -83,6 +86,9 @@ interface Slot {
   texture: CanvasTexture<OffscreenCanvas>
   /** The font the raster draws with. */
   font: LoadedFont
+  resolution: Resolution
+  /** Largest size on screen of the instances drawn with it this frame, in pixels per em. */
+  need: number
 }
 
 export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: TextLayerOptions = {}): ObjectLayer {
@@ -122,7 +128,7 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
     const raster = new TextRaster(style, createSurface)
     const texture = new CanvasTexture(raster.surface.canvas as OffscreenCanvas)
     texture.colorSpace = SRGBColorSpace
-    slots.push({ raster, texture, font })
+    slots.push({ raster, texture, font, resolution: new Resolution(), need: 0 })
   }
 
   const root = new Group()
@@ -155,6 +161,12 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
   const apparent = new Float64Array(maxFaces)
   const selected = new Int32Array(instances)
   const num = new Float64Array(5) // opacity, size, scale x, y, z
+  // Per instance, between the two passes of `update`: shown, opacity, size, the matrix before the plane.
+  const shown = new Uint8Array(instances)
+  const alphas = new Float64Array(instances)
+  const sizes = new Float64Array(instances)
+  const bases = Array.from({ length: instances }, () => new Matrix4())
+  const settled = Array.from({ length: instances }, () => new SettledScale())
   const euler = new Euler()
   const quat = new Quaternion()
   const pos = new Vector3()
@@ -162,9 +174,9 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
   const local = new Matrix4()
   const plane = new Matrix4()
   const screenMatrix = new Matrix4()
-  let frameRef: FrameContext | undefined
+  const projection = (ctx.view?.camera as { projectionMatrix?: Matrix4 } | undefined)?.projectionMatrix
 
-  /** Redraws the slot's texture if needed; false when there is nothing to draw. */
+  /** The content of the slot's texture for `face`: draws it if needed (at the slot's resolution); false when empty. */
   const refresh = (slot: Slot, face: number, sizeValue: number): boolean => {
     const chosen = fontContent.evaluate(face) ?? font
     if (chosen !== slot.font) {
@@ -183,31 +195,40 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
     return content !== ''
   }
 
-  /** Places `mesh`; the size and scale factors are in `num[1..4]`. */
-  const place = (mesh: Mesh, placement: ObjectPlacement, face: number, anchorMatrix: Matrix4, raster: TextRaster) => {
+  /**
+   * The matrix of instance `k` before its plane (anchor · offset · rotation · size × scale, in camera space) into
+   * `bases[k]`, and its draw-order place; returns its size on screen in pixels per em, with `scale` counted once
+   * settled. The size and scale factors are in `num[1..4]`.
+   */
+  const placeBase = (k: number, placement: ObjectPlacement, face: number, anchorMatrix: Matrix4, frame: FrameContext): number => {
     const sizeValue = num[1]!
     const off = offset.evaluate(face)
-    placement.face = onScreen ? 0 : frameRef!.anchors.id(face)
+    placement.face = onScreen ? 0 : frame.anchors.id(face)
     placement.z = off[2]
     const rot = rotation.evaluate(face)
     euler.set(MathUtils.degToRad(rot[0]), MathUtils.degToRad(rot[1]), MathUtils.degToRad(rot[2]))
     quat.setFromEuler(euler)
-    // The plane in em: its centre relative to the anchor point, its size.
-    const w = raster.width
-    const h = raster.height
-    plane.set(w, 0, 0, w / 2 - raster.originX, 0, h, 0, raster.originY - h / 2, 0, 0, 1, 0, 0, 0, 0, 1)
+    const base = bases[k]!
+    const a = anchorMatrix.elements
+    const anchorUnit = Math.max(Math.hypot(a[0]!, a[1]!, a[2]!), Math.hypot(a[4]!, a[5]!, a[6]!))
     if (orientScreen && !onScreen) {
       // Position and scale of the anchor (offset in the anchor frame), axes of the screen.
       pos.set(off[0], off[1], off[2]).applyMatrix4(anchorMatrix)
-      const unit = scl.setFromMatrixColumn(anchorMatrix, 0).length() * sizeValue
+      const unit = anchorUnit * sizeValue
       scl.set(unit * num[2]!, unit * num[3]!, unit * num[4]!)
-      mesh.matrix.compose(pos, quat, scl).multiply(plane)
+      base.compose(pos, quat, scl)
     } else {
       pos.set(off[0], off[1], off[2])
       scl.set(sizeValue * num[2]!, sizeValue * num[3]!, sizeValue * num[4]!)
       local.compose(pos, quat, scl)
-      mesh.matrix.multiplyMatrices(anchorMatrix, local).multiply(plane)
+      base.multiplyMatrices(anchorMatrix, local)
     }
+    // An em on screen: its length in camera space over its distance, times the focal length in pixels.
+    const depth = -base.elements[14]!
+    if (!(depth > 1e-6) || !projection) return 0
+    const focal = (projection.elements[5]! * frame.height) / 2
+    const scale = settled[k]!.update(Math.max(num[2]!, num[3]!), frame.time)
+    return ((anchorUnit * sizeValue) / depth) * focal * scale
   }
 
   return {
@@ -217,7 +238,6 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
     excludeFromCapture: overlay && decl.excludeFromCapture === true,
     placements,
     update(frame) {
-      frameRef = frame
       let n: number
       if (onScreen) {
         frame.anchors.screen(screenMatrix)
@@ -235,31 +255,43 @@ export function createTextLayer(decl: LayerDecl, ctx: LayerContext, options: Tex
         }
         n = selectFaces(faces, count, ids, apparent, selected, ok)
       }
+      for (const slot of slots) slot.need = 0
+      // First pass: what is shown, where, and how large on screen.
       for (let k = 0; k < meshes.length; k++) {
-        const mesh = meshes[k]!
-        if (k >= n) {
-          mesh.visible = false
-          continue
-        }
+        shown[k] = 0
+        if (k >= n) continue
         const face = selected[k]!
         opacity.write(face, num, 0)
         size.write(face, num, 1)
-        const alpha = num[0]!
-        const sizeValue = num[1]!
-        if (!visible.evaluate(face) || !(alpha > 0) || !(sizeValue > 0) || !scale.write(face, num, 2)) {
-          mesh.visible = false
-          continue
-        }
+        if (!visible.evaluate(face) || !(num[0]! > 0) || !(num[1]! > 0) || !scale.write(face, num, 2)) continue
+        alphas[k] = num[0]!
+        sizes[k] = num[1]!
+        const need = placeBase(k, placements[k]!, face, onScreen ? screenMatrix : anchorMatrices[face]!, frame)
         const slot = slots[perFace ? k : 0]!
-        if (!refresh(slot, face, sizeValue)) {
+        slot.need = Math.max(slot.need, need)
+        shown[k] = 1
+      }
+      // The resolution of each texture, then its content and the planes.
+      for (const slot of slots) {
+        const px = slot.resolution.update(slot.need, frame.time)
+        if (px !== undefined) slot.raster.setPixelsPerEm(px)
+      }
+      for (let k = 0; k < meshes.length; k++) {
+        const mesh = meshes[k]!
+        const slot = slots[perFace ? k : 0]!
+        if (!shown[k] || !refresh(slot, selected[k]!, sizes[k]!)) {
           mesh.visible = false
           continue
         }
-        mesh.material.opacity = Math.min(1, alpha)
-        place(mesh, placements[k]!, face, onScreen ? screenMatrix : anchorMatrices[face]!, slot.raster)
+        // The plane in em: its centre relative to the anchor point, its size.
+        const raster = slot.raster
+        const w = raster.width
+        const h = raster.height
+        plane.set(w, 0, 0, w / 2 - raster.originX, 0, h, 0, raster.originY - h / 2, 0, 0, 1, 0, 0, 0, 0, 1)
+        mesh.matrix.multiplyMatrices(bases[k]!, plane)
+        mesh.material.opacity = Math.min(1, alphas[k]!)
         mesh.visible = true
       }
-      frameRef = undefined
     },
     dispose() {
       geometry.dispose()
