@@ -185,24 +185,23 @@ test.describe('denial of service', () => {
   }
 
   for (const mode of ['heap', 'buffers']) {
-    test(`evil-memory (${mode}): a script that exhausts its memory is stopped, the page survives`, async ({ page, browserName }) => {
+    test(`evil-memory (${mode}): a script that exhausts its memory is stopped, the page survives`, async ({ page, browser, browserName }) => {
       test.slow()
       let crashed = false
       page.on('crash', () => (crashed = true))
       await open(page, '/filters/evil/memory/')
-      await send(page, mode)
-      // Known limitation on Chromium (#181, SECURITY.md): a Worker that reaches V8's heap limit takes down its renderer
-      // process, which the sandbox shares with the host page. When the bomb gets there before the 1 s watchdog (a fast
-      // machine), the page crashes. Accepted there, and only there, until the sandbox runs in its own process.
-      const knownCrash = mode === 'heap' && browserName === 'chromium'
-      try {
-        await expectStoppedAndRendering(page)
-      } catch (error) {
-        if (knownCrash && !crashed) await page.waitForEvent('crash', { timeout: 5000 }).catch(() => {})
-        if (!(knownCrash && crashed)) throw error
-        test.info().annotations.push({ type: 'known limitation', description: '#181: the heap bomb crashed the Chromium page before the watchdog stopped it.' })
-        return
+      if (browserName === 'chromium') {
+        // On Chromium only a process of its own saves the page (#181): a Worker that reaches V8's heap limit takes down
+        // its renderer process, and stopping it takes Blink about 2 s, long enough for a fast machine to get there.
+        // Desktop Chrome isolates the sandbox iframe (its own target here); Playwright's default headless shell does not,
+        // hence `channel: 'chromium'` (playwright.config.ts).
+        const cdp = await browser.newBrowserCDPSession()
+        const { targetInfos } = await cdp.send('Target.getTargets')
+        await cdp.detach()
+        expect(targetInfos.filter((t) => t.type === 'iframe').map((t) => t.url)).toContain('about:srcdoc')
       }
+      await send(page, mode)
+      await expectStoppedAndRendering(page)
       expect(crashed).toBe(false)
     })
   }
