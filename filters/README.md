@@ -30,6 +30,10 @@ types (spec §6.3).
 Try them on `/engine.html` (the "Demo filters" list: each one on its clip, or on the camera; the stack's "Add a
 filter" menu stacks them). `duo`, `big-eyes` and
 `stress` need a host with `maxFaces` ≥ 2 (4 for `stress`): the links set it.
+`stress` has one more link, "slow device": device adaptation on (spec §16) and tracking slowed down to about 12 Hz
+(`&adapt=1&throttle=80`), to watch in the perf panel the engine drop optional capabilities, then hide the filter if
+that is not enough; `e2e/device-adaptation.spec.ts` checks that on `stress` they drop in order, that the filter is
+hidden and shown again, and that its script copes without blendshapes.
 
 [`demos.json`](demos.json) lists the demos for the playground and for `e2e/demos.spec.ts`, which renders each one
 frame by frame on its clip and compares it with its reference image (`e2e/demos.spec.ts-snapshots/<id>.jpeg`;

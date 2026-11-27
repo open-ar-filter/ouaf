@@ -78,6 +78,65 @@ test('slow tracking: capabilities dropped in order, then the face filter hidden;
   expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
 })
 
+test('the stress demo under slow tracking: degraded in order, hidden, shown again; it keeps rendering (#37)', async ({ page }) => {
+  // The heaviest stack (every layer type, four faces, a script fed with every landmark and the blendshapes) on the
+  // four-faces clip, adaptation on as for a camera: 250 ms per result, below the floor even with everything dropped.
+  test.setTimeout(300_000)
+  await page.goto('/engine.html?source=four-faces-grid&autostart&maxFaces=4&adapt=1&throttle=250&filter=/filters/stress/')
+  await page.waitForFunction(() => ((window.ouaf?.frames ?? 0) > 0 && (window.ouaf?.engine.filters.length ?? 0) > 0) || (window.ouaf?.errors.length ?? 0) > 0, undefined, {
+    timeout: 60_000,
+  })
+  const stats = (phase: string) =>
+    page.evaluate((phase) => {
+      const s = window.ouaf!.stats!
+      return `stress ${phase}: ${s.fps.toFixed(1)} fps, tracking ${s.trackingHz.toFixed(1)} Hz, ${s.faces} face(s), ${s.frameMs.toFixed(1)} ms/frame, render scale ${s.renderScale}`
+    }, phase)
+  console.log(await stats('slow tracking'))
+  await expect.poll(() => events(page), POLL).toContain('unsupported[blendshapes,extraFaces,resolution]')
+  expect(await events(page)).toEqual([
+    'degraded[blendshapes]',
+    'degraded[blendshapes,extraFaces]',
+    'degraded[blendshapes,extraFaces,resolution]',
+    'unsupported[blendshapes,extraFaces,resolution]',
+  ])
+  expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.suspended)).toBe(true)
+  // Hidden, the raw clip goes on.
+  const frames = await page.evaluate(() => window.ouaf!.frames)
+  await expect.poll(() => page.evaluate(() => window.ouaf!.frames), { timeout: 10_000 }).toBeGreaterThan(frames)
+  console.log(await stats('hidden'))
+  // The script ran without blendshapes: no error.
+  expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
+
+  // The device frees up later (see the first test): shown again, then the capabilities come back.
+  await page.waitForTimeout(await page.evaluate(() => window.ouaf!.core.DEFAULT_GOVERNOR_TUNING.hiddenBaselineMs + 1000))
+  await page.evaluate(() => (window.ouaf!.throttle.ms = 0))
+  // The rate is measured over a sliding window: up to 15 s for it to settle. Shown again takes a predicted 14 Hz with
+  // the filter drawn; a margin for what drawing stress costs.
+  const rate = (min: number) =>
+    expect
+      .poll(() => page.evaluate(() => window.ouaf!.engine.performance.trackingHz), { timeout: 15_000, intervals: [1000] })
+      .toBeGreaterThanOrEqual(min)
+      .then(() => true, () => false)
+  const fast = await rate(17)
+  const hz = await page.evaluate(() => window.ouaf!.engine.performance.trackingHz)
+  console.log(await stats('throttle off'))
+  test.skip(!fast, `this machine tracks the stress demo at ${hz.toFixed(1)} Hz without throttle: too slow to check the recovery`)
+  await expect.poll(() => page.evaluate(() => window.ouaf!.engine.filters[0]!.suspended), { ...POLL, timeout: 150_000 }).toBe(false)
+  console.log(await stats('shown again'))
+  // Shown with capabilities still dropped: they come back one at a time while the rate allows (first test).
+  expect((await events(page))[4]).toMatch(/^(unsupported|degraded)\[/)
+  expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
+})
+
+test("the demo list's slow-device link opens the stress demo with adaptation on and tracking slowed down", async ({ page }) => {
+  await page.goto('/engine.html')
+  const link = page.locator('#demos a', { hasText: '▶ slow device' })
+  await expect(link).toHaveAttribute('href', '?filter=/filters/stress/&source=four-faces-grid&autostart&maxFaces=4&adapt=1&throttle=80')
+  await link.click()
+  await expect.poll(() => page.evaluate(() => window.ouaf?.engine.filters.map((f) => f.id)), POLL).toEqual(['stress'])
+  expect(await page.evaluate(() => window.ouaf!.throttle.ms)).toBe(80)
+})
+
 test('worker tracker: a filter hidden by a short dip is shown again within seconds (#180)', async ({ page }) => {
   // LiteRT.js in its worker: hiding the filter frees the main thread, not the tracker. Slow (250 ms per result) until
   // the hide, then the machine's own speed at once, during the 6 s the governor would otherwise spend learning what
