@@ -7,6 +7,8 @@ export interface Demo {
   id: string
   clip: string
   maxFaces: number
+  /** Extra links on the clip: `query` is added to the demo's (e.g. device adaptation with simulated slow tracking). */
+  links: Array<{ label: string; query: string }>
   /** From the manifest (English, or its first language); the id when it does not read. */
   name: string
   description: string
@@ -23,12 +25,12 @@ export function loadDemos(): Promise<Demo[]> {
   demos ??= (async () => {
     const response = await fetch(new URL('filters/demos.json', document.baseURI))
     if (!response.ok) throw new Error(`filters/demos.json: HTTP ${response.status}`)
-    const { demos } = (await response.json()) as { demos: Array<{ id: string; clip: string; maxFaces: number }> }
+    const { demos } = (await response.json()) as { demos: Array<{ id: string; clip: string; maxFaces: number; links?: Demo['links'] }> }
     return Promise.all(
       demos.map(async (d) => {
         const r = await fetch(new URL(`filters/${d.id}/manifest.json`, document.baseURI))
         const m = r.ok ? ((await r.json()) as { name?: Localized; description?: Localized }) : {}
-        return { id: d.id, clip: d.clip, maxFaces: d.maxFaces, name: text(m.name) || d.id, description: text(m.description) }
+        return { id: d.id, clip: d.clip, maxFaces: d.maxFaces, links: d.links ?? [], name: text(m.name) || d.id, description: text(m.description) }
       }),
     )
   })()
@@ -48,7 +50,8 @@ export async function renderDemos(container: HTMLElement): Promise<void> {
     const filter = `filter=/filters/${d.id}/`
     const faces = d.maxFaces > 1 ? `&maxFaces=${d.maxFaces}` : ''
     const dt = document.createElement('dt')
-    dt.append(`${d.name} `, link(`▶ ${d.clip}`, `${filter}&source=${d.clip}&autostart${faces}`), ' · ', link('camera', `${filter}${faces}`))
+    const clip = `${filter}&source=${d.clip}&autostart${faces}`
+    dt.append(`${d.name} `, link(`▶ ${d.clip}`, clip), ...d.links.flatMap((l) => [' · ', link(`▶ ${l.label}`, `${clip}&${l.query}`)]), ' · ', link('camera', `${filter}${faces}`))
     const dd = document.createElement('dd')
     dd.textContent = `${d.id}: ${d.description}`
     list.append(dt, dd)
