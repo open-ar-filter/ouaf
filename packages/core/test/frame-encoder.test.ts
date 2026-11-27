@@ -16,16 +16,20 @@ interface Queued {
 }
 
 /** A fake encoder: frames wait in the queue until `drain` or `flush` outputs them. */
-/** `auto`: each frame comes out right after `encode` (a fast encoder). */
-function fakeEnv(supported: (codec: string) => boolean = () => true, auto = false) {
+/**
+ * `auto`: each frame comes out right after `encode` (a fast encoder). `broken`: codecs said supported that fail on
+ * the first frame. `encoders` and `frames` leave out the trial encoders and frames of `create`.
+ */
+function fakeEnv(supported: (codec: string) => boolean = () => true, auto = false, broken: (codec: string) => boolean = () => false) {
+  const trials: string[] = []
   const encoders: FakeEncoder[] = []
   const frames: FakeFrame[] = []
   class FakeFrame {
     closed = false
     readonly init: VideoFrameInit & { timestamp: number }
-    constructor(_image: unknown, init: VideoFrameInit & { timestamp: number }) {
+    constructor(image: unknown, init: VideoFrameInit & { timestamp: number }) {
       this.init = init
-      frames.push(this)
+      if (!(image instanceof Uint8Array)) frames.push(this)
     }
     close() {
       this.closed = true
@@ -56,6 +60,15 @@ function fakeEnv(supported: (codec: string) => boolean = () => true, auto = fals
     }
     encode(frame: FakeFrame, options: VideoEncoderEncodeOptions) {
       if (frame.closed) throw new Error('closed frame')
+      if (!frames.includes(frame)) {
+        // The trial frame of `create`: this encoder is a trial one.
+        encoders.splice(encoders.indexOf(this), 1)
+        trials.push(this.config!.codec)
+      }
+      if (broken(this.config!.codec)) {
+        queueMicrotask(() => this.init.error(new DOMException('The given encoding is not supported.', 'NotSupportedError')))
+        return
+      }
       const q = { timestamp: frame.init.timestamp, keyFrame: options.keyFrame ?? false }
       this.queue.push(q)
       this.log.push(q)
@@ -80,7 +93,7 @@ function fakeEnv(supported: (codec: string) => boolean = () => true, auto = fals
     }
   }
   const env: FrameEncoderEnv = { VideoEncoder: FakeEncoder as unknown as typeof VideoEncoder, VideoFrame: FakeFrame as unknown as typeof VideoFrame }
-  return { env, encoders, frames }
+  return { env, encoders, frames, trials }
 }
 
 const canvas = (width: number, height: number) => ({ width, height }) as unknown as HTMLCanvasElement
@@ -115,6 +128,22 @@ describe('FrameEncoder', () => {
     await FrameEncoder.create(320, 240, Number.NaN, { codec: 'vp09.00.10.08', videoBitsPerSecond: 1e6 }, env)
     expect(encoders[0]!.config).toMatchObject({ codec: 'vp09.00.10.08', bitrate: 1e6, framerate: 30 })
     expect(encoders[0]!.config!.avc).toBeUndefined()
+  })
+
+  it('tries each codec on one frame: a codec said supported that fails is skipped', async () => {
+    const { env, encoders, trials } = fakeEnv(undefined, false, (c) => c.startsWith('avc1'))
+    const encoder = await FrameEncoder.create(640, 360, 30, {}, env)
+    expect(encoder.codec).toBe('vp09.00.31.08')
+    expect(trials).toEqual(['avc1.64001e', 'avc1.4d001e', 'avc1.42e01e', 'vp09.00.31.08'])
+    expect(encoders).toHaveLength(1)
+    await expect(FrameEncoder.create(640, 360, 30, {}, fakeEnv(undefined, false, () => true).env)).rejects.toThrow(/cannot encode H.264 or VP9/)
+    // An encoder that throws while configured counts as failing.
+    const throwing = fakeEnv()
+    const proto = (throwing.env.VideoEncoder as unknown as { prototype: { configure: unknown } }).prototype
+    proto.configure = () => {
+      throw new Error('configure failed')
+    }
+    await expect(FrameEncoder.create(64, 48, 30, {}, throwing.env)).rejects.toThrow(/cannot encode/)
   })
 
   it('reports what it cannot encode', async () => {

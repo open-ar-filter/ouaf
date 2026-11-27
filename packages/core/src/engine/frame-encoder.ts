@@ -3,8 +3,9 @@
  * media time as timestamp, then into an MP4 (`mp4-writer.ts`). Unlike `MediaRecorder`, nothing depends on the wall
  * clock: an offline clip rendered faster or slower than real time gives the same file, one frame per source frame.
  *
- * H.264 first (plays everywhere, hardware-encoded on most devices), else VP9 in MP4. `encode` waits while the encoder
- * has frames queued, so the engine renders no faster than the device can encode, and no frame is dropped.
+ * H.264 first (plays everywhere, hardware-encoded on most devices), else VP9 in MP4; each codec is tried on one frame
+ * before it is chosen. `encode` waits while the encoder has frames queued, so the engine renders no faster than the
+ * device can encode, and no frame is dropped.
  */
 import { Mp4Writer } from '../mp4-writer.ts'
 import { OuafError } from './errors.ts'
@@ -110,7 +111,7 @@ export class FrameEncoder {
       const config: VideoEncoderConfig = { codec, width: w, height: h, bitrate, framerate: fps, latencyMode: 'quality' }
       if (codec.startsWith('avc1')) config.avc = { format: 'avc' } // `avcC` description, length-prefixed frames
       const support = await Encoder.isConfigSupported(config).catch(() => ({ supported: false }))
-      if (support.supported) return new FrameEncoder(full, config, options.keyFrameInterval ?? DEFAULT_KEY_FRAME_INTERVAL)
+      if (support.supported && (await encodes(full, config))) return new FrameEncoder(full, config, options.keyFrameInterval ?? DEFAULT_KEY_FRAME_INTERVAL)
     }
     const what = options.codec !== undefined ? `"${options.codec}"` : 'H.264 or VP9'
     throw new OuafError('unsupported', `This browser cannot encode ${what} video of ${w}×${h}.`)
@@ -201,6 +202,36 @@ export class FrameEncoder {
     if (this.#error) throw this.#error
     if (this.#closed) throw new OuafError('unsupported', 'The video encoder is closed.')
   }
+}
+
+/**
+ * Whether an encoder with `config` really gives a frame: one black frame of the size, encoded and flushed. Some
+ * browsers say yes to `isConfigSupported` and then fail on the first frame (Firefox 159 on Linux without an H.264
+ * encoder: "The given encoding is not supported"), so the answer alone cannot pick the codec.
+ */
+async function encodes(env: FrameEncoderEnv, config: VideoEncoderConfig): Promise<boolean> {
+  let chunks = 0
+  let failed = false
+  let encoder: VideoEncoder | undefined
+  try {
+    encoder = new env.VideoEncoder!({ output: () => chunks++, error: () => (failed = true) })
+    encoder.configure(config)
+    const { width, height } = config
+    const data = new Uint8Array(width * height * 4)
+    for (let i = 3; i < data.length; i += 4) data[i] = 255
+    const frame = new env.VideoFrame!(data, { format: 'RGBA', codedWidth: width, codedHeight: height, timestamp: 0 })
+    try {
+      encoder.encode(frame, { keyFrame: true })
+    } finally {
+      frame.close()
+    }
+    await encoder.flush()
+  } catch {
+    failed = true
+  } finally {
+    if (encoder && encoder.state !== 'closed') encoder.close()
+  }
+  return !failed && chunks > 0
 }
 
 /** Throws `RangeError` on an invalid option (`engine.export` checks them before it starts). */
