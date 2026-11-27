@@ -25,6 +25,7 @@ import * as core from '@ouaf/core'
 import { createAddMenu } from './add-menu.ts'
 import { renderDemos } from './demos.ts'
 import { createPerfPanel } from './perf-panel.ts'
+import { createSourcePicker, choiceOf, describe, queryOf, type SourceChoice } from './source-picker.ts'
 import { createStackPanel, type Pending } from './stack-panel.ts'
 import { playgroundPlugin } from './test-plugin.ts'
 
@@ -51,12 +52,17 @@ declare global {
       results: { count: number; time: number }
       /** Hot reloads of filters done (#36): a test can wait for the next one. */
       reloads: number
+      /** The source playing (`describe` in `source-picker.ts`), once Start opened one. */
+      source: string | undefined
     }
   }
 }
 
 const params = new URLSearchParams(location.search)
+/** `?source=<clip>` plays `test-media/<clip>.mp4`, `?source=camera-back` the rear camera; default: the front camera. */
 const SOURCE = /^[\w-]+$/.test(params.get('source') ?? '') ? params.get('source') : null
+/** The source Start opens; the picker changes it, and switches to it once started. */
+let choice: SourceChoice = choiceOf(SOURCE)
 /**
  * `&filter=<url>` (repeatable, bottom of the stack first) and `&off=<i>` (the i-th filter is disabled): the filters
  * not loaded yet. They load on Start, below those added before it; the page rewrites both as the stack changes.
@@ -67,7 +73,8 @@ const MAX_FACES = Math.min(16, Math.max(1, Math.trunc(Number(params.get('maxFace
 /** `?seed=N`: fixes the seed of random choices (spec §12.5). */
 const SEED = /^\d+$/.test(params.get('seed') ?? '') ? Number(params.get('seed')) : undefined
 const canvas = document.getElementById('canvas') as HTMLCanvasElement
-const video = document.getElementById('video') as HTMLVideoElement
+/** The `<video>` of the source playing (a switch gives the next source its own, then the id). */
+let video = document.getElementById('video') as HTMLVideoElement
 const log = document.getElementById('log') as HTMLPreElement
 const startButton = document.getElementById('start') as HTMLButtonElement
 
@@ -80,7 +87,7 @@ const throttle: TrackingThrottle = { ms: Math.max(0, Number(params.get('throttle
  * Device adaptation (spec §16): `?adapt=1` / `?adapt=0`. Default: on for the camera or with `?throttle`, off for the
  * test clips otherwise, so that the browser tests do not depend on the speed of the machine.
  */
-const ADAPT = params.has('adapt') ? params.get('adapt') !== '0' : !SOURCE || throttle.ms > 0
+const ADAPT = params.has('adapt') ? params.get('adapt') !== '0' : choice.kind !== 'clip' || throttle.ms > 0
 /** `?signals`: compares the expression signals from blendshapes and from the geometry, live. */
 const SIGNALS = params.has('signals')
 /**
@@ -151,6 +158,7 @@ const hook = {
   throttle,
   results,
   reloads: 0,
+  source: undefined as string | undefined,
 }
 window.ouaf = hook
 
@@ -180,7 +188,6 @@ const STEP_WARNING_MS = 10_000
 
 async function start(): Promise<void> {
   startButton.disabled = true
-  let source: VideoSource
   // Each step of the start is shown, and one that hangs says so: a camera that never opens otherwise left the page
   // silently on "no tracker".
   let step = ''
@@ -195,13 +202,21 @@ async function start(): Promise<void> {
     if (step && waited > STEP_WARNING_MS) show('start', `${step}: no answer after ${Math.round(waited / 1000)} s (is the camera used by another tab or app? reload the page)`)
   }, 1000)
   try {
-    begin(SOURCE ? `opening test-media/${SOURCE}.mp4` : 'opening the camera')
-    source = SOURCE
-      ? await VideoFileSource.open(new URL(`test-media/${SOURCE}.mp4`, document.baseURI).href, { video, mirror: params.get('mirror') === '1' })
-      : await CameraSource.open({ facingMode: 'user', video })
-    begin('starting the engine on the source')
-    await engine.setSource(source)
-    show('source', SOURCE ? `test-media/${SOURCE}.mp4` : 'camera')
+    // A start that failed on a filter keeps its source: Start again loads the rest.
+    await serialSource(async () => {
+      if (current) return
+      begin(`opening the ${describe(choice)}`)
+      const opened = await openSource(choice, video)
+      begin('starting the engine on the source')
+      try {
+        await engine.setSource(opened.source)
+      } catch (error) {
+        closeSource(opened)
+        throw error
+      }
+      current = opened
+      showSource()
+    })
     // A folder URL, or a `.ouaf` package URL (`?filter=/filters/crown.ouaf`).
     while (pending.length > 0) {
       begin(`loading the filter ${pending[0]!.src} (and starting face tracking)`)
@@ -229,6 +244,79 @@ async function start(): Promise<void> {
   }
 }
 
+/** The source playing, and the object URL of a video file. */
+let current: { source: VideoSource; choice: SourceChoice; url?: string } | undefined
+
+async function openSource(c: SourceChoice, element: HTMLVideoElement): Promise<{ source: VideoSource; choice: SourceChoice; url?: string }> {
+  if (c.kind === 'clip') {
+    const url = new URL(`test-media/${c.clip}.mp4`, document.baseURI).href
+    return { source: await VideoFileSource.open(url, { video: element, mirror: params.get('mirror') === '1' }), choice: c }
+  }
+  if (c.kind === 'camera') return { source: await CameraSource.open({ facingMode: c.facing, video: element }), choice: c }
+  const url = URL.createObjectURL(c.file)
+  try {
+    return { source: await VideoFileSource.open(url, { video: element }), choice: c, url }
+  } catch (error) {
+    URL.revokeObjectURL(url)
+    throw error
+  }
+}
+
+function closeSource(s: { source: VideoSource; url?: string }): void {
+  s.source.dispose()
+  if (s.url) URL.revokeObjectURL(s.url)
+}
+
+function showSource(): void {
+  hook.source = current && describe(current.choice)
+  show('source', hook.source ?? 'none')
+}
+
+/**
+ * The source picked (`source-picker.ts`): kept in the URL, opened by Start, or played right away once started. The
+ * next source plays in a `<video>` of its own, set on the engine before the previous one stops, so the filters stay
+ * on screen; from a camera to a camera, the previous one stops first (a phone often cannot open two).
+ */
+async function switchSource(c: SourceChoice): Promise<void> {
+  choice = c
+  syncUrl()
+  const old = current
+  if (!old) return
+  const cameras = c.kind === 'camera' && old.choice.kind === 'camera'
+  if (cameras) {
+    closeSource(old)
+    current = undefined
+  }
+  const element = document.createElement('video')
+  element.muted = true
+  element.playsInline = true
+  element.setAttribute('playsinline', '')
+  video.after(element)
+  try {
+    const opened = await openSource(c, element)
+    try {
+      await engine.setSource(opened.source)
+    } catch (error) {
+      closeSource(opened)
+      throw error
+    }
+    current = opened
+  } catch (error) {
+    element.remove()
+    reportError(error)
+    // The cameras' case: nothing plays any more, Start opens the choice again.
+    if (!current) startButton.disabled = false
+    showSource()
+    return
+  }
+  if (!cameras) closeSource(old)
+  video.remove()
+  element.id = 'video'
+  video = element
+  watchFrames(element)
+  showSource()
+}
+
 /** Where each filter of the stack was loaded from (a URL, or a file opened in the page): what a hot reload reloads. */
 const sources = new Map<FilterHandle, string | File>()
 /** Filters of the URL loaded by Start so far: the next one goes above them. */
@@ -238,12 +326,17 @@ let loadedFromUrl = 0
  * Changes of the stack run one after the other: a hot reload waits for the filters still loading (their handle, and
  * so their URL, is known only once `engine.addFilter` resolves), and two quick saves do not reload at the same time.
  */
-let stackTasks: Promise<unknown> = Promise.resolve()
-function serial<T>(task: () => Promise<T>): Promise<T> {
-  const run = stackTasks.then(task, task)
-  stackTasks = run.catch(() => {})
-  return run
+function queue(): <T>(task: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve()
+  return (task) => {
+    const run = tail.then(task, task)
+    tail = run.catch(() => {})
+    return run
+  }
 }
+const serial = queue()
+/** Opening and switching sources, one at a time. */
+const serialSource = queue()
 
 const stackPanel = createStackPanel(document.getElementById('stack-list') as HTMLOListElement, document.getElementById('params') as HTMLElement, {
   engine,
@@ -257,8 +350,9 @@ stackPanel.render()
 createAddMenu(document.getElementById('add') as HTMLDetailsElement, (url) => void addFilter(url).catch(reportError), (message) => show('add menu', message))
 
 /**
- * Writes the stack in the URL without reloading (`&filter=` bottom first, `&off=<i>` for the disabled ones): a reload
- * or a shared link gives the same stack. Files opened in the page and filters added from the console are left out.
+ * Writes the source and the stack in the URL without reloading (`?source=`; `&filter=` bottom first, `&off=<i>` for
+ * the disabled ones): a reload or a shared link gives the same page. Files opened in the page and filters added from
+ * the console are left out.
  */
 function syncUrl(): void {
   // The pending filters load below the others: they come first.
@@ -269,9 +363,17 @@ function syncUrl(): void {
       return typeof src === 'string' ? [{ src, enabled: h.enabled }] : []
     }),
   ]
-  const kept = location.search.slice(1).split('&').filter((p) => p && !/^(filter|off)(=|$)/.test(p))
+  // A video file cannot be kept: the URL keeps the source it had.
+  const source = queryOf(choice)
+  const rewritten = source === undefined ? /^(filter|off)(=|$)/ : /^(filter|off|source)(=|$)/
+  const kept = location.search.slice(1).split('&').filter((p) => p && !rewritten.test(p))
   const encode = (src: string) => encodeURIComponent(src).replace(/%2F/g, '/').replace(/%3A/g, ':')
-  const query = [...kept, ...list.map((f) => `filter=${encode(f.src)}`), ...list.flatMap((f, i) => (f.enabled ? [] : [`off=${i}`]))]
+  const query = [
+    ...(source ? [`source=${encode(source)}`] : []),
+    ...kept,
+    ...list.map((f) => `filter=${encode(f.src)}`),
+    ...list.flatMap((f, i) => (f.enabled ? [] : [`off=${i}`])),
+  ]
   history.replaceState(history.state, '', `${location.pathname}${query.length ? `?${query.join('&')}` : ''}${location.hash}`)
 }
 
@@ -423,13 +525,27 @@ document.addEventListener('drop', (e) => {
 // Diagnostic: the media time the engine receives for each frame (it drives smoothing, prediction and transitions).
 let lastMediaTime = -1
 let stuckFrames = 0
-const onVideoFrame = (_now: number, meta: VideoFrameCallbackMetadata) => {
-  stuckFrames = meta.mediaTime === lastMediaTime ? stuckFrames + 1 : 0
-  lastMediaTime = meta.mediaTime
-  show('media time', `${meta.mediaTime.toFixed(3)} s${stuckFrames > 5 ? ` (not advancing: fine for a camera, the engine times live sources with the clock)` : ''}`)
-  video.requestVideoFrameCallback(onVideoFrame)
+function watchFrames(element: HTMLVideoElement): void {
+  if (!('requestVideoFrameCallback' in element)) return
+  const onVideoFrame = (_now: number, meta: VideoFrameCallbackMetadata) => {
+    // A source switched away from: its element is gone.
+    if (element !== video) return
+    stuckFrames = meta.mediaTime === lastMediaTime ? stuckFrames + 1 : 0
+    lastMediaTime = meta.mediaTime
+    show('media time', `${meta.mediaTime.toFixed(3)} s${stuckFrames > 5 ? ` (not advancing: fine for a camera, the engine times live sources with the clock)` : ''}`)
+    element.requestVideoFrameCallback(onVideoFrame)
+  }
+  element.requestVideoFrameCallback(onVideoFrame)
 }
-if ('requestVideoFrameCallback' in video) video.requestVideoFrameCallback(onVideoFrame)
+watchFrames(video)
+
+createSourcePicker(
+  document.getElementById('source-picker') as HTMLSelectElement,
+  document.getElementById('source-file') as HTMLInputElement,
+  choice,
+  (c) => void serialSource(() => switchSource(c)),
+  (message) => show('sources', message),
+)
 
 startButton.addEventListener('click', () => void start())
 
@@ -466,4 +582,4 @@ recordButton.addEventListener('click', () => {
     outputError(error)
   }
 })
-if (params.has('autostart') && SOURCE) void start()
+if (params.has('autostart') && choice.kind === 'clip') void start()
