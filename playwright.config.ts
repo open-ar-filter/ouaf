@@ -36,9 +36,12 @@ export default defineConfig({
     },
     // The malicious filters (#27, e2e/evil.spec.ts) run on the three engines with `npm run test:security`, and only
     // there: `npm run test:browser` leaves that file out (`--grep-invert`), so that CI does not run it twice on Chromium.
+    // The export and the other outputs (#137, e2e/export.spec.ts, e2e/outputs.spec.ts) also run on Firefox, in the
+    // Firefox job of the same suite: its encoders differ (no H.264 on Linux, though `isConfigSupported` says yes), and
+    // with a GPU it swaps red and blue drawing a WebGL canvas into a 2D `<canvas>`.
     {
       name: 'firefox',
-      testMatch: 'evil.spec.ts',
+      testMatch: ['evil.spec.ts', 'export.spec.ts', 'outputs.spec.ts'],
       use: {
         ...devices['Desktop Firefox'],
         // Headless Firefox has no WebGL on Linux: there it runs headed, under `xvfb-run` without a display (CI).

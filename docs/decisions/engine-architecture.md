@@ -20,6 +20,7 @@ engine.send('tint', '#f00'); crown.send('tint', '#f00')          // to every scr
 const photo = await engine.snapshot({ type: 'image/jpeg' })      // Blob of the next frame (#33)
 const rec = engine.record({ audio: micStream }); const video = await rec.stop()
 const stream = engine.outputStream()                             // MediaStream, e.g. for WebRTC
+const mp4 = await engine.export(clip, { onProgress }).done       // OfflineVideoSource → MP4, frame by frame (#137)
 engine.dispose()
 ```
 
@@ -191,15 +192,17 @@ encodes its built-in materials' output to the target's color space for XR target
 were written linear (darker) whenever a pass was active. They now get the same bytes whether they render to a target
 or to the canvas (checked by `e2e/model.spec.ts`, #21).
 
-## Outputs (#33)
+## Outputs (#33, #137)
 
-`engine.snapshot()`, `engine.record()` and `engine.outputStream()` give the host the composited image as the user sees
+`engine.snapshot()`, `engine.record()`, `engine.outputStream()` and `engine.export()` give the host the composited image as the user sees
 it (mirrored for a front camera, spec §5.1), at the internal render size, minus the overlay layers marked
-`excludeFromCapture` (spec §6.2). Code: `outputs.ts`.
+`excludeFromCapture` (spec §6.2). Code: `outputs.ts`, `frame-encoder.ts`, `mp4-writer.ts`.
 
 - **Capture surface**: overlay layers with `excludeFromCapture` are a third scene (`Compositor.excludedOverlay`),
-  drawn last, straight into the canvas. While an output is in use, the compositor copies the canvas into a hidden 2D
-  canvas (`drawImage`, in the task that rendered it) just before drawing them. With no output in use nothing is
+  drawn last, straight into the canvas. While an output is in use, the compositor copies the canvas into a 2D
+  `OffscreenCanvas` (`drawImage`, in the task that rendered it) just before drawing them; streams and recordings read
+  a `<canvas>` copied from it (`captureStream`), as Firefox with a GPU swaps red and blue when WebGL is drawn into a 2D
+  `<canvas>` directly (#137). With no output in use nothing is
   copied; the excluded overlays are drawn last either way, so the screen does not change when a recording starts.
   Consequence: they are drawn above the other overlay layers, whatever the stack and layer order (spec §6.2).
 - **`snapshot({ type, quality })`**: resolves with the next rendered frame, encoded by the browser (`toBlob`; PNG by
@@ -212,6 +215,14 @@ it (mirrored for a front camera, spec §5.1), at the internal render size, minus
   `RECORDING_TYPES`: H.264 MP4 (plays everywhere, iOS and messaging apps included, hardware-encoded on most devices),
   then WebM VP9, VP8, then the bare `video/mp4` / `video/webm`. Chunks every second; `stop()` and `done` resolve with
   one `Blob`. Errors: `OuafError` with code `unsupported` (no `MediaRecorder`, type, `captureStream` in a worker).
+- **`export(clip, options)`** (#137): an `OfflineVideoSource` becomes the source and every frame is rendered in the
+  file regime, then encoded with WebCodecs `VideoEncoder` at its media time (`FrameEncoder`): H.264 High, Main or
+  Baseline at the level the size needs, else VP9 (`videoCodecCandidates`), a keyframe every 2 s, the render size
+  rounded down to even numbers. `encode` waits while more than 4 frames are queued: the run goes as fast as the device
+  tracks, renders and encodes, and drops nothing, so the file has the clip's frame count, times and duration on any
+  device. The chunks go into an in-tree muxer (`Mp4Writer`, no dependency, read back by `demuxMp4` in the tests): one
+  progressive video track, `moov` before `mdat` so the file plays and seeks at once, `ctts` only if the encoder
+  reorders frames. `cancel()`, another source or `dispose()` reject `done` (`aborted`, `disposed`). No audio yet.
 
 ## Spaces and anchors
 
@@ -279,7 +290,7 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
 | Head occluder (`model.occlusion: "head"`) | the face landmark mesh, moved back 0.2 face units along the camera rays, closed by the back of an average head (#155); the ellipsoid alone without usable landmarks | ears and hair (segmentation), one occluder per face shared by the layers |
 | Model animations | three's `AnimationMixer` (boxes a few numbers per animated face and frame) | an allocation-free sampler, if profiles show GC |
-| Frame-exact video export | `record()`: `MediaRecorder`, real time; WebM without duration in its header (not seekable until remuxed) | WebCodecs `VideoEncoder` + an MP4 muxer, driven by file-regime frames (#137) |
+| Live recording | `record()`: `MediaRecorder`, real time; WebM without duration in its header (not seekable until remuxed). File sources: `export()`, frame-exact (WebCodecs + in-tree MP4 muxer), video only | `record()` on the same encoder and muxer where WebCodecs is present; the clip's audio in `export()` (#137) |
 | glTF limits | 32 MB per file, textures not size-checked, no KTX2 textures | the limits of spec Appendix C; KTX2 with #116 |
 
 ## Testing a layer type

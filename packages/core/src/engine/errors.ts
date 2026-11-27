@@ -26,6 +26,8 @@ export type OuafErrorCode =
   | 'invalid-message'
   /** The browser lacks what an output needs (`MediaRecorder`, a codec, `captureStream` in a worker). */
   | 'unsupported'
+  /** An export stopped before its end: `cancel()`, or another source was set (#137). */
+  | 'aborted'
   /** A filter's script could not start (sandbox, `script.js`). */
   | 'script'
   /** A filter's script did not answer within 1 s and was stopped (spec §12.7); the rest of the filter keeps working. */

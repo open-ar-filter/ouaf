@@ -5,8 +5,12 @@
  *
  * The compositor draws every frame into the engine's canvas in two steps: everything but the excluded overlays, then
  * the excluded overlays on top. While an output is in use, `Outputs.capture` is called between the two steps and
- * copies the canvas into a capture surface, a 2D canvas of the render size that is never shown: photos are encoded
- * from it, streams and recordings read it. Without any output in use, nothing is copied.
+ * copies the canvas into a capture surface, a 2D `OffscreenCanvas` of the render size: photos and exports are encoded
+ * from it. Streams and recordings need `captureStream`, which only a `<canvas>` has: while one is open, the surface
+ * is copied on into such a canvas, never shown. Without any output in use, nothing is copied.
+ *
+ * Why not draw the WebGL canvas into the `<canvas>` directly: Firefox (159, Linux, with a GPU) swaps red and blue when
+ * a WebGL canvas is drawn into a 2D `<canvas>`, not into an `OffscreenCanvas` (#137).
  *
  * Nothing leaves the device: the host decides what to do with the blobs and streams (docs/privacy.md).
  */
@@ -96,7 +100,12 @@ export type CaptureCanvas = HTMLCanvasElement | OffscreenCanvas
 
 /** Browser services of the outputs, replaced in tests. */
 export interface OutputsEnv {
-  /** Creates the capture surface (default: a detached `<canvas>`, an `OffscreenCanvas` in a worker). */
+  /** Creates the capture surface (default: an `OffscreenCanvas`, else a detached `<canvas>`). */
+  createSurface(): CaptureCanvas
+  /**
+   * Creates the canvas that streams and recordings read (default: a detached `<canvas>`; an `OffscreenCanvas` in a
+   * worker, which has no `captureStream`).
+   */
   createCanvas(): CaptureCanvas
   /** Default: the global `MediaRecorder`, when there is one. */
   MediaRecorder: typeof MediaRecorder | undefined
@@ -104,6 +113,7 @@ export interface OutputsEnv {
 
 function defaultEnv(): OutputsEnv {
   return {
+    createSurface: () => (typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1) : document.createElement('canvas')),
     createCanvas: () => (typeof document !== 'undefined' ? document.createElement('canvas') : new OffscreenCanvas(1, 1)),
     MediaRecorder: typeof MediaRecorder !== 'undefined' ? MediaRecorder : undefined,
   }
@@ -126,10 +136,14 @@ interface ActiveRecording {
 export class Outputs {
   #env: OutputsEnv
   #context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | undefined
+  /** The canvas streams and recordings read, a copy of the surface. */
+  #streamContext: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | undefined
   #snapshots: PendingSnapshot[] = []
   /** Streams given to the host, until all their video tracks have ended (`track.stop()`). */
   #streams: MediaStream[] = []
   #recordings = new Set<ActiveRecording>()
+  /** Exports in progress (`hold`): they read the capture surface after each frame. */
+  #holds = 0
   #disposed = false
 
   constructor(env: Partial<OutputsEnv> = {}) {
@@ -141,7 +155,7 @@ export class Outputs {
    * once per frame; drops the streams whose tracks the host has stopped.
    */
   get active(): boolean {
-    if (this.#snapshots.length > 0 || this.#recordings.size > 0) return true
+    if (this.#snapshots.length > 0 || this.#recordings.size > 0 || this.#holds > 0) return true
     const streams = this.#streams
     for (let i = streams.length - 1; i >= 0; i--) if (ended(streams[i]!)) streams.splice(i, 1)
     return streams.length > 0
@@ -161,10 +175,37 @@ export class Outputs {
       canvas.height = height
     }
     ctx.drawImage(source, 0, 0, width, height)
+    if (this.#streams.length > 0 || this.#recordings.size > 0) {
+      const stream = this.#streamSurface()
+      if (stream.canvas.width !== width || stream.canvas.height !== height) {
+        stream.canvas.width = width
+        stream.canvas.height = height
+      }
+      stream.drawImage(canvas, 0, 0)
+    }
     const snapshots = this.#snapshots
     if (snapshots.length === 0) return
     this.#snapshots = []
     for (const s of snapshots) encode(canvas, s.type, s.quality).then(s.resolve, s.reject)
+  }
+
+  /**
+   * Keeps the capture surface up to date on every frame until `release` (an export, #137): the surface holds the last
+   * frame rendered, as captured (excluded overlays left out), at the render size.
+   */
+  hold(): { readonly canvas: CaptureCanvas; release(): void } {
+    this.#assertAlive()
+    const canvas = this.#surface().canvas
+    this.#holds++
+    let held = true
+    return {
+      canvas,
+      release: () => {
+        if (!held) return
+        held = false
+        this.#holds--
+      },
+    }
   }
 
   /** Resolves with the next rendered frame, encoded as an image. */
@@ -273,24 +314,29 @@ export class Outputs {
 
   #captureStream(frameRate: number | undefined): MediaStream {
     if (frameRate !== undefined && !(frameRate > 0)) throw new RangeError(`frameRate must be positive, got ${frameRate}`)
-    const canvas = this.#surface().canvas
+    const canvas = this.#streamSurface().canvas
     if (!('captureStream' in canvas)) throw new OuafError('unsupported', 'Streams and recordings need HTMLCanvasElement.captureStream (not available in a worker).')
     return frameRate === undefined ? canvas.captureStream() : canvas.captureStream(frameRate)
   }
 
   #surface(): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D {
-    if (this.#context) return this.#context
-    const canvas = this.#env.createCanvas()
-    // Opaque, like the engine's canvas: no alpha to encode or premultiply.
-    const ctx = canvas.getContext('2d', { alpha: false }) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
-    if (!ctx) throw new OuafError('unsupported', 'Could not create the 2D canvas of the outputs.')
-    this.#context = ctx
-    return ctx
+    return (this.#context ??= context2d(this.#env.createSurface()))
+  }
+
+  #streamSurface(): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D {
+    return (this.#streamContext ??= context2d(this.#env.createCanvas()))
   }
 
   #assertAlive(): void {
     if (this.#disposed) throw disposedError('The engine')
   }
+}
+
+function context2d(canvas: CaptureCanvas): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D {
+  // Opaque, like the engine's canvas: no alpha to encode or premultiply.
+  const ctx = canvas.getContext('2d', { alpha: false }) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
+  if (!ctx) throw new OuafError('unsupported', 'Could not create the 2D canvas of the outputs.')
+  return ctx
 }
 
 function ended(stream: MediaStream): boolean {

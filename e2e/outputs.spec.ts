@@ -3,7 +3,9 @@ import { expect, test, type Page } from './fixtures.ts'
 /**
  * Outputs (#33) on `/engine.html` with `filters/fixtures/capture/` on the `no-face` clip: a yellow overlay square on
  * the left and a magenta one on the right marked `excludeFromCapture`. The canvas shows both; the snapshot, the output
- * stream and the recording show the yellow one only, with and without a color pass (both compositor paths).
+ * stream and the recording show the yellow one only, with and without a color pass (both compositor paths). Also run
+ * on Firefox (CI's Firefox job): with a GPU it swapped red and blue in the snapshot and the export while the capture
+ * surface was a `<canvas>` (#137).
  */
 
 type RGB = [number, number, number]
@@ -141,8 +143,8 @@ test('snapshot, outputStream and record leave out the excludeFromCapture overlay
     URL.revokeObjectURL(video.src)
     return result
   })
-  // Playwright's Chromium has no H.264 encoder: the fallback, WebM VP9.
-  expect(recorded.mimeType).toMatch(/^video\/(mp4;codecs=avc1|webm;codecs=vp9)/)
+  // Chromium: H.264 MP4 or WebM VP9; Firefox: WebM VP8 (its MediaRecorder has no VP9).
+  expect(recorded.mimeType).toMatch(/^video\/(mp4;codecs=avc1|webm;codecs=vp9|webm;codecs=vp8)/)
   expect(recorded.type).toMatch(/^video\/(mp4|webm)/)
   expect(recorded.state).toBe('inactive')
   expect(recorded.size).toBeGreaterThan(1000)

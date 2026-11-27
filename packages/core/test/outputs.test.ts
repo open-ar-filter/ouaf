@@ -36,8 +36,9 @@ class FakeCanvas {
   frameRates: Array<number | undefined> = []
   context = {
     canvas: this as FakeCanvas,
-    drawImage: (source: { label: string }, x: number, y: number, w: number, h: number) => {
-      this.content = `${source.label} ${x},${y} ${w}x${h} into ${this.width}x${this.height}`
+    drawImage: (source: { label: string } | FakeCanvas, x: number, y: number, w?: number, h?: number) => {
+      // From the capture surface (into the canvas streams read): a copy of its content.
+      this.content = source instanceof FakeCanvas ? `copy of ${source.content}` : `${source.label} ${x},${y} ${w}x${h} into ${this.width}x${this.height}`
     },
   }
   getContext(kind: string, options: { alpha: boolean }) {
@@ -97,9 +98,16 @@ class FakeRecorder extends EventTarget {
 }
 
 let canvases: FakeCanvas[] = []
+/** Capture surfaces (`createSurface`); `canvases` are the canvases streams and recordings read. */
+let surfaces: FakeCanvas[] = []
 
 function outputs(env: Partial<OutputsEnv> = {}): Outputs {
   return new Outputs({
+    createSurface: () => {
+      const c = new FakeCanvas()
+      surfaces.push(c)
+      return c as unknown as HTMLCanvasElement
+    },
     createCanvas: () => {
       const c = new FakeCanvas()
       canvases.push(c)
@@ -115,6 +123,7 @@ const frame = (label: string) => ({ label }) as unknown as HTMLCanvasElement
 beforeEach(() => {
   vi.stubGlobal('MediaStream', FakeStream)
   canvases = []
+  surfaces = []
   supported = new Set()
   FakeRecorder.instances = []
 })
@@ -155,7 +164,25 @@ describe('Outputs', () => {
     expect([a.type, await a.text()]).toEqual(['image/png', 'frame1 0,0 640x360 into 640x360 q=undefined'])
     expect([b.type, await b.text()]).toEqual(['image/jpeg', 'frame1 0,0 640x360 into 640x360 q=0.8'])
     expect(o.active).toBe(false)
-    expect(canvases).toHaveLength(1) // one capture surface, reused
+    expect(surfaces).toHaveLength(1) // one capture surface, reused
+    expect(canvases).toHaveLength(0) // no stream: no copy for streams
+  })
+
+  it('hold: keeps the surface captured on every frame until released (an export)', () => {
+    const o = outputs()
+    const a = o.hold()
+    const b = o.hold()
+    expect(o.active).toBe(true)
+    o.capture(frame('frame1'), 64, 48)
+    expect((a.canvas as unknown as FakeCanvas).content).toBe('frame1 0,0 64x48 into 64x48')
+    expect(b.canvas).toBe(a.canvas)
+    a.release()
+    a.release() // idempotent: b still holds
+    expect(o.active).toBe(true)
+    b.release()
+    expect(o.active).toBe(false)
+    o.dispose()
+    expect(() => o.hold()).toThrow(OuafError)
   })
 
   it('snapshot: rejects an invalid quality', () => {
@@ -170,7 +197,10 @@ describe('Outputs', () => {
     expect(a.getVideoTracks()).toHaveLength(1)
     expect(o.active).toBe(true)
     o.capture(frame('f'), 320, 240)
-    expect(canvases[0]!.content).toBe('f 0,0 320x240 into 320x240')
+    // Streams read a copy of the capture surface (Firefox swaps red and blue drawing WebGL into a <canvas>).
+    expect(surfaces[0]!.content).toBe('f 0,0 320x240 into 320x240')
+    expect(canvases[0]!.content).toBe('copy of f 0,0 320x240 into 320x240')
+    expect([canvases[0]!.width, canvases[0]!.height]).toEqual([320, 240])
     a.getVideoTracks()[0]!.stop()
     expect(o.active).toBe(true)
     b.getVideoTracks()[0]!.stop()
