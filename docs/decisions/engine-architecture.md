@@ -199,8 +199,10 @@ it (mirrored for a front camera, spec §5.1), at the internal render size, minus
 `excludeFromCapture` (spec §6.2). Code: `outputs.ts`, `frame-encoder.ts`, `mp4-writer.ts`.
 
 - **Capture surface**: overlay layers with `excludeFromCapture` are a third scene (`Compositor.excludedOverlay`),
-  drawn last, straight into the canvas. While an output is in use, the compositor copies the canvas into a hidden 2D
-  canvas (`drawImage`, in the task that rendered it) just before drawing them. With no output in use nothing is
+  drawn last, straight into the canvas. While an output is in use, the compositor copies the canvas into a 2D
+  `OffscreenCanvas` (`drawImage`, in the task that rendered it) just before drawing them; streams and recordings read
+  a `<canvas>` copied from it (`captureStream`), as Firefox with a GPU swaps red and blue when WebGL is drawn into a 2D
+  `<canvas>` directly (#137). With no output in use nothing is
   copied; the excluded overlays are drawn last either way, so the screen does not change when a recording starts.
   Consequence: they are drawn above the other overlay layers, whatever the stack and layer order (spec §6.2).
 - **`snapshot({ type, quality })`**: resolves with the next rendered frame, encoded by the browser (`toBlob`; PNG by

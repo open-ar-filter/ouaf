@@ -270,6 +270,12 @@ jobs:
           # Recorded on Chromium only (e2e/fixtures.ts): its share of the browser coverage, as the suite runs here only.
           OUAF_COVERAGE: 1
 
+      - name: Outputs and frame-exact export on Firefox
+        # Its encoders and canvas copies differ from Chromium's (#137: no H.264 on Linux, red and blue swapped when a
+        # WebGL canvas is drawn into a 2D <canvas>).
+        if: matrix.browser == 'firefox'
+        run: xvfb-run -a npx playwright test export.spec.ts outputs.spec.ts --project=firefox
+
       - name: Upload recorded coverage
         if: matrix.browser == 'chromium'
         uses: actions/upload-artifact@v7
