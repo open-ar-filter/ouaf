@@ -822,11 +822,17 @@ spec and the schema. An agent writing a filter follows this loop:
    nothing), `changed` (share of the pixels the filter changed: near 0 means nothing shows), `pixelsSha256` and `perf` (frame times, measured with software rendering: compare
    filters, do not predict a phone). Exit code 0: rendered without engine errors; 1: errors; 2: usage error (also when
    Playwright's Chromium is missing: `npx playwright install chromium`). The same command gives the same pixels on
-   every run on one machine. The test clips seldom reach an event's threshold (no clip opens the mouth wider than
-   `jawOpen` ≈ 0.35): to see an effect, preview a copy of the filter with a lower threshold, and keep the intended
-   one in the filter. Debug on such a copy (in a scratch folder, not in `filters/<id>/`): a text layer bound to a
-   value (`{ "bind": "face.blendshapes.jawOpen" }`) shows it on the screenshot; nothing of it can then stay in the
-   filter. For a live view, `npm run dev`, then
+   every run on one machine. `--param <name>=<value>` sets a parameter as a host would (`--param name=Sam`; checked
+   against its type, exit 2 otherwise). Each reference also lists the `events` delivered to the filters between
+   `from` and `at` (`{ filter, name, time, face }`: `faceEnter`, `blink`, `mouthOpen`…) and the peak of the
+   `signals` that drive them (`jawOpen` for `mouthOpen`, `mouthSmile` for `smile`, `browInnerUp` for
+   `eyebrowRaise`, `mouthPucker` for `kiss`, `eyeBlink` for `blink`); the filter's `thresholds` are those of the
+   events its script handles. The test clips seldom reach an event's threshold (no clip opens the mouth wider than
+   `jawOpen` ≈ 0.35): compare the peak with your threshold, and to see the effect, preview with a lower one,
+   `--event-threshold mouthOpen=0.1`, which changes the rendered package only: keep the intended threshold in the
+   filter. To see another value, debug on a copy (in a scratch folder, not in `filters/<id>/`): a text layer bound
+   to it (`{ "bind": "face.pose.yaw" }`) shows it on the screenshot; nothing of it can then stay in the filter.
+   For a live view, `npm run dev`, then
    `https://localhost:5173/engine.html?filter=/filters/<id>/&source=pesquet-talk&autostart` (section 1).
 4. **Report** what the filter does, the commands run and their result, and anything section 14 made impossible.
 

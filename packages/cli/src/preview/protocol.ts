@@ -10,9 +10,46 @@ export type PreviewFrames =
   /** The image given `frames` times, 1/30 s apart (tracking and smoothing settle); the last one is the screenshot. */
   | { kind: 'image'; url: string; frames: number }
 
+/**
+ * Expression signals whose peak a result reports, and the events they drive (spec §13): the blendshape, or the mean
+ * or minimum of two, that the engine compares with the event's threshold.
+ */
+export const SIGNAL_OF_EVENT = {
+  blink: 'eyeBlink',
+  mouthOpen: 'jawOpen',
+  smile: 'mouthSmile',
+  eyebrowRaise: 'browInnerUp',
+  kiss: 'mouthPucker',
+} as const
+
+export type PreviewSignal = (typeof SIGNAL_OF_EVENT)[keyof typeof SIGNAL_OF_EVENT]
+
+/** An event delivered to a filter of the stack (`handle.on('expression')`). */
+export interface PreviewEvent {
+  /** Id of the filter. */
+  filter: string
+  /** `faceEnter`, `mouthOpen`, `wink`… */
+  name: string
+  /** Media time of the frame it fired on (s). */
+  time: number
+  /** Stable id of the face (spec §5.4). */
+  face: number
+  /** `wink` only. */
+  side?: 'left' | 'right'
+}
+
+/** The highest value of a signal over the frames rendered, on any face. */
+export interface PreviewPeak {
+  peak: number
+  /** Media time of the frame (s). */
+  time: number
+}
+
 export interface PreviewJob {
   /** URLs of the packages (`.ouaf`) on the preview origin, bottom of the stack first. */
   filters: string[]
+  /** Parameter values of each filter (`--param`), as the host gives them at load: index of `filters`. */
+  params?: Array<Record<string, unknown>>
   frames: PreviewFrames
   maxFaces: number
   /** Seed of random choices (spec §12.5); the engine's fixed file-source seed when undefined. */
@@ -46,6 +83,14 @@ export interface PreviewPageResult {
   time: number
   /** Ids of the filters as loaded, bottom first. */
   filters: string[]
+  /** Events delivered to the filters, in order (pair events not included). */
+  events: PreviewEvent[]
+  /**
+   * Peak of each signal of `SIGNAL_OF_EVENT` over the frames rendered, from the blendshapes of the tracking results;
+   * empty when no face was tracked. `eyeBlink` is the less closed eye (both close for a blink); the engine may
+   * also derive it from the eyelids, so a blink can fire slightly below it.
+   */
+  signals: Partial<Record<PreviewSignal, PreviewPeak>>
   /** Engine warnings (`engine.on('warning')`, the filters' load warnings) and errors (`engine.on('error')`). */
   warnings: string[]
   errors: string[]

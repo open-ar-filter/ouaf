@@ -39,6 +39,8 @@ const shot = (reference: string, extra: Partial<PreviewShot> = {}): PreviewShot 
   framesRendered: 26,
   time: 1,
   filters: ['valid'],
+  events: [],
+  signals: {},
   warnings: [],
   errors: [],
   perf: {

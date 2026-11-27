@@ -48,7 +48,7 @@ test: the request, the rules, the [`filter.ts`](filter.ts) the agent wrote, and 
 | Does the head occluder cover the crown? | §5 `model` |
 | `--from` and `--max-faces` only in `ouaf preview --help`; events fire only between `--from` and `--at` | §17 |
 | `ouaf preview` reported `faces: 1` with nothing drawn (a face lost less than 0.5 s before, in its grace delay) | fixed in #196 |
-| `ouaf preview` cannot set a parameter or report the events that fired | #197 |
+| `ouaf preview` cannot set a parameter or report the events that fired | `--param`, `--event-threshold`, `events` and `signals` (#197) |
 | Text: no template (`"Happy birthday, {name}!"`), no anchoring at the bottom of a block, no measuring outside a canvas | #198 |
 | Models: one color per shape, no grouping of parts | #199 |
 | No sound on the event (`f.sound()`, §14) | known (§14) |

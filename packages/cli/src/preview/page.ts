@@ -10,8 +10,18 @@
  *
  * Browser code only: no Node API. Talks to Node through `window.ouafPreview` (`protocol.ts`).
  */
-import { OfflineVideoSource, createDefaultFaceTracker, createEngine, type EngineStats, type FrameImage, type OuafPlugin } from '@ouaf/core'
-import type { PreviewJob, PreviewPageOutcome, PreviewTiming } from './protocol.ts'
+import {
+  BLENDSHAPES_STRIDE,
+  OfflineVideoSource,
+  blendshapeIndex,
+  createDefaultFaceTracker,
+  createEngine,
+  type EngineStats,
+  type FaceFrame,
+  type FrameImage,
+  type OuafPlugin,
+} from '@ouaf/core'
+import type { PreviewEvent, PreviewJob, PreviewPageOutcome, PreviewPeak, PreviewSignal, PreviewTiming } from './protocol.ts'
 
 /** Media time step between the copies of a still image (s). */
 const IMAGE_STEP = 1 / 30
@@ -31,6 +41,53 @@ const facePlugin: OuafPlugin = {
     api.registerTracker(createDefaultFaceTracker({ liteRt: { createWorker } }))
   },
 }
+
+const BS = {
+  eyeBlinkLeft: blendshapeIndex('eyeBlinkLeft'),
+  eyeBlinkRight: blendshapeIndex('eyeBlinkRight'),
+  jawOpen: blendshapeIndex('jawOpen'),
+  mouthSmileLeft: blendshapeIndex('mouthSmileLeft'),
+  mouthSmileRight: blendshapeIndex('mouthSmileRight'),
+  browInnerUp: blendshapeIndex('browInnerUp'),
+  mouthPucker: blendshapeIndex('mouthPucker'),
+}
+
+/** The signals of `SIGNAL_OF_EVENT` of one face, from its blendshapes (`expressions/signals.ts`). */
+function signalsOf(b: Float32Array, o: number): Record<PreviewSignal, number> {
+  return {
+    eyeBlink: Math.min(b[o + BS.eyeBlinkLeft]!, b[o + BS.eyeBlinkRight]!),
+    jawOpen: b[o + BS.jawOpen]!,
+    mouthSmile: (b[o + BS.mouthSmileLeft]! + b[o + BS.mouthSmileRight]!) / 2,
+    browInnerUp: b[o + BS.browInnerUp]!,
+    mouthPucker: b[o + BS.mouthPucker]!,
+  }
+}
+
+/**
+ * Records the peak of each signal: a landmark modifier sees every tracking result, before the engine reads its
+ * blendshapes (it changes nothing). A result without blendshapes (all zero) is skipped.
+ */
+function peakPlugin(peaks: Partial<Record<PreviewSignal, PreviewPeak>>): OuafPlugin {
+  const record = (faces: FaceFrame) => {
+    const b = faces.blendshapes
+    for (let i = 0; i < faces.count; i++) {
+      const o = i * BLENDSHAPES_STRIDE
+      if (!b.subarray(o, o + BLENDSHAPES_STRIDE).some((v) => v !== 0)) continue
+      for (const [name, value] of Object.entries(signalsOf(b, o)) as Array<[PreviewSignal, number]>) {
+        if (Number.isFinite(value) && value > (peaks[name]?.peak ?? -Infinity)) peaks[name] = { peak: value, time: faces.mediaTime }
+      }
+    }
+  }
+  return {
+    name: 'preview-peaks',
+    version: '1.0.0',
+    setup(api) {
+      api.registerLandmarkModifier({ id: 'preview-peaks', modify: record })
+    },
+  }
+}
+
+const round3 = (v: number) => Math.round(v * 1000) / 1000
 
 function timing(values: number[]): PreviewTiming {
   const sorted = [...values].sort((a, b) => a - b)
@@ -109,12 +166,14 @@ async function* frames(job: PreviewJob): AsyncGenerator<Frame> {
 async function render(job: PreviewJob): Promise<PreviewPageOutcome> {
   const warnings: string[] = []
   const errors: string[] = []
+  const events: PreviewEvent[] = []
+  const peaks: Partial<Record<PreviewSignal, PreviewPeak>> = {}
   const canvas = document.getElementById('canvas') as HTMLCanvasElement
   const engine = createEngine({
     canvas,
     assetsBaseUrl: new URL('./', document.baseURI).href,
     maxFaces: job.maxFaces,
-    plugins: [facePlugin],
+    plugins: [facePlugin, peakPlugin(peaks)],
     ...(job.seed === undefined ? {} : { seed: job.seed }),
   })
   let stats: EngineStats | undefined
@@ -123,16 +182,22 @@ async function render(job: PreviewJob): Promise<PreviewPageOutcome> {
   engine.on('error', (e) => errors.push(e.message))
 
   let last: Frame | undefined
+  /** Media time of the frame being rendered: events fire while it is pushed. */
+  let frameTime = 0
   try {
     const loadStart = performance.now()
-    for (const url of job.filters) {
-      const handle = await engine.addFilter(url)
+    for (const [i, url] of job.filters.entries()) {
+      const handle = await engine.addFilter(url, job.params?.[i])
       for (const w of handle.warnings) warnings.push(`${handle.id}: ${w}`)
+      handle.on('expression', (e) => {
+        events.push({ filter: handle.id, name: e.name, time: round3(frameTime), face: e.faceId, ...(e.side ? { side: e.side } : {}) })
+      })
     }
     const loadMs = performance.now() - loadStart
     const frameMs: number[] = []
     let pushed = 0
     const push = async (image: FrameImage, time: number) => {
+      frameTime = time
       const start = performance.now()
       await engine.pushFrame(image, time)
       frameMs.push(performance.now() - start)
@@ -190,6 +255,8 @@ async function render(job: PreviewJob): Promise<PreviewPageOutcome> {
       framesRendered: pushed,
       time,
       filters: engine.filters.map((f) => f.id),
+      events,
+      signals: Object.fromEntries(Object.entries(peaks).map(([k, p]) => [k, { peak: round3(p.peak), time: round3(p.time) }])),
       warnings,
       errors,
       perf: {
