@@ -42,6 +42,7 @@ import { Compositor, type StagePasses } from './compositor.ts'
 import { Emitter } from './emitter.ts'
 import { messagePayload } from './messages.ts'
 import { Outputs, type OutputStreamOptions, type RecordOptions, type Recording, type SnapshotOptions } from './outputs.ts'
+import { checkEncodingOptions, FrameEncoder, type VideoEncodingOptions } from './frame-encoder.ts'
 import { GpuContextLostError, GpuStalledError, IncompatibleSourceError, OuafError, disposedError } from './errors.ts'
 import { GpuWatchdog, type GpuFences } from './gpu-watchdog.ts'
 import { FilterInstance, bindingParams, createHandle, loadFilter, scriptSeed, type FilterHandle, type FilterLoadEnv } from './filter.ts'
@@ -164,6 +165,36 @@ export interface SourceEndEvent {
   frames: number
   /** Media time of the last frame (s). */
   time: number
+}
+
+/** `engine.export()`: the encoding options, and a progress callback. */
+export interface ExportOptions extends VideoEncodingOptions {
+  /** Called after each frame encoded. */
+  onProgress?: (progress: ExportProgress) => void
+}
+
+export interface ExportProgress {
+  /** Frames encoded so far. */
+  readonly frame: number
+  /** Frames of the clip (`OfflineVideoSource.frameCount`). */
+  readonly frames: number
+  /** Media time of the last frame encoded (s). */
+  readonly time: number
+}
+
+/** An export in progress (`engine.export()`). */
+export interface VideoExport {
+  /**
+   * The MP4 (`video/mp4`) once the last frame is encoded. Rejects with `OuafError`: `aborted` (`cancel()`, or another
+   * source was set), `disposed`, `unsupported` (no encoder for the codec or the size, the encoder failed); or with the
+   * clip's `VideoFileError` when it cannot be decoded.
+   */
+  readonly done: Promise<Blob>
+  /**
+   * Stops the export: `done` rejects with `OuafError('aborted')`, and the clip stops being the source. Does nothing
+   * once `done` has settled.
+   */
+  cancel(): void
 }
 
 /** `engine.on('stats')`: emitted about once per second while frames are rendered (none while no source plays). */
@@ -693,6 +724,37 @@ export class Engine {
   }
 
   /**
+   * Exports `clip` with the filters applied, frame by frame (#137): the clip becomes the source and every one of its
+   * frames is rendered in the file regime (spec §12.1, §12.5), then encoded at its own media time with WebCodecs
+   * (H.264, else VP9) into an MP4 that has the clip's frame count and duration, whatever the device speed. It runs as
+   * fast as the device can track, render and encode; the clip's `rate` and `loop` do not apply. The output is what
+   * `snapshot` gives (excluded overlays left out), at the render size rounded down to even numbers. Once done, the clip
+   * stays the source, on its last frame (`sourceEnd` is emitted). Throws `IncompatibleSourceError` (not an
+   * `OfflineVideoSource`, disposed) or `RangeError` (an invalid option); later errors reject `done`.
+   */
+  export(clip: OfflineVideoSource, options: ExportOptions = {}): VideoExport {
+    this.#assertAlive()
+    if (!(clip instanceof OfflineVideoSource)) throw new IncompatibleSourceError(`export needs an OfflineVideoSource, got ${describeSource(clip)}.`)
+    if (clip.disposed) throw new IncompatibleSourceError('The offline video source has been disposed.')
+    checkEncodingOptions(options)
+    const feed: Feed = { kind: 'offline', source: clip }
+    this.#begin(feed, 'file', undefined, clip.mirrored)
+    clip.restart()
+    let cancelled = false
+    let settled = false
+    const done = this.#runExport(feed, clip, options, () => cancelled).finally(() => (settled = true))
+    return {
+      done,
+      cancel: () => {
+        // After the end, the clip stays the source: nothing to stop.
+        if (cancelled || settled || this.#feed !== feed) return
+        cancelled = true
+        this.clearSource()
+      },
+    }
+  }
+
+  /**
    * A live `MediaStream` of the output (#33), like `snapshot` (excluded overlays left out), e.g. for a video call
    * (WebRTC) or a `<video>`. Each call gives a new stream with one video track; the copy into it stops once every
    * stream's track is stopped (`track.stop()`). The tracks end when the engine is disposed.
@@ -1026,6 +1088,61 @@ export class Engine {
       }
     } catch (error) {
       if (this.#feed === feed) this.#sourceFailed(feed, error)
+    }
+  }
+
+  /** Renders and encodes every frame of `clip` (`export`), as fast as the device can. */
+  async #runExport(feed: Feed, clip: OfflineVideoSource, options: ExportOptions, cancelled: () => boolean): Promise<Blob> {
+    const surface = this.#outputs.hold()
+    let encoder: FrameEncoder | undefined
+    const stopped = () => {
+      if (this.#disposed) return disposedError('The engine')
+      return new OuafError('aborted', cancelled() ? 'The export was cancelled.' : 'The export stopped: another source was set.')
+    }
+    const frameRate = clip.duration > 0 ? clip.frameCount / clip.duration : 30
+    let frames = 0
+    let last = 0
+    try {
+      for (;;) {
+        const frame = await clip.read()
+        if (this.#feed !== feed) {
+          frame?.close()
+          throw stopped()
+        }
+        if (!frame) break
+        try {
+          await this.#fileFrame(feed, frame.image, frame.time)
+          if (this.#feed !== feed) throw stopped()
+          // Sized from the first frame rendered: the render size of the clip.
+          encoder ??= await FrameEncoder.create(surface.canvas.width, surface.canvas.height, frameRate, options)
+          if (this.#feed !== feed) throw stopped()
+          await encoder.encode(surface.canvas, frame.time)
+        } finally {
+          frame.close()
+        }
+        frames++
+        last = frame.time
+        if (options.onProgress) {
+          try {
+            options.onProgress({ frame: frames, frames: clip.frameCount, time: frame.time })
+          } catch (error) {
+            this.#warn(`An export progress callback threw: ${String(error)}`)
+          }
+        }
+        if (this.#feed !== feed) throw stopped()
+      }
+      if (!encoder) throw new OuafError('unsupported', `${clip.label} gave no frame to export.`)
+      const blob = await encoder.finish(clip.duration)
+      if (this.#feed !== feed) throw stopped()
+      if (this.#events.has('sourceEnd')) this.#events.emit('sourceEnd', { frames, time: last })
+      return blob
+    } catch (error) {
+      // A decoding or encoding failure ends the export and the source with it.
+      if (this.#feed === feed) this.clearSource()
+      throw error
+    } finally {
+      surface.release()
+      encoder?.close()
     }
   }
 

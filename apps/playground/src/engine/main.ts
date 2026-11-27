@@ -7,6 +7,7 @@
 import {
   BACKEND_STORE_PREFIX,
   CameraSource,
+  OfflineVideoSource,
   VideoFileSource,
   createDefaultFaceTracker,
   createEngine,
@@ -19,6 +20,7 @@ import {
   type OuafPlugin,
   type PerformanceEvent,
   type TrackingThrottle,
+  type VideoExport,
   type VideoSource,
 } from '@ouaf/core'
 import * as core from '@ouaf/core'
@@ -582,4 +584,39 @@ recordButton.addEventListener('click', () => {
     outputError(error)
   }
 })
+
+// Frame-exact export (#137): the clip or file playing, decoded and rendered frame by frame into an MP4; the page then
+// plays its source again. Pressed again while it runs: cancels.
+const exportButton = document.getElementById('export') as HTMLButtonElement
+let exporting: VideoExport | undefined
+exportButton.addEventListener('click', () => {
+  if (exporting) return exporting.cancel()
+  const c = current?.choice
+  if (!c || c.kind === 'camera') return show('export', 'pick a clip or a video file (and press Start) first')
+  void serialSource(async () => {
+    let clip: OfflineVideoSource
+    try {
+      const input = c.kind === 'clip' ? new URL(`test-media/${c.clip}.mp4`, document.baseURI).href : c.file
+      clip = await OfflineVideoSource.open(input, { mirror: c.kind === 'clip' && params.get('mirror') === '1' })
+    } catch (error) {
+      return outputError(error)
+    }
+    const started = performance.now()
+    exporting = engine.export(clip, { onProgress: (p) => show('export', `frame ${p.frame}/${p.frames}`) })
+    exportButton.textContent = 'Cancel export'
+    try {
+      const blob = await exporting.done
+      offer(blob, 'export')
+      show('export', `${clip.frameCount} frames in ${((performance.now() - started) / 1000).toFixed(1)} s`)
+    } catch (error) {
+      outputError(error)
+    } finally {
+      exporting = undefined
+      exportButton.textContent = 'Export'
+      clip.dispose()
+      if (current) await engine.setSource(current.source).catch(reportError)
+    }
+  })
+})
+
 if (params.has('autostart') && choice.kind === 'clip') void start()

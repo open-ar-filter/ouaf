@@ -158,6 +158,23 @@ describe('Outputs', () => {
     expect(canvases).toHaveLength(1) // one capture surface, reused
   })
 
+  it('hold: keeps the surface captured on every frame until released (an export)', () => {
+    const o = outputs()
+    const a = o.hold()
+    const b = o.hold()
+    expect(o.active).toBe(true)
+    o.capture(frame('frame1'), 64, 48)
+    expect((a.canvas as unknown as FakeCanvas).content).toBe('frame1 0,0 64x48 into 64x48')
+    expect(b.canvas).toBe(a.canvas)
+    a.release()
+    a.release() // idempotent: b still holds
+    expect(o.active).toBe(true)
+    b.release()
+    expect(o.active).toBe(false)
+    o.dispose()
+    expect(() => o.hold()).toThrow(OuafError)
+  })
+
   it('snapshot: rejects an invalid quality', () => {
     expect(() => outputs().snapshot({ quality: 2 })).toThrow(RangeError)
   })

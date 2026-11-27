@@ -8,7 +8,7 @@ hosts embedding `@ouaf/core` should know about.
 
 ## Photos, videos and streams
 
-`engine.snapshot()`, `engine.record()` and `engine.outputStream()` hand the composited image to the host, in memory
+`engine.snapshot()`, `engine.record()`, `engine.export()` and `engine.outputStream()` hand the composited image to the host, in memory
 (a `Blob`, a `MediaStream`). The engine stores and uploads nothing: what happens to them is the host's decision. The
 engine never opens the microphone; a recording has sound only when the host passes its own audio tracks.
 

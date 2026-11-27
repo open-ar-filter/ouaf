@@ -130,6 +130,8 @@ export class Outputs {
   /** Streams given to the host, until all their video tracks have ended (`track.stop()`). */
   #streams: MediaStream[] = []
   #recordings = new Set<ActiveRecording>()
+  /** Exports in progress (`hold`): they read the capture surface after each frame. */
+  #holds = 0
   #disposed = false
 
   constructor(env: Partial<OutputsEnv> = {}) {
@@ -141,7 +143,7 @@ export class Outputs {
    * once per frame; drops the streams whose tracks the host has stopped.
    */
   get active(): boolean {
-    if (this.#snapshots.length > 0 || this.#recordings.size > 0) return true
+    if (this.#snapshots.length > 0 || this.#recordings.size > 0 || this.#holds > 0) return true
     const streams = this.#streams
     for (let i = streams.length - 1; i >= 0; i--) if (ended(streams[i]!)) streams.splice(i, 1)
     return streams.length > 0
@@ -165,6 +167,25 @@ export class Outputs {
     if (snapshots.length === 0) return
     this.#snapshots = []
     for (const s of snapshots) encode(canvas, s.type, s.quality).then(s.resolve, s.reject)
+  }
+
+  /**
+   * Keeps the capture surface up to date on every frame until `release` (an export, #137): the surface holds the last
+   * frame rendered, as captured (excluded overlays left out), at the render size.
+   */
+  hold(): { readonly canvas: CaptureCanvas; release(): void } {
+    this.#assertAlive()
+    const canvas = this.#surface().canvas
+    this.#holds++
+    let held = true
+    return {
+      canvas,
+      release: () => {
+        if (!held) return
+        held = false
+        this.#holds--
+      },
+    }
   }
 
   /** Resolves with the next rendered frame, encoded as an image. */
