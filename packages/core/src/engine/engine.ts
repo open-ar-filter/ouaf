@@ -169,6 +169,11 @@ export interface SourceEndEvent {
 
 /** `engine.export()`: the encoding options, and a progress callback. */
 export interface ExportOptions extends VideoEncodingOptions {
+  /**
+   * Copy the clip's audio track (AAC, Opus or FLAC) into the MP4, without decoding or re-encoding it, cut at the end of
+   * the video. Default: true. A track that cannot be copied (`clip.audioError`) is left out with a `warning`.
+   */
+  audio?: boolean
   /** Called after each frame encoded. */
   onProgress?: (progress: ExportProgress) => void
 }
@@ -730,7 +735,8 @@ export class Engine {
    * frames is rendered in the file regime (spec §12.1, §12.5), then encoded at its own media time with WebCodecs
    * (H.264, else VP9) into an MP4 that has the clip's frame count and duration, whatever the device speed. It runs as
    * fast as the device can track, render and encode; the clip's `rate` and `loop` do not apply. The output is what
-   * `snapshot` gives (excluded overlays left out), at the render size rounded down to even numbers. Once done, the clip
+   * `snapshot` gives (excluded overlays left out), at the render size rounded down to even numbers, with the clip's
+   * audio copied as it is (`audio`; filters do not change the sound). Once done, the clip
    * stays the source, on its last frame (`sourceEnd` is emitted). Throws `IncompatibleSourceError` (not an
    * `OfflineVideoSource`, disposed) or `RangeError` (an invalid option); later errors reject `done`.
    */
@@ -1102,6 +1108,8 @@ export class Engine {
       return new OuafError('aborted', cancelled() ? 'The export was cancelled.' : 'The export stopped: another source was set.')
     }
     const frameRate = clip.duration > 0 ? clip.frameCount / clip.duration : 30
+    const audio = options.audio === false ? undefined : clip.audioSamples()
+    if (options.audio !== false && clip.audioError) this.#warn(`${clip.label}: the audio track cannot be copied (${clip.audioError}); the export has no sound.`)
     let frames = 0
     let last = 0
     try {
@@ -1134,7 +1142,7 @@ export class Engine {
         if (this.#feed !== feed) throw stopped()
       }
       if (!encoder) throw new OuafError('unsupported', `${clip.label} gave no frame to export.`)
-      const blob = await encoder.finish(clip.duration)
+      const blob = await encoder.finish(clip.duration, audio)
       if (this.#feed !== feed) throw stopped()
       if (this.#events.has('sourceEnd')) this.#events.emit('sourceEnd', { frames, time: last })
       return blob

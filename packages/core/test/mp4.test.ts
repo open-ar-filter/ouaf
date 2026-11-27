@@ -1,10 +1,11 @@
 /**
  * MP4 demuxer (#32) on synthetic files: codec strings of each supported codec, composition offsets, keyframes, edit
- * lists, rotation, 64-bit boxes and offsets, and the explicit errors on what it cannot read. Real clips and forged
+ * lists, rotation, 64-bit boxes and offsets, the audio track and its sample description rewritten for another MP4,
+ * and the explicit errors on what it cannot read. Real clips and forged
  * table counts are tested in sources.test.ts.
  */
 import { describe, expect, it } from 'vitest'
-import { demuxMp4, Mp4Error } from '../src/mp4.ts'
+import { demuxMp4, demuxMp4Audio, Mp4Error } from '../src/mp4.ts'
 
 const enc = new TextEncoder()
 
@@ -297,5 +298,124 @@ describe('errors', () => {
     // A 64-bit size header cut short, and a size below the header size.
     expect(() => demuxMp4(concat(box('ftyp', enc.encode('isom')), u32(1), enc.encode('moov')))).toThrow(/no "moov" box/)
     expect(() => demuxMp4(concat(box('ftyp', enc.encode('isom')), u32(4), enc.encode('moov')))).toThrow(/no "moov" box/)
+  })
+})
+
+/** 16-bit big-endian words. */
+function u16(...words: number[]): Uint8Array {
+  const out = new Uint8Array(words.length * 2)
+  words.forEach((w, i) => new DataView(out.buffer).setUint16(i * 2, w))
+  return out
+}
+
+interface Sound {
+  version?: number
+  channels?: number
+  sampleSize?: number
+  rate?: number
+  /** QuickTime version 2: the rate as a float64 and the channels as a 32-bit word. */
+  rate64?: number
+  channels32?: number
+}
+
+/** A SoundSampleEntry of `type` (version 0, 1 or 2 fields), then its boxes. */
+function soundEntry(type: string, o: Sound, ...boxes: Uint8Array[]): Uint8Array {
+  const version = o.version ?? 0
+  const head = concat(new Uint8Array(6), u16(1), u16(version, 0), new Uint8Array(4), u16(o.channels ?? 2, o.sampleSize ?? 16, 0, 0), u32((o.rate ?? 48000) * 65536))
+  const more = version === 1 ? new Uint8Array(16) : version === 2 ? new Uint8Array(36) : new Uint8Array(0)
+  if (version === 2) {
+    const view = new DataView(more.buffer)
+    view.setFloat64(4, o.rate64 ?? 48000)
+    view.setUint32(12, o.channels32 ?? 2)
+  }
+  return box(type, head, more, ...boxes)
+}
+
+const ESDS = box('esds', u32(0), bytes(3, 25, 0, 1, 0, 4, 17, 0x40, 0x15))
+const aac = () => soundEntry('mp4a', {}, ESDS)
+
+interface AudioOptions {
+  entry?: Uint8Array
+  samples?: number
+  edts?: Uint8Array
+  stbl?: Record<string, Uint8Array | null>
+  mdhd?: Uint8Array
+}
+
+/** A file with the video track of `mp4()` and an audio track of `samples` 4-byte samples of 1024 ticks at 48 kHz. */
+function withAudio(o: AudioOptions = {}): Uint8Array {
+  const n = o.samples ?? 4
+  const trak = (chunkOffset: number) => {
+    const tables: Record<string, Uint8Array | null> = {
+      stsd: box('stsd', u32(0, 1), o.entry ?? aac()),
+      stts: box('stts', u32(0, 1, n, 1024)),
+      stsc: box('stsc', u32(0, 1, 1, n, 1)),
+      stsz: box('stsz', u32(0, 4, n)),
+      stco: box('stco', u32(0, 1, chunkOffset)),
+      ...o.stbl,
+    }
+    const stbl = box('stbl', ...Object.values(tables).filter((b): b is Uint8Array => b !== null))
+    const hdlr = box('hdlr', u32(0, 0), enc.encode('soun'), new Uint8Array(13))
+    const mdhd = o.mdhd ?? box('mdhd', u32(0, 0, 0, 48000, n * 1024, 0))
+    return box('trak', tkhd(1, 0, 0, 1), ...(o.edts ? [o.edts] : []), box('mdia', mdhd, hdlr, box('minf', stbl)))
+  }
+  // The audio samples point at the start of the media data (the video's 30 bytes hold them).
+  const at = demuxMp4(mp4({ before: [trak(0)] })).samples[0]!.offset
+  return mp4({ before: [trak(at)] })
+}
+
+describe('audio track', () => {
+  it('reads an AAC track: format, channels, rate, samples, and the encoder delay of the edit list', () => {
+    const data = withAudio({ edts: box('edts', box('elst', u32(0, 1, 3000, 1024, 0x10000))) })
+    const track = demuxMp4Audio(data)!
+    expect([track.format, track.channels, track.sampleRate, track.timescale]).toEqual(['mp4a', 2, 48000, 48000])
+    expect(track.samples.map((s) => s.time * 48000)).toEqual([-1024, 0, 1024, 2048].map((t) => expect.closeTo(t, 6)))
+    expect(track.samples.every((s) => s.size === 4 && s.sync)).toBe(true)
+    expect(track.duration).toBeCloseTo(3072 / 48000, 9)
+    // The video track is read as before.
+    expect(demuxMp4(data).samples).toHaveLength(3)
+  })
+
+  it('rewrites the description as a version 0 entry holding the configuration box as is', () => {
+    const entry = demuxMp4Audio(withAudio())!.sampleEntry
+    expect([...entry]).toEqual([...aac()])
+    // QuickTime version 1, `esds` inside a `wave` box: the same entry.
+    const quicktime = soundEntry('mp4a', { version: 1 }, box('wave', box('frma', enc.encode('mp4a')), ESDS))
+    expect([...demuxMp4Audio(withAudio({ entry: quicktime }))!.sampleEntry]).toEqual([...aac()])
+  })
+
+  it('QuickTime version 2: the rate and channels of the extended fields; above 65535 Hz the entry rate is 0', () => {
+    const opus = soundEntry('Opus', { version: 2, channels: 3, rate: 1, rate64: 96000, channels32: 6 }, box('dOps', bytes(0, 6)))
+    const track = demuxMp4Audio(withAudio({ entry: opus }))!
+    expect([track.format, track.channels, track.sampleRate]).toEqual(['Opus', 6, 96000])
+    expect([...track.sampleEntry]).toEqual([...soundEntry('Opus', { channels: 6, rate: 0 }, box('dOps', bytes(0, 6)))])
+  })
+
+  it('a rate of 0 is taken from the timescale; FLAC is read too', () => {
+    const flac = soundEntry('fLaC', { rate: 0, sampleSize: 0 }, box('dfLa', u32(0)))
+    const track = demuxMp4Audio(withAudio({ entry: flac, mdhd: box('mdhd', u32(0, 0, 0, 44100, 4096, 0)) }))!
+    expect([track.format, track.sampleRate, track.timescale]).toEqual(['fLaC', 44100, 44100])
+    expect([...track.sampleEntry]).toEqual([...soundEntry('fLaC', { rate: 44100 }, box('dfLa', u32(0)))])
+  })
+
+  it('a file without an audio track, or with an empty one', () => {
+    expect(demuxMp4Audio(mp4())).toBeUndefined()
+    const empty = withAudio({ samples: 0, stbl: { stsz: box('stsz', u32(0, 0, 0)), stts: box('stts', u32(0, 0)), stsc: box('stsc', u32(0, 0)) } })
+    expect(demuxMp4Audio(empty)!.samples).toEqual([])
+  })
+
+  it('refuses other codecs, encrypted tracks, broken descriptions and tables, naming the audio track', () => {
+    const fails = (o: AudioOptions) => () => demuxMp4Audio(withAudio(o))
+    expect(fails({ entry: soundEntry('twos', {}) })).toThrow('Unsupported audio codec "twos" (supported: AAC, Opus, FLAC).')
+    expect(fails({ entry: soundEntry('enca', {}) })).toThrow('Encrypted audio tracks are not supported.')
+    expect(fails({ entry: soundEntry('mp4a', {}) })).toThrow('The "mp4a" sample description has no "esds" box.')
+    expect(fails({ entry: box('mp4a', new Uint8Array(20)) })).toThrow('The "mp4a" sample description is truncated.')
+    expect(fails({ entry: box('mp4a', soundEntry('mp4a', { version: 1 }).subarray(8, 44)) })).toThrow('The "mp4a" sample description is truncated.')
+    expect(fails({ entry: soundEntry('mp4a', { version: 3 }, ESDS) })).toThrow('The "mp4a" sample description has an unknown version (3).')
+    expect(fails({ stbl: { stsz: null } })).toThrow('The audio track has no sample size table.')
+    expect(fails({ stbl: { stsd: box('stsd', u32(0, 0)) } })).toThrow('The audio track has no sample description.')
+    expect(fails({ mdhd: box('mdhd', u32(0, 0, 0, 0, 0, 0)) })).toThrow('The audio track has no timescale.')
+    expect(fails({ stbl: { stsz: box('stsz', u32(0, 1000, 4)) } })).toThrow(/The audio track's samples add up to 4000 bytes/)
+    expect(() => demuxMp4Audio(new Uint8Array(4))).toThrow(Mp4Error)
   })
 })

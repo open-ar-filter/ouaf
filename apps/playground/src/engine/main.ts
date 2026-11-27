@@ -608,7 +608,8 @@ exportButton.addEventListener('click', () => {
     try {
       const blob = await exporting.done
       offer(blob, 'export')
-      show('export', `${clip.frameCount} frames in ${((performance.now() - started) / 1000).toFixed(1)} s`)
+      const sound = clip.audio ? `, ${clip.audio.format} audio copied` : ', no audio'
+      show('export', `${clip.frameCount} frames in ${((performance.now() - started) / 1000).toFixed(1)} s${sound}`)
     } catch (error) {
       outputError(error)
     } finally {

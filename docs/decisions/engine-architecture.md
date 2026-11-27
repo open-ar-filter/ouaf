@@ -103,7 +103,7 @@ layers read the latest completed result. The tracking rate (spec §16.1) is meas
   reseeded at activation and on every new source run.
 - **Offline video**: `OfflineVideoSource.open(url | Blob | bytes)` reads the whole file, demuxes it with the built-in
   MP4 / MOV demuxer (`mp4.ts`: H.264, H.265, VP9, AV1; edit list and rotation applied; no fragmented MP4) and decodes it
-  with `VideoDecoder`, a few frames ahead. `engine.on('sourceEnd')` fires after the last frame (without `loop`).
+  with `VideoDecoder`, a few frames ahead. Its audio track is not played, only described (`clip.audio`) for `export`. `engine.on('sourceEnd')` fires after the last frame (without `loop`).
 - **Errors** (`IncompatibleSourceError`): the engine's own canvas, an image without pixels, a tainted image or canvas
   (checked by reading one pixel back; a live canvas is checked again once a second, since it can become tainted).
 - **Compositor**: the `video` stage draws any of these images. While a paused `<video>` seeks it has no frame to upload;
@@ -229,7 +229,12 @@ it (mirrored for a front camera, spec §5.1), at the internal render size, minus
   tracks, renders and encodes, and drops nothing, so the file has the clip's frame count, times and duration on any
   device. The chunks go into an in-tree muxer (`Mp4Writer`, no dependency, read back by `demuxMp4` in the tests): one
   progressive video track, `moov` before `mdat` so the file plays and seeks at once, `ctts` only if the encoder
-  reorders frames. `cancel()`, another source or `dispose()` reject `done` (`aborted`, `disposed`). No audio yet.
+  reorders frames. `cancel()`, another source or `dispose()` reject `done` (`aborted`, `disposed`). The clip's audio
+  track (AAC, Opus or FLAC) is copied as it is, without decoding (`audio: false` leaves it out): `demuxMp4Audio` reads
+  its samples and rewrites its description as an ISO `SoundSampleEntry` (QuickTime version 1 and 2 descriptions,
+  `esds` in a `wave` box), and `Mp4Writer.finish(end, audio)` writes them as a second track, interleaved with the
+  frames by time, with an edit list that keeps the AAC encoder delay before 0 and stops the sound with the video. A
+  track that cannot be copied (`clip.audioError`) is left out with a `warning`; filters do not change the sound.
 
 ## Spaces and anchors
 
@@ -297,7 +302,7 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
 | Head occluder (`model.occlusion: "head"`) | the face landmark mesh, moved back 0.2 face units along the camera rays, closed by the back of an average head (#155); the ellipsoid alone without usable landmarks | ears and hair (segmentation), one occluder per face shared by the layers |
 | Model animations | three's `AnimationMixer` (boxes a few numbers per animated face and frame) | an allocation-free sampler, if profiles show GC |
-| Audio of WebCodecs outputs | `export()` and `record()` without `audio` are video only (WebCodecs + in-tree MP4 muxer); `record({ audio })` uses `MediaRecorder` (WebM without duration in Chrome) | the clip's audio copied into `export()` (#137); host audio through `AudioEncoder` where `MediaStreamTrackProcessor` exists |
+| Audio of WebCodecs outputs | `export()` copies the clip's audio track as is (#137); `record()` without `audio` is video only (WebCodecs + in-tree MP4 muxer); `record({ audio })` uses `MediaRecorder` (WebM without duration in Chrome) | host audio through `AudioEncoder` where `MediaStreamTrackProcessor` exists (#54) |
 | glTF limits | 32 MB per file, textures not size-checked, no KTX2 textures | the limits of spec Appendix C; KTX2 with #116 |
 
 ## Testing a layer type

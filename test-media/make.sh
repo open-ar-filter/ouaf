@@ -59,6 +59,13 @@ for c in "${small[@]}"; do
   echo "$name.mp4"
 done
 
+# pesquet-closeup with the sound of its source (AAC), for the audio copied by the export (#137): the same video
+# stream, copied.
+ffmpeg -nostdin -loglevel error -i "$here/pesquet-closeup.mp4" -ss 5.4 -t 3.1 -i "$work/57768.webm" \
+  -map 0:v -map 1:a -c:v copy -c:a aac -b:a 96k -ac 2 -ar 48000 -shortest \
+  -movflags +faststart -map_metadata -1 -fflags +bitexact -flags:a +bitexact -y "$here/pesquet-closeup-sound.mp4"
+echo pesquet-closeup-sound.mp4
+
 # Two frontal faces stacked vertically (MediaPipe's short-range detector only finds large faces):
 # top = 57770 89.1–92.2 s (cropped y 240–880), bottom = 57768 5.4–8.5 s (cropped y 400–1040).
 ffmpeg -nostdin -loglevel error \

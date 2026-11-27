@@ -16,9 +16,10 @@ anchors can be checked, and devices measured, without a person in front of a cam
 | `group-far.mp4` | 5.0 s | 2 to 4 small faces (≈ 12 % of the frame width), one with sunglasses; contains cuts. MediaPipe's short-range detector misses faces this small |
 | `no-face.mp4` | 2.4 s | Underwater footage, no face (negative case) |
 | `pesquet-closeup-360.mp4`, `pesquet-talk-360.mp4` | | Same as without `-360`, at 360×640, to measure the effect of the input resolution |
+| `pesquet-closeup-sound.mp4` | 3.1 s | `pesquet-closeup.mp4` (same video stream) with the sound of the source: AAC-LC, 48 kHz stereo, 96 kbit/s. For the audio copied by the export (#137) |
 
 All clips: H.264 (Main profile), 720×1280 (portrait, like a phone; `-360` variants: 360×640), 30 fps, `+faststart`, no audio (tracking only
-needs the picture; clips with sound will be added for the audio features).
+needs the picture), except the `-sound` clip.
 They play in every target browser, including iOS Safari.
 
 ## Credits and licence
@@ -28,11 +29,11 @@ Extracts of **"Thomas Pesquet plonge dans le Nautile"** (Ifremer, campaign ESSNA
 [**CC BY 4.0**](https://creativecommons.org/licenses/by/4.0/):
 
 - [57767](https://commons.wikimedia.org/wiki/File:Thomas_Pesquet_plonge_dans_le_Nautile_(Ifremer_00985-109683_-_57767).webm) → `pesquet-turn.mp4`
-- [57768](https://commons.wikimedia.org/wiki/File:Thomas_Pesquet_plonge_dans_le_Nautile_(Ifremer_00985-109683_-_57768).webm) → `pesquet-closeup.mp4`, `pesquet-closeup-360.mp4`, `two-faces-stacked.mp4` (bottom), `four-faces-grid.mp4` and `three-faces-grid.mp4` (top right, bottom left)
+- [57768](https://commons.wikimedia.org/wiki/File:Thomas_Pesquet_plonge_dans_le_Nautile_(Ifremer_00985-109683_-_57768).webm) → `pesquet-closeup.mp4`, `pesquet-closeup-360.mp4`, `pesquet-closeup-sound.mp4`, `two-faces-stacked.mp4` (bottom), `four-faces-grid.mp4` and `three-faces-grid.mp4` (top right, bottom left)
 - [57769](https://commons.wikimedia.org/wiki/File:Thomas_Pesquet_plonge_dans_le_Nautile_(Ifremer_00985-109683_-_57769).webm) → `no-face.mp4`, `three-faces-grid.mp4` (bottom right)
 - [57770](https://commons.wikimedia.org/wiki/File:Thomas_Pesquet_plonge_dans_le_Nautile_(Ifremer_00985-109683_-_57770).webm) → `pesquet-walk.mp4`, `pesquet-talk.mp4`, `pesquet-talk-360.mp4`, `two-faces.mp4`, `group-far.mp4`, `two-faces-stacked.mp4` (top), `four-faces-grid.mp4` (top left, bottom right), `three-faces-grid.mp4` (top left)
 
-**Changes:** cut into short extracts, audio removed, rescaled to 720×1280 and re-encoded to H.264; `two-faces-stacked.mp4` stacks two cropped extracts; `four-faces-grid.mp4` and `three-faces-grid.mp4` tile four
+**Changes:** cut into short extracts, audio removed (re-encoded to AAC in `pesquet-closeup-sound.mp4`), rescaled to 720×1280 and re-encoded to H.264; `two-faces-stacked.mp4` stacks two cropped extracts; `four-faces-grid.mp4` and `three-faces-grid.mp4` tile four
 cropped extracts (rescaled to 0.65 of the source size), two of them played backwards and mirrored horizontally. The original
 on-screen captions and logos are kept (mirrored in the mirrored cells, cut by the crops). These clips are distributed under the same CC BY 4.0 licence; this folder is
 not covered by the repository's Apache-2.0 licence.

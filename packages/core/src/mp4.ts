@@ -4,8 +4,11 @@
  * needed (one progressive video track, `moov` anywhere in the file) is small, and a full demuxer library would weigh
  * more than the rest of the source code.
  *
- * Not supported: fragmented MP4 (`moof`), encrypted tracks, several sample descriptions. Codecs: H.264 (`avc1`,
- * `avc3`), H.265 (`hvc1`, `hev1`), VP9 (`vp09`), AV1 (`av01`).
+ * The first audio track is read too (`demuxMp4Audio`), for the export to copy it into its MP4 without decoding it
+ * (#137): its samples and a sample description another MP4 can hold.
+ *
+ * Not supported: fragmented MP4 (`moof`), encrypted tracks, several sample descriptions. Video codecs: H.264
+ * (`avc1`, `avc3`), H.265 (`hvc1`, `hev1`), VP9 (`vp09`), AV1 (`av01`). Audio codecs: AAC (`mp4a`), Opus, FLAC.
  */
 
 export interface Mp4Sample {
@@ -36,6 +39,29 @@ export interface Mp4VideoTrack {
   readonly samples: readonly Mp4Sample[]
 }
 
+export interface Mp4AudioTrack {
+  /** Sample description type: `mp4a` (AAC), `Opus` or `fLaC`. */
+  readonly format: string
+  readonly channels: number
+  /** Samples per second (the media timescale when the description does not say). */
+  readonly sampleRate: number
+  /** Ticks per second of the sample times in the file. */
+  readonly timescale: number
+  /**
+   * The sample description rewritten as an ISO BMFF `SoundSampleEntry` (version 0) with its configuration box
+   * (`esds`, `dOps`, `dfLa`), whatever the file had (a QuickTime version 1 or 2 description, `esds` in a `wave` box):
+   * the `stsd` entry of an MP4 holding these samples.
+   */
+  readonly sampleEntry: Uint8Array
+  /** Duration in seconds (last sample end). */
+  readonly duration: number
+  /**
+   * Samples in decoding order (the presentation order for audio). The edit list is applied as for the video: the
+   * first samples of AAC (the encoder delay) have negative times.
+   */
+  readonly samples: readonly Mp4Sample[]
+}
+
 /** The file is not an MP4 the demuxer can read; the message says why. */
 export class Mp4Error extends Error {
   override readonly name = 'Mp4Error'
@@ -52,56 +78,111 @@ const CONTAINERS = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'edts'])
 
 /** Parses `data` (a whole MP4 or MOV file) and returns its first video track. Throws `Mp4Error`. */
 export function demuxMp4(data: Uint8Array): Mp4VideoTrack {
+  const { view, moov, movieTimescale } = movie(data)
+  const track = firstTrack(view, moov, 'vide')
+  if (!track) throw new Mp4Error('The file has no video track.')
+  return readVideoTrack(view, data, track.trak, track.mdia, movieTimescale)
+}
+
+/**
+ * The first audio track of `data` (a whole MP4 or MOV file), `undefined` when it has none. Throws `Mp4Error` when the
+ * file or the audio track cannot be read, or for an audio codec other than AAC, Opus and FLAC.
+ */
+export function demuxMp4Audio(data: Uint8Array): Mp4AudioTrack | undefined {
+  const { view, moov, movieTimescale } = movie(data)
+  const track = firstTrack(view, moov, 'soun')
+  return track && readAudioTrack(view, data, track.trak, track.mdia, movieTimescale)
+}
+
+function movie(data: Uint8Array): { view: DataView; moov: Box; movieTimescale: number } {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
   const top = children(view, 0, data.byteLength)
   if (top.some((b) => b.type === 'moof') && !top.some((b) => b.type === 'moov')) throw new Mp4Error('Fragmented MP4 files are not supported.')
   const moov = top.find((b) => b.type === 'moov')
   if (!moov) throw new Mp4Error(top.length === 0 ? 'This is not an MP4 file.' : 'The file has no "moov" box (not an MP4 file, or truncated).')
-  const movieTimescale = readMvhdTimescale(view, find(view, moov, 'mvhd'))
+  return { view, moov, movieTimescale: readMvhdTimescale(view, find(view, moov, 'mvhd')) }
+}
 
+function firstTrack(view: DataView, moov: Box, handler: 'vide' | 'soun'): { trak: Box; mdia: Box } | undefined {
   for (const trak of children(view, moov.start, moov.end).filter((b) => b.type === 'trak')) {
     const mdia = find(view, trak, 'mdia')
     const hdlr = mdia && find(view, mdia, 'hdlr')
-    if (!hdlr || fourcc(view, hdlr.start + 8) !== 'vide') continue
-    return readVideoTrack(view, data, trak, mdia, movieTimescale)
+    if (hdlr && hdlr.end - hdlr.start >= 12 && fourcc(view, hdlr.start + 8) === handler) return { trak, mdia }
   }
-  throw new Mp4Error('The file has no video track.')
+  return undefined
 }
 
 function readVideoTrack(view: DataView, data: Uint8Array, trak: Box, mdia: Box, movieTimescale: number): Mp4VideoTrack {
-  const mdhd = need(view, mdia, 'mdhd')
-  const timescale = view.getUint8(mdhd.start) === 1 ? view.getUint32(mdhd.start + 20) : view.getUint32(mdhd.start + 12)
-  if (!timescale) throw new Mp4Error('The video track has no timescale.')
-  const stbl = need(view, need(view, mdia, 'minf'), 'stbl')
+  const t: Track = { kind: 'video', view, trak, mdia }
+  const timescale = readTimescale(t)
+  const stbl = need(t, need(t, mdia, 'minf'), 'stbl')
 
   // Sample description: the codec and its configuration.
-  const stsd = need(view, stbl, 'stsd')
-  if (view.getUint32(stsd.start + 4) < 1) throw new Mp4Error('The video track has no sample description.')
-  const entry = children(view, stsd.start + 8, stsd.end)[0]
-  if (!entry) throw new Mp4Error('The video track has no sample description.')
+  const entry = firstEntry(t, stbl)
   const codedWidth = view.getUint16(entry.start + 24)
   const codedHeight = view.getUint16(entry.start + 26)
   const { codec, description } = readCodec(view, data, entry)
 
-  // Sample tables.
-  const sizes = readSizes(view, stbl, data.byteLength)
+  const { samples, duration } = readSamples(t, data, timescale, movieTimescale)
+  if (samples.length > 0 && !samples[0]!.sync) throw new Mp4Error('The video track does not start with a keyframe.')
+
+  return { codec, description, codedWidth, codedHeight, rotation: readRotation(view, need(t, trak, 'tkhd')), duration, samples }
+}
+
+function readAudioTrack(view: DataView, data: Uint8Array, trak: Box, mdia: Box, movieTimescale: number): Mp4AudioTrack {
+  const t: Track = { kind: 'audio', view, trak, mdia }
+  const timescale = readTimescale(t)
+  const entry = firstEntry(t, need(t, need(t, mdia, 'minf'), 'stbl'))
+  const description = readSoundEntry(view, data, entry, timescale)
+  const { samples, duration } = readSamples(t, data, timescale, movieTimescale)
+  return { ...description, timescale, duration, samples }
+}
+
+/** A track being read: its kind names it in the messages. */
+interface Track {
+  readonly kind: 'video' | 'audio'
+  readonly view: DataView
+  readonly trak: Box
+  readonly mdia: Box
+}
+
+function readTimescale(t: Track): number {
+  const mdhd = need(t, t.mdia, 'mdhd')
+  const timescale = t.view.getUint8(mdhd.start) === 1 ? t.view.getUint32(mdhd.start + 20) : t.view.getUint32(mdhd.start + 12)
+  if (!timescale) throw new Mp4Error(`The ${t.kind} track has no timescale.`)
+  return timescale
+}
+
+/** The only sample description of the track. */
+function firstEntry(t: Track, stbl: Box): Box {
+  const stsd = need(t, stbl, 'stsd')
+  const entry = t.view.getUint32(stsd.start + 4) < 1 ? undefined : children(t.view, stsd.start + 8, stsd.end)[0]
+  if (!entry) throw new Mp4Error(`The ${t.kind} track has no sample description.`)
+  return entry
+}
+
+/** Samples of the track (offsets, sizes, presentation times with the edit list applied, keyframes). */
+function readSamples(t: Track, data: Uint8Array, timescale: number, movieTimescale: number): { samples: Mp4Sample[]; duration: number } {
+  const view = t.view
+  const stbl = need(t, need(t, t.mdia, 'minf'), 'stbl')
+  const sizes = readSizes(t, stbl, data.byteLength)
   const n = sizes.length
-  const offsets = readOffsets(view, stbl, sizes)
+  const offsets = readOffsets(t, stbl, sizes)
   const dts = new Float64Array(n)
   const durations = new Float64Array(n)
   {
-    const stts = need(view, stbl, 'stts')
+    const stts = need(t, stbl, 'stts')
     let i = 0
-    let t = 0
+    let time = 0
     const count = tableCount(view, stts, 4, 8)
     for (let e = 0; e < count && i < n; e++) {
       const p = stts.start + 8 + e * 8
       const samples = view.getUint32(p)
       const delta = view.getUint32(p + 4)
       for (let k = 0; k < samples && i < n; k++, i++) {
-        dts[i] = t
+        dts[i] = time
         durations[i] = delta
-        t += delta
+        time += delta
       }
     }
     if (i < n) throw new Mp4Error('The time-to-sample table is shorter than the sample list.')
@@ -128,10 +209,10 @@ function readVideoTrack(view: DataView, data: Uint8Array, trak: Box, mdia: Box, 
     }
   } else sync.fill(1)
 
-  // Edit list: the media time shown first (B-frame delay) and an initial empty edit.
+  // Edit list: the media time shown first (B-frame delay, AAC encoder delay) and an initial empty edit.
   let shift = 0
   let delay = 0
-  const edts = find(view, trak, 'edts')
+  const edts = find(view, t.trak, 'edts')
   const elst = edts && find(view, edts, 'elst')
   if (elst) {
     const v1 = view.getUint8(elst.start) === 1
@@ -159,9 +240,7 @@ function readVideoTrack(view: DataView, data: Uint8Array, trak: Box, mdia: Box, 
     duration = Math.max(duration, time + d)
     if (offsets[i]! + sizes[i]! > data.byteLength) throw new Mp4Error('The file is truncated: a sample lies beyond its end.')
   }
-  if (n > 0 && !samples[0]!.sync) throw new Mp4Error('The video track does not start with a keyframe.')
-
-  return { codec, description, codedWidth, codedHeight, rotation: readRotation(view, need(view, trak, 'tkhd')), duration, samples }
+  return { samples, duration }
 }
 
 function readCodec(view: DataView, data: Uint8Array, entry: Box): { codec: string; description: Uint8Array | undefined } {
@@ -218,28 +297,72 @@ function readCodec(view: DataView, data: Uint8Array, entry: Box): { codec: strin
   }
 }
 
+/** Configuration box of each audio format the export copies (they all play in MP4 in the browsers). */
+const AUDIO_CONFIG: Record<string, string> = { mp4a: 'esds', Opus: 'dOps', fLaC: 'dfLa' }
+
+/**
+ * An audio sample description, rewritten as an ISO `SoundSampleEntry` (version 0). The fields start after the
+ * 8 bytes of every sample entry: version, revision, vendor, channels, sample size, compression id, packet size, rate
+ * (16.16). QuickTime adds 16 bytes in version 1, 36 in version 2 (where the rate and channels move), and may put the
+ * configuration box in a `wave` box.
+ */
+function readSoundEntry(view: DataView, data: Uint8Array, entry: Box, timescale: number): Pick<Mp4AudioTrack, 'format' | 'channels' | 'sampleRate' | 'sampleEntry'> {
+  const format = entry.type
+  const configType = AUDIO_CONFIG[format]
+  if (format === 'enca') throw new Mp4Error('Encrypted audio tracks are not supported.')
+  if (!configType) throw new Mp4Error(`Unsupported audio codec "${format}" (supported: AAC, Opus, FLAC).`)
+  if (entry.end - entry.start < 28) throw new Mp4Error(`The "${format}" sample description is truncated.`)
+  const version = view.getUint16(entry.start + 8)
+  let channels = view.getUint16(entry.start + 16)
+  const sampleSize = view.getUint16(entry.start + 18)
+  let sampleRate = view.getUint32(entry.start + 24) / 65536
+  const fields = version === 1 ? 44 : version === 2 ? 64 : 28
+  if (version > 2) throw new Mp4Error(`The "${format}" sample description has an unknown version (${version}).`)
+  if (entry.end - entry.start < fields) throw new Mp4Error(`The "${format}" sample description is truncated.`)
+  if (version === 2) {
+    sampleRate = view.getFloat64(entry.start + 32)
+    channels = view.getUint32(entry.start + 40)
+  }
+  const boxes = children(view, entry.start + fields, entry.end)
+  const wave = boxes.find((b) => b.type === 'wave')
+  const config = boxes.find((b) => b.type === configType) ?? (wave && children(view, wave.start, wave.end).find((b) => b.type === configType))
+  if (!config) throw new Mp4Error(`The "${format}" sample description has no "${configType}" box.`)
+  if (!(sampleRate > 0)) sampleRate = timescale
+  const rate = Math.round(sampleRate)
+  const sampleEntry = boxBytes(
+    format,
+    new Uint8Array(6), Uint8Array.of(0, 1), // reserved, data_reference_index
+    new Uint8Array(8), // version 0, revision, vendor
+    u16(channels), u16(sampleSize || 16), new Uint8Array(4), // pre_defined, reserved
+    u16(rate <= 0xffff ? rate : 0), new Uint8Array(2), // rate, 16.16 (0 above 65535 Hz: the timescale has it)
+    boxBytes(configType, data.subarray(config.start, config.end)),
+  )
+  return { format, channels, sampleRate, sampleEntry }
+}
+
 /**
  * Sample sizes from `stsz` or `stz2`. The count is checked before the table is allocated: every sample takes at least
  * one byte of the file, and a variable-size table must hold one entry per sample. Without this check a 20-byte
  * constant-size `stsz` could declare 2³² − 1 samples and make the engine allocate tens of gigabytes (#123).
  * Samples do not overlap, so their sizes also add up to at most the file size.
  */
-function readSizes(view: DataView, stbl: Box, fileSize: number): Uint32Array {
+function readSizes(t: Track, stbl: Box, fileSize: number): Uint32Array {
+  const view = t.view
   const stsz = find(view, stbl, 'stsz')
   if (stsz) {
     if (stsz.end - stsz.start < 12) throw new Mp4Error('The "stsz" box is truncated.')
     const fixed = view.getUint32(stsz.start + 4)
     const count = fixed ? view.getUint32(stsz.start + 8) : tableCount(view, stsz, 8, 4)
-    checkSampleCount(count, fileSize)
-    if (fixed) checkSampleBytes(count * fixed, fileSize)
+    checkSampleCount(t, count, fileSize)
+    if (fixed) checkSampleBytes(t, count * fixed, fileSize)
     const sizes = new Uint32Array(count)
     if (fixed) sizes.fill(fixed)
     else for (let i = 0; i < count; i++) sizes[i] = view.getUint32(stsz.start + 12 + i * 4)
-    if (!fixed) checkSampleBytes(sum(sizes), fileSize)
+    if (!fixed) checkSampleBytes(t, sum(sizes), fileSize)
     return sizes
   }
   const stz2 = find(view, stbl, 'stz2')
-  if (!stz2) throw new Mp4Error('The video track has no sample size table.')
+  if (!stz2) throw new Mp4Error(`The ${t.kind} track has no sample size table.`)
   if (stz2.end - stz2.start < 12) throw new Mp4Error('The "stz2" box is truncated.')
   const field = view.getUint8(stz2.start + 7)
   if (field !== 4 && field !== 8 && field !== 16) {
@@ -247,7 +370,7 @@ function readSizes(view: DataView, stbl: Box, fileSize: number): Uint32Array {
   }
   const count = view.getUint32(stz2.start + 8)
   if (Math.ceil((count * field) / 8) > stz2.end - stz2.start - 12) throw tooManyEntries(stz2, count)
-  checkSampleCount(count, fileSize)
+  checkSampleCount(t, count, fileSize)
   const sizes = new Uint32Array(count)
   const p = stz2.start + 12
   for (let i = 0; i < count; i++) {
@@ -255,20 +378,21 @@ function readSizes(view: DataView, stbl: Box, fileSize: number): Uint32Array {
     else if (field === 8) sizes[i] = view.getUint8(p + i)
     else sizes[i] = (view.getUint8(p + (i >> 1)) >> (i & 1 ? 0 : 4)) & 0xf
   }
-  checkSampleBytes(sum(sizes), fileSize)
+  checkSampleBytes(t, sum(sizes), fileSize)
   return sizes
 }
 
-function readOffsets(view: DataView, stbl: Box, sizes: Uint32Array): Float64Array {
+function readOffsets(t: Track, stbl: Box, sizes: Uint32Array): Float64Array {
+  const view = t.view
   const n = sizes.length
   const stco = find(view, stbl, 'stco')
   const co64 = stco ? undefined : find(view, stbl, 'co64')
   const table = stco ?? co64
-  if (!table) throw new Mp4Error('The video track has no chunk offset table.')
+  if (!table) throw new Mp4Error(`The ${t.kind} track has no chunk offset table.`)
   const chunkCount = tableCount(view, table, 4, stco ? 4 : 8)
   const chunk = (k: number) => (stco ? view.getUint32(table.start + 8 + k * 4) : readU64(view, table.start + 8 + k * 8))
 
-  const stsc = need(view, stbl, 'stsc')
+  const stsc = need(t, stbl, 'stsc')
   const runs = tableCount(view, stsc, 4, 12)
   const offsets = new Float64Array(n)
   let i = 0
@@ -313,18 +437,18 @@ function tooManyEntries(box: Box, count: number): Mp4Error {
 }
 
 /** Every sample takes at least one byte of the file. */
-function checkSampleCount(count: number, fileSize: number): void {
+function checkSampleCount(t: Track, count: number, fileSize: number): void {
   if (count <= fileSize) return
   throw new Mp4Error(
-    `The video track declares ${count} samples, more than a ${fileSize}-byte file can hold (corrupt or forged file).`,
+    `The ${t.kind} track declares ${count} samples, more than a ${fileSize}-byte file can hold (corrupt or forged file).`,
   )
 }
 
 /** Samples do not overlap: together they take at most the whole file. */
-function checkSampleBytes(bytes: number, fileSize: number): void {
+function checkSampleBytes(t: Track, bytes: number, fileSize: number): void {
   if (bytes <= fileSize) return
   throw new Mp4Error(
-    `The video track's samples add up to ${bytes} bytes, more than the ${fileSize}-byte file (corrupt or forged file).`,
+    `The ${t.kind} track's samples add up to ${bytes} bytes, more than the ${fileSize}-byte file (corrupt or forged file).`,
   )
 }
 
@@ -372,10 +496,29 @@ function find(view: DataView, parent: Box, type: string): Box | undefined {
   return children(view, parent.start, parent.end).find((b) => b.type === type)
 }
 
-function need(view: DataView, parent: Box, type: string): Box {
-  const box = find(view, parent, type)
-  if (!box) throw new Mp4Error(`The video track has no "${type}" box.`)
+function need(t: Track, parent: Box, type: string): Box {
+  const box = find(t.view, parent, type)
+  if (!box) throw new Mp4Error(`The ${t.kind} track has no "${type}" box.`)
   return box
+}
+
+/** A box of `type` around `parts`, 32-bit size. */
+function boxBytes(type: string, ...parts: Uint8Array[]): Uint8Array {
+  let size = 8
+  for (const p of parts) size += p.byteLength
+  const out = new Uint8Array(size)
+  new DataView(out.buffer).setUint32(0, size)
+  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i)
+  let offset = 8
+  for (const p of parts) {
+    out.set(p, offset)
+    offset += p.byteLength
+  }
+  return out
+}
+
+function u16(value: number): Uint8Array {
+  return Uint8Array.of((value >>> 8) & 0xff, value & 0xff)
 }
 
 function fourcc(view: DataView, p: number): string {
