@@ -25,6 +25,9 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
+        // The full Chromium (new headless), not Playwright's default `chromium-headless-shell`: like desktop Chrome, it
+        // runs the script sandbox's iframe in a process of its own, which the heap bomb of e2e/evil.spec.ts needs (#181).
+        channel: 'chromium',
         launchOptions: {
           // Software WebGL (SwiftShader) when no GPU is available, e.g. in CI.
           args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'],
