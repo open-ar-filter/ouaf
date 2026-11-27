@@ -1,11 +1,14 @@
 /**
- * Minimal params panel for the engine page: one control per parameter of each filter, generated from the manifest
- * (spec §9), preset buttons and a transition override. The full panel belongs to the playground app (#36).
+ * Params panel of the engine page: one control per parameter of each filter given, generated from the manifest
+ * (spec §9), preset buttons and a transition override. The stack editor (`stack-panel.ts`) gives it the selected
+ * filter.
  */
 import type { FilterHandle } from '@ouaf/core'
 
-export function renderParams(container: HTMLElement, filters: readonly FilterHandle[], onError: (message: string) => void): void {
+/** Draws the controls of `filters` in `container`; the function returned stops them following the filters. */
+export function renderParams(container: HTMLElement, filters: readonly FilterHandle[], onError: (message: string) => void): () => void {
   container.replaceChildren()
+  const stops: Array<() => void> = []
   for (const filter of filters) {
     const defs = filter.manifest.params ?? {}
     if (Object.keys(defs).length === 0 && filter.presets.length === 0) continue
@@ -100,7 +103,7 @@ export function renderParams(container: HTMLElement, filters: readonly FilterHan
       row.append(el('span', name), input, output)
       box.append(row)
     }
-    filter.on('paramChange', (c) => {
+    stops.push(filter.on('paramChange', (c) => {
       const output = outputs.get(c.name)
       if (output) output.textContent = show(c.value)
       // Follow changes made elsewhere (presets, the console).
@@ -111,7 +114,7 @@ export function renderParams(container: HTMLElement, filters: readonly FilterHan
       else if (input instanceof HTMLInputElement || input instanceof HTMLSelectElement) {
         if (document.activeElement !== input) input.value = String(c.value)
       }
-    })
+    }))
     if (filter.presets.length > 0) {
       const presets = el('div')
       presets.className = 'presets'
@@ -130,6 +133,9 @@ export function renderParams(container: HTMLElement, filters: readonly FilterHan
       box.append(presets)
     }
     container.append(box)
+  }
+  return () => {
+    for (const stop of stops) stop()
   }
 }
 

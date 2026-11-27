@@ -7,7 +7,7 @@
  *
  * Packing runs the author's `filter.ts` in `node:vm` (see `pack.ts`): serve only folders you trust.
  */
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { packFolder, PackSourceError, type FilterPackResult } from './pack.ts'
 import { formatReport } from './report.ts'
@@ -23,6 +23,17 @@ export interface DevReport {
   text: string
 }
 
+/** A filter that `DevFilters.list` found under the root. */
+export interface DevFilterEntry {
+  /** Relative to the root, "/"-separated: a folder, or a `.ouaf` file. */
+  path: string
+  /** `folder`: has a `manifest.json`; `source`: `filter.ts` / `filter.js`, packed when served; `package`: a `.ouaf`. */
+  kind: 'folder' | 'source' | 'package'
+  /** From the `manifest.json` of a `folder`, when it reads (the English name of a localized one). */
+  id?: string
+  name?: string
+}
+
 /** A file to send. */
 export interface DevFile {
   body: Uint8Array
@@ -31,6 +42,17 @@ export interface DevFile {
 }
 
 const isFile = (path: string) => existsSync(path) && statSync(path).isFile()
+
+/** The `id` and `name` of a `manifest.json`, those that read. */
+function manifestNames(file: string): { id?: string; name?: string } {
+  try {
+    const m = JSON.parse(readFileSync(file, 'utf8')) as { id?: unknown; name?: unknown }
+    const name = typeof m.name === 'string' ? m.name : m.name && typeof m.name === 'object' ? ((m.name as Record<string, unknown>).en ?? Object.values(m.name)[0]) : undefined
+    return { ...(typeof m.id === 'string' ? { id: m.id } : {}), ...(typeof name === 'string' ? { name } : {}) }
+  } catch {
+    return {}
+  }
+}
 
 export class DevFilters {
   /** The folder served (`filters/`), absolute. */
@@ -56,6 +78,35 @@ export class DevFilters {
       dir = dirname(dir)
     }
     return undefined
+  }
+
+  /**
+   * Every filter under `root`, sorted by path: the folders holding `manifest.json`, `filter.ts` or `filter.js` (not
+   * looked into further), and the `.ouaf` files. Hidden folders and `node_modules` are skipped; nothing is packed.
+   */
+  list(): DevFilterEntry[] {
+    const found: DevFilterEntry[] = []
+    const walk = (dir: string) => {
+      const abs = join(this.root, dir)
+      const names = readdirSync(abs).sort()
+      const path = (name: string) => (dir ? `${dir}/${name}` : name)
+      if (dir && names.includes('manifest.json') && isFile(join(abs, 'manifest.json'))) {
+        found.push({ path: dir, kind: 'folder', ...manifestNames(join(abs, 'manifest.json')) })
+        return
+      }
+      if (dir && ENTRIES.some((name) => isFile(join(abs, name)))) {
+        found.push({ path: dir, kind: 'source' })
+        return
+      }
+      for (const name of names) {
+        if (name.startsWith('.') || name === 'node_modules') continue
+        const child = join(abs, name)
+        if (name.endsWith('.ouaf') && isFile(child)) found.push({ path: path(name), kind: 'package' })
+        else if (statSync(child).isDirectory()) walk(path(name))
+      }
+    }
+    walk('')
+    return found
   }
 
   /** A file of `filter` (`filterOf`) changed: its next request packs it again. */

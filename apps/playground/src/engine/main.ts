@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 /**
- * Engine page (`/engine.html`), the playground (#36): drives `@ouaf/core`'s public API, the way a host would, and
- * reloads the filters of `filters/` when their files change. Used by the browser tests (`window.ouaf`).
+ * Engine page (`/engine.html`), the playground (#36): drives `@ouaf/core`'s public API, the way a host would, edits
+ * the filter stack (kept in the URL) and reloads the filters of `filters/` when their files change. Used by the
+ * browser tests (`window.ouaf`).
  */
 import {
   BACKEND_STORE_PREFIX,
@@ -21,9 +22,10 @@ import {
   type VideoSource,
 } from '@ouaf/core'
 import * as core from '@ouaf/core'
+import { createAddMenu } from './add-menu.ts'
 import { renderDemos } from './demos.ts'
-import { renderParams } from './params-panel.ts'
 import { createPerfPanel } from './perf-panel.ts'
+import { createStackPanel, type Pending } from './stack-panel.ts'
 import { playgroundPlugin } from './test-plugin.ts'
 
 declare global {
@@ -55,7 +57,12 @@ declare global {
 
 const params = new URLSearchParams(location.search)
 const SOURCE = /^[\w-]+$/.test(params.get('source') ?? '') ? params.get('source') : null
-const FILTERS = params.getAll('filter')
+/**
+ * `&filter=<url>` (repeatable, bottom of the stack first) and `&off=<i>` (the i-th filter is disabled): the filters
+ * not loaded yet. They load on Start, below those added before it; the page rewrites both as the stack changes.
+ */
+const OFF = new Set(params.getAll('off').map(Number))
+const pending: Pending[] = params.getAll('filter').map((src, i) => ({ src, enabled: !OFF.has(i) }))
 const MAX_FACES = Math.min(16, Math.max(1, Math.trunc(Number(params.get('maxFaces'))) || 1))
 /** `?seed=N`: fixes the seed of random choices (spec §12.5). */
 const SEED = /^\d+$/.test(params.get('seed') ?? '') ? Number(params.get('seed')) : undefined
@@ -155,6 +162,7 @@ const show = (key: string, value: string) => {
 engine.on('stats', (s) => {
   hook.stats = s
   hook.frames += Math.round(s.fps)
+  stackPanel.poll()
   show('stats', `${s.fps.toFixed(1)} fps, tracking ${s.trackingHz.toFixed(1)} Hz, ${s.faces} face(s), ${s.frameMs.toFixed(2)} ms/frame, ${s.width}×${s.height}, ${s.tracker ?? 'no tracker'}`)
 })
 engine.on('warning', (w) => {
@@ -195,9 +203,18 @@ async function start(): Promise<void> {
     await engine.setSource(source)
     show('source', SOURCE ? `test-media/${SOURCE}.mp4` : 'camera')
     // A folder URL, or a `.ouaf` package URL (`?filter=/filters/crown.ouaf`).
-    for (const url of FILTERS) {
-      begin(`loading the filter ${url} (and starting face tracking)`)
-      await addFilter(url, url)
+    while (pending.length > 0) {
+      begin(`loading the filter ${pending[0]!.src} (and starting face tracking)`)
+      await serial(async () => {
+        const p = pending[0]
+        if (!p) return
+        const handle = await loadFilter(p.src)
+        // In the URL's order, below the filters added before Start.
+        handle.moveTo(loadedFromUrl++)
+        handle.enabled = p.enabled
+        pending.shift()
+        stackPanel.render()
+      })
     }
     step = ''
     show('start', 'done')
@@ -214,6 +231,8 @@ async function start(): Promise<void> {
 
 /** Where each filter of the stack was loaded from (a URL, or a file opened in the page): what a hot reload reloads. */
 const sources = new Map<FilterHandle, string | File>()
+/** Filters of the URL loaded by Start so far: the next one goes above them. */
+let loadedFromUrl = 0
 
 /**
  * Changes of the stack run one after the other: a hot reload waits for the filters still loading (their handle, and
@@ -226,12 +245,49 @@ function serial<T>(task: () => Promise<T>): Promise<T> {
   return run
 }
 
-/** Adds a filter on top of the stack, logs its expression events and refreshes the params panel. */
-function addFilter(src: string | File, label: string): Promise<void> {
-  return serial(() => loadFilter(src, label))
+const stackPanel = createStackPanel(document.getElementById('stack-list') as HTMLOListElement, document.getElementById('params') as HTMLElement, {
+  engine,
+  sources,
+  pending,
+  run: (task) => serial(async () => task()),
+  changed: syncUrl,
+  onError: (message) => show('stack error', message),
+})
+stackPanel.render()
+createAddMenu(document.getElementById('add') as HTMLDetailsElement, (url) => void addFilter(url).catch(reportError), (message) => show('add menu', message))
+
+/**
+ * Writes the stack in the URL without reloading (`&filter=` bottom first, `&off=<i>` for the disabled ones): a reload
+ * or a shared link gives the same stack. Files opened in the page and filters added from the console are left out.
+ */
+function syncUrl(): void {
+  // The pending filters load below the others: they come first.
+  const list = [
+    ...pending,
+    ...engine.filters.flatMap((h) => {
+      const src = sources.get(h)
+      return typeof src === 'string' ? [{ src, enabled: h.enabled }] : []
+    }),
+  ]
+  const kept = location.search.slice(1).split('&').filter((p) => p && !/^(filter|off)(=|$)/.test(p))
+  const encode = (src: string) => encodeURIComponent(src).replace(/%2F/g, '/').replace(/%3A/g, ':')
+  const query = [...kept, ...list.map((f) => `filter=${encode(f.src)}`), ...list.flatMap((f, i) => (f.enabled ? [] : [`off=${i}`]))]
+  history.replaceState(history.state, '', `${location.pathname}${query.length ? `?${query.join('&')}` : ''}${location.hash}`)
 }
 
-async function loadFilter(src: string | File, label: string): Promise<void> {
+function reportError(error: unknown): void {
+  hook.errors.push(String(error))
+  show('error', error instanceof Error ? error.message : String(error))
+}
+
+/** Adds a filter on top of the stack from the page (menu, file, drop): selected, and written in the URL. */
+async function addFilter(src: string | File): Promise<void> {
+  const handle = await serial(() => loadFilter(src))
+  stackPanel.selected = handle
+  syncUrl()
+}
+
+async function loadFilter(src: string | File): Promise<FilterHandle> {
   let handle: FilterHandle
   try {
     handle = await engine.addFilter(src)
@@ -240,14 +296,13 @@ async function loadFilter(src: string | File, label: string): Promise<void> {
     throw error
   }
   hideReport()
-  wire(handle, src, label)
-  renderParams(document.getElementById('params') as HTMLElement, engine.filters, (message) => show('param error', message))
+  wire(handle, src)
+  return handle
 }
 
-/** Logs a filter of the stack and its expression events (spec §13): counts and the last one. */
-function wire(handle: FilterHandle, src: string | File, label: string): void {
+/** Registers where a filter of the stack came from, and logs its expression events (spec §13): counts and the last one. */
+function wire(handle: FilterHandle, src: string | File): void {
   sources.set(handle, src)
-  show(`filter ${handle.index}`, `${handle.id} (${label})${handle.warnings.length ? ` — ${handle.warnings.join('; ')}` : ''}`)
   const counts = new Map<string, number>()
   handle.on('expression', (e) => {
     perf.expression(e)
@@ -263,8 +318,11 @@ function wire(handle: FilterHandle, src: string | File, label: string): void {
 const banner = document.getElementById('banner') as HTMLPreElement
 const pathOf = (url: string) => new URL(url, document.baseURI).pathname
 
-/** Shows why `url` failed to load: the validation report of its folder when the dev server has one. */
-async function showReport(url: string, error: unknown): Promise<void> {
+/**
+ * Shows why `url` failed to load, or to reload (`reloading`): the validation report of its folder when the dev server
+ * has one.
+ */
+async function showReport(url: string, error: unknown, reloading = false): Promise<void> {
   let text = error instanceof Error ? error.message : String(error)
   if (import.meta.hot && !pathOf(url).endsWith('.ouaf')) {
     try {
@@ -274,7 +332,7 @@ async function showReport(url: string, error: unknown): Promise<void> {
       // No report: the engine's error says enough.
     }
   }
-  banner.textContent = `${url} did not load; the previous version stays on screen.\n${text}`
+  banner.textContent = `${url} did not load${reloading ? '; the previous version stays on screen' : ''}.\n${text}`
   banner.hidden = false
 }
 const hideReport = () => {
@@ -304,10 +362,11 @@ async function reload(url: string): Promise<void> {
     // The others keep their values; the changed ones get theirs back one by one, below.
     fresh = await engine.setFilters(stack.map((h) => (changed(h) ? { src: sources.get(h)! } : { src: sources.get(h)!, params: h.params })))
   } catch (error) {
-    await showReport(url, error)
+    await showReport(url, error, true)
     return
   }
   hideReport()
+  const selected = stack.findIndex((h) => h === stackPanel.selected)
   for (const [i, old] of stack.entries()) {
     const handle = fresh[i]!
     if (changed(old)) {
@@ -325,9 +384,9 @@ async function reload(url: string): Promise<void> {
     handle.enabled = old.enabled
     const src = sources.get(old)!
     sources.delete(old)
-    wire(handle, src, typeof src === 'string' ? src : src.name)
+    wire(handle, src)
   }
-  renderParams(document.getElementById('params') as HTMLElement, engine.filters, (message) => show('param error', message))
+  stackPanel.selected = fresh[selected]
   hook.reloads++
   show('reload', `${url} at ${new Date().toLocaleTimeString()}`)
 }
@@ -346,14 +405,7 @@ if (import.meta.hot) {
 
 /** Opens `.ouaf` packages chosen in the file picker or dropped on the page (read locally, nothing is uploaded). */
 async function openPackages(files: Iterable<File>): Promise<void> {
-  for (const file of files) {
-    try {
-      await addFilter(file, file.name)
-    } catch (error) {
-      hook.errors.push(String(error))
-      show('error', error instanceof Error ? error.message : String(error))
-    }
-  }
+  for (const file of files) await addFilter(file).catch(reportError)
 }
 const picker = document.getElementById('open') as HTMLInputElement
 picker.addEventListener('change', () => {
@@ -383,7 +435,7 @@ startButton.addEventListener('click', () => void start())
 
 // The demo filters (#37): open by default when the page has no filter to show.
 const demos = document.getElementById('demos') as HTMLDetailsElement
-demos.open = FILTERS.length === 0
+demos.open = pending.length === 0
 renderDemos(demos.querySelector('div')!).catch((error: unknown) => show('demos', error instanceof Error ? error.message : String(error)))
 
 // Outputs (#33): the last photo or video, as a download link (nothing leaves the page).

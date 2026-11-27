@@ -19,6 +19,23 @@
       fieldset .presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
       #demos { max-width: 640px; margin: 12px 0; }
       #demos dd { margin: 0 0 8px 16px; font-size: 14px; }
+      #stack { max-width: 640px; margin: 12px 0; }
+      #stack h2 { font-size: 1.1em; margin: 0 0 8px; }
+      #add > summary { cursor: pointer; padding: 8px 0; }
+      #add .groups details { margin: 4px 0 4px 8px; }
+      #add ul, #stack-list { list-style: none; margin: 0; padding: 0; }
+      #add li button { width: 100%; text-align: left; margin: 2px 0; }
+      #add label { display: block; margin: 8px 0; }
+      #stack-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
+      #stack-list li.selected { background: color-mix(in srgb, #39f 15%, transparent); }
+      #stack-list li.off .name, #stack-list li.pending { opacity: 0.6; }
+      #stack-list button { padding: 6px 10px; }
+      #stack-list .name { flex: 1 1 12em; text-align: left; padding: 4px 8px; background: none; border: none; color: inherit; cursor: pointer; }
+      #stack-list .name b { margin-right: 6px; }
+      #stack-list small, #add small { display: block; opacity: 0.7; overflow-wrap: anywhere; }
+      #stack-list .badge { font-size: 12px; padding: 2px 6px; border-radius: 4px; background: color-mix(in srgb, #e90 30%, transparent); }
+      #stack-list .warnings { flex-basis: 100%; font-size: 13px; }
+      #stack-list input[type=checkbox] { width: 20px; height: 20px; }
       #banner { max-width: 640px; padding: 8px 12px; border-left: 4px solid #d33; background: color-mix(in srgb, #d33 12%, transparent); }
     </style>
   </head>
@@ -35,14 +52,14 @@
       <code>&amp;adapt=1|0</code> turns the governor on or off (default: on for the camera or with a throttle),
       <code>&amp;signals</code> compares the expression signals from blendshapes and from the geometry,
       <code>&amp;backend=CPU|GPU</code> forces the tracker backend, <code>&amp;backend=measure</code> measures it again.
-      Open a <code>.ouaf</code> file below, or drop it on the page.
+      The stack below adds, orders, turns on and off and removes filters, and keeps them in the URL
+      (<code>&amp;off=&lt;i&gt;</code>: the i-th filter is off); drop a <code>.ouaf</code> file on the page to add it.
     </p>
     <details id="demos">
       <summary>Demo filters</summary>
       <p>Each demo on a test clip, or on the camera (then press Start).</p>
       <div></div>
     </details>
-    <label>Open .ouaf <input id="open" type="file" accept=".ouaf" multiple /></label>
     <button id="start" type="button">Start</button>
     <button id="snapshot" type="button">Snapshot</button>
     <button id="record" type="button">Record</button>
@@ -50,7 +67,16 @@
     <pre id="banner" role="alert" hidden></pre>
     <canvas id="canvas"></canvas>
     <video id="video" muted playsinline></video>
-    <div id="params"></div>
+    <section id="stack">
+      <h2>Stack</h2>
+      <details id="add">
+        <summary>+ Add a filter</summary>
+        <div class="groups"></div>
+        <label>From the disk: <input id="open" type="file" accept=".ouaf" multiple /></label>
+      </details>
+      <ol id="stack-list"></ol>
+      <div id="params"></div>
+    </section>
     <pre id="log"></pre>
     <script type="module" src="/src/engine/main.ts"></script>
   </body>

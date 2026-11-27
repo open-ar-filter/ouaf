@@ -190,7 +190,7 @@ test('the playground opens a package from ?filter= and from its file picker', as
   await page.locator('#open').setInputFiles({ name: 'sticker.ouaf', mimeType: 'application/zip', buffer: packed.get('sticker')! })
   await expect.poll(() => page.evaluate(() => window.ouaf!.engine.filters.map((f) => f.id)), { timeout: 30_000 }).toEqual(['script-grade', 'sticker'])
   expect(await errors(page)).toEqual([])
-  await expect(page.locator('#log')).toContainText('sticker (sticker.ouaf)')
+  await expect(page.locator('#stack-list li.filter').first()).toContainText('sticker.ouaf (a file: not kept in the URL)')
 })
 
 test('a broken package fails with a typed error and leaves the stack unchanged', async ({ page }) => {

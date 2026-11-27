@@ -27,7 +27,8 @@ types (spec §6.3).
 | [`ai-birthday`](ai-birthday/) | written by an AI agent from `AUTHORING.md` alone (#38, [acceptance test](../docs/acceptance/ai-birthday/README.md)): a party hat built from model shapes with head occlusion on every face, a greeting set by the script from a string parameter, confetti drawn on a full-screen canvas for 2.6 s on `mouthOpen` | `two-faces-stacked` |
 | [`stress`](stress/) | internal benchmark: every layer type at once on four faces, a feedback shader, canvases fed with every landmark; each group has a switch (parameters, presets) | `four-faces-grid` |
 
-Try them on `/engine.html` (the "Demo filters" list: each one on its clip, or on the camera). `duo`, `big-eyes` and
+Try them on `/engine.html` (the "Demo filters" list: each one on its clip, or on the camera; the stack's "Add a
+filter" menu stacks them). `duo`, `big-eyes` and
 `stress` need a host with `maxFaces` ≥ 2 (4 for `stress`): the links set it.
 
 [`demos.json`](demos.json) lists the demos for the playground and for `e2e/demos.spec.ts`, which renders each one
