@@ -150,9 +150,11 @@ them; color layers and post shaders are chained.
 `excludeFromCapture: true` (with `overlay`: left out of photos, videos and streams).
 
 `scale` (bindable, default 1) multiplies the layer's size: a number scales it uniformly, `[x, y, z]` per axis of the
-layer (`[1, 1.4, 1]` stretches it vertically). It is a visual transform of what is drawn: a text is not laid out or
-rasterized again, so `scale` is the cheap way to animate a "pop", but a text enlarged a lot (above about 1.5×) gets
-blurry; for a lasting larger text, raise `size`.
+layer (`[1, 1.4, 1]` stretches it vertically). It is a visual transform of what is drawn: a text is not laid out
+again (its wrapping stays), so `scale` is the cheap way to animate a "pop". The engine draws a text at a resolution
+that follows its size on screen (`size`, the face's distance, the screen size): a large `size` stays sharp, and so
+does a lasting `scale` once it stops changing; while it animates, the text is not redrawn (it may look a little soft
+at the peak of a large pop).
 
 Bindable properties accept a fixed value, `{ "param": … }` or `{ "bind": … }` (section 8). The asset properties
 `src` (sticker, model), `font` and `lut` accept an asset or a `{ "param": … }` binding (section 7). The schema gives

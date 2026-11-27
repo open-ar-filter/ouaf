@@ -1,10 +1,11 @@
 import type { ParamTypeName } from '@ouaf/spec'
-import { Matrix4, Vector3, type Mesh } from 'three'
+import { Matrix4, PerspectiveCamera, Vector3, type Mesh } from 'three'
 import { describe, expect, it } from 'vitest'
 import { createFaceFrame, type AnchorProvider, type FrameContext, type LayerContext, type LayerDecl, type ParamsReader } from '../src/index.ts'
 import { layoutBox, wrapText, type MeasureEm } from '../src/layers/text/layout.ts'
 import { TextRaster, splitAlpha, type TextContext, type TextStyle, type TextSurface } from '../src/layers/text/raster.ts'
 import { createTextLayer } from '../src/layers/text/text-layer.ts'
+import { HOLD, MAX_PX, MIN_PX, pxLevel, Resolution, SETTLE, SettledScale } from '../src/layers/text/resolution.ts'
 import { builtinPlugins } from '../src/engine/builtin.ts'
 import { bindingParams } from '../src/engine/filter.ts'
 import { ParamStore } from '../src/params/index.ts'
@@ -112,6 +113,7 @@ function fakeSurface(): TextSurface & { calls: string[] } {
     fillText: (t) => void calls.push(`fill ${t}`),
     strokeText: (t) => void calls.push(`stroke ${t}`),
     measureText: (t) => ({ width: [...t].length * 0.5 * px, fontBoundingBoxAscent: 0.8 * px, fontBoundingBoxDescent: 0.2 * px }),
+    drawImage: (_image, ...rect) => void calls.push(`drawImage ${rect.join(' ')}`),
   }
   return { canvas: { width: 1, height: 1 }, ctx, calls }
 }
@@ -177,8 +179,11 @@ function params(defs: Record<string, [ParamTypeName, unknown]>): ParamsReader & 
   return { type: (name) => defs[name]?.[0], get: (name) => values.get(name), set: (name, v) => values.set(name, v) }
 }
 
-/** A layer context and frames with `count` faces, each anchored at x = 10·slot cm, 50 cm away, 6 cm per unit. */
-function harness(decl: Omit<LayerDecl, 'type'>, p = params({}), maxFaces = 2) {
+/**
+ * A layer context and frames with `count` faces, each anchored at x = 10·slot cm, `distance` cm away (50 by default),
+ * 6 cm per unit. With `camera`, a 60° camera over the 640×480 frames (the layer then sizes its raster on screen).
+ */
+function harness(decl: Omit<LayerDecl, 'type'>, p = params({}), maxFaces = 2, camera = false) {
   const surfaces: ReturnType<typeof fakeSurface>[] = []
   const ctx = {
     filterId: 'test',
@@ -186,6 +191,7 @@ function harness(decl: Omit<LayerDecl, 'type'>, p = params({}), maxFaces = 2) {
     bindings: { data: { resolve: () => undefined }, params: p },
     maxFaces,
     warn: () => {},
+    ...(camera ? { view: { camera: new PerspectiveCamera(60, 640 / 480, 1, 1000) } } : {}),
   } as unknown as LayerContext
   const layer = createTextLayer({ type: 'text', ...decl }, ctx, {
     surface: () => {
@@ -196,10 +202,11 @@ function harness(decl: Omit<LayerDecl, 'type'>, p = params({}), maxFaces = 2) {
   })
   const faces = createFaceFrame(maxFaces)
   const anchorRoll = new Matrix4()
+  const distance = [50, 50, 50, 50]
   const anchors: AnchorProvider = {
     face(i, _anchor, _follow, out) {
       if (i >= faces.count) return false
-      out.makeRotationZ(0).copy(anchorRoll).scale(new Vector3(6, 6, 6)).setPosition(10 * i, 0, -50)
+      out.makeRotationZ(0).copy(anchorRoll).scale(new Vector3(6, 6, 6)).setPosition(10 * i, 0, -distance[i]!)
       return true
     },
     screen(out) {
@@ -207,12 +214,14 @@ function harness(decl: Omit<LayerDecl, 'type'>, p = params({}), maxFaces = 2) {
     },
     id: (i) => i + 1,
   }
-  const frame = (count: number) => {
+  const frame = (count: number, time = 0) => {
     faces.count = count
-    layer.update({ time: 0, now: 0, dt: 16, faces, anchors, width: 640, height: 480, mirrored: false } as FrameContext)
+    layer.update({ time, now: time * 1000, dt: 16, faces, anchors, width: 640, height: 480, mirrored: false } as FrameContext)
   }
   const meshes = layer.object.children as Mesh[]
-  return { layer, frame, meshes, surfaces, anchorRoll, draws: () => surfaces.reduce((n, s) => n + s.calls.filter((c) => c.startsWith('fill ')).length, 0) }
+  /** Font size in pixels of each texture's last draw. */
+  const px = () => surfaces.map((s) => Number(/(\d+(?:\.\d+)?)px/.exec(s.ctx.font)?.[1]))
+  return { layer, frame, meshes, surfaces, anchorRoll, distance, px, draws: () => surfaces.reduce((n, s) => n + s.calls.filter((c) => c.startsWith('fill ')).length, 0) }
 }
 
 const position = (m: Mesh) => new Vector3().setFromMatrixPosition(m.matrix)
@@ -435,6 +444,146 @@ describe('TextRaster.setFont', () => {
     raster.setFont({ family: 'Other', weight: '400', style: 'normal' })
     expect(raster.font).toBe('normal 400 96px "Other", sans-serif')
     expect(raster.update('Hi', '#fff', Infinity)).toBe(true)
+    expect(raster.draws).toBe(2)
+  })
+})
+
+describe('text resolution (#147)', () => {
+  it('levels by √2 from MIN_PX to MAX_PX', () => {
+    expect([0, -1, Number.NaN, 10, 32].map(pxLevel)).toEqual([MIN_PX, MIN_PX, MIN_PX, MIN_PX, MIN_PX])
+    expect([33, 45, 46, 64, 65, 100, 128, 500, 5000].map(pxLevel)).toEqual([45, 45, 64, 64, 91, 128, 128, 512, MAX_PX])
+  })
+
+  it('chooses at once, then changes after HOLD seconds, up past 1.25× and down below half', () => {
+    const r = new Resolution()
+    expect(r.update(0, 0)).toBeUndefined()
+    expect(r.update(60, 0)).toBe(64)
+    // Within the band: 64 px drawn up to 80 px, down to 46 px.
+    for (const need of [80, 46, 70]) expect(r.update(need, 0.1)).toBe(64)
+    // Larger: wanted for HOLD seconds first.
+    expect(r.update(100, 1)).toBe(64)
+    expect(r.update(100, 1 + HOLD / 2)).toBe(64)
+    expect(r.update(100, 1 + HOLD)).toBe(128)
+    // A short dip below half does not count; a lasting one does.
+    expect(r.update(40, 2)).toBe(128)
+    expect(r.update(100, 2.1)).toBe(128)
+    expect(r.update(40, 3)).toBe(128)
+    expect(r.update(0, 3.1)).toBe(128) // nothing drawn: no change
+    expect(r.update(40, 3 + HOLD)).toBe(45)
+    // Growing through several levels (a face coming closer): changes HOLD seconds after it started.
+    expect(r.update(120, 4)).toBe(45)
+    expect(r.update(200, 4 + HOLD / 2)).toBe(45)
+    expect(r.update(300, 4 + HOLD)).toBe(362)
+    // A new run (time going back) chooses at once again.
+    expect(r.update(300, 0)).toBe(362)
+  })
+
+  it('counts a scale once it stays put for SETTLE seconds', () => {
+    const s = new SettledScale()
+    expect(s.update(1, 0)).toBe(1)
+    // An animation: never settled.
+    for (let t = 0.05; t < 1; t += 0.05) expect(s.update(1 + Math.sin(t * 10), t)).toBe(1)
+    expect(s.update(2, 1)).toBe(1)
+    expect(s.update(2.01, 1 + SETTLE / 2)).toBe(1)
+    expect(s.update(2.01, 1 + SETTLE)).toBe(2)
+    expect(s.update(3, 0)).toBe(3) // a new run
+  })
+
+  it('rasterizes a large size at more pixels per em, and a face moving a little does not redraw', () => {
+    const small = harness({ text: 'Hi', size: 0.2 }, params({}), 2, true)
+    const large = harness({ text: 'Hi', size: 2 }, params({}), 2, true)
+    small.frame(1)
+    large.frame(1)
+    // 60° over 480 px: 416 px of focal length; an em is 6 × size cm at 50 cm.
+    expect(small.px()).toEqual([pxLevel(((6 * 0.2) / 50) * 416)])
+    expect(large.px()).toEqual([pxLevel(((6 * 2) / 50) * 416)])
+    expect(large.px()[0]).toBeGreaterThan(small.px()[0]! * 3)
+    for (let i = 1; i <= 20; i++) {
+      large.distance[0] = 50 + Math.sin(i) * 3
+      large.frame(1, i / 30)
+    }
+    expect(large.draws()).toBe(1)
+  })
+
+  it('follows the face towards the camera after HOLD, and shares the largest need between faces', () => {
+    const h = harness({ text: 'Hi', size: 0.5 }, params({}), 2, true)
+    h.frame(2, 0)
+    const far = h.px()[0]!
+    h.distance[1] = 10 // the second face, five times closer
+    h.frame(2, 0.1)
+    expect(h.px()[0]).toBe(far)
+    h.frame(2, 0.1 + HOLD)
+    expect(h.px()[0]).toBe(pxLevel(((6 * 0.5) / 10) * 416))
+    expect(h.surfaces).toHaveLength(1)
+    expect(h.draws()).toBe(2)
+  })
+
+  it('a scale animation does not redraw; a lasting scale redraws once', () => {
+    const p = params({ pop: ['number', 1] })
+    const h = harness({ text: 'Hi', size: 0.5, scale: { param: 'pop' } }, p, 2, true)
+    h.frame(1, 0)
+    const first = h.px()[0]!
+    for (let i = 1; i < 30; i++) {
+      p.set('pop', 1 + 2 * Math.abs(Math.sin(i / 5)))
+      h.frame(1, i / 60)
+    }
+    expect(h.draws()).toBe(1)
+    p.set('pop', 4)
+    for (let i = 0; i < 40; i++) h.frame(1, 1 + i / 60)
+    expect(h.draws()).toBe(2)
+    expect(first).toBe(pxLevel(((6 * 0.5) / 50) * 416))
+    expect(h.px()[0]).toBe(pxLevel(4 * ((6 * 0.5) / 50) * 416))
+  })
+})
+
+describe('TextRaster shadow', () => {
+  it('draws a large blur smaller on its own canvas, then enlarges it', () => {
+    const surfaces: ReturnType<typeof fakeSurface>[] = []
+    const factory = () => {
+      const s = fakeSurface()
+      surfaces.push(s)
+      return s
+    }
+    const shadow = { color: '#00000080', blur: 0.15, offset: [0.05, -0.05] as [number, number] }
+    // 0.15 em at 64 px: 9.6 px of blur, drawn as is.
+    const small = new TextRaster({ ...STYLE, shadow }, factory, { basePx: 64 })
+    small.update('Hi', '#fff', Infinity)
+    expect(surfaces).toHaveLength(1)
+    expect(surfaces[0]!.calls.some((c) => c.startsWith('drawImage'))).toBe(false)
+    // At 256 px: 38 px of blur, drawn 4 times smaller (the most), faded there, enlarged ×4 into the raster.
+    const large = new TextRaster({ ...STYLE, shadow }, factory, { basePx: 256 })
+    large.update('Hi', '#fff', Infinity)
+    expect(surfaces).toHaveLength(3)
+    const [main, reduced] = [surfaces[1]!, surfaces[2]!]
+    expect(reduced.calls).toEqual(['fill Hi', 'fillRect'])
+    expect(reduced.ctx.shadowBlur).toBe(0)
+    const [, sx, sy, sw, sh, dx, dy, dw, dh] = main.calls[0]!.split(' ').map(Number)
+    expect([sx, sy, dx, dy]).toEqual([0, 0, 0, 0])
+    expect([dw! / sw!, dh! / sh!]).toEqual([4, 4])
+    expect(sw).toBe(Math.ceil((large.width * 256) / 4) + 1)
+    expect(reduced.canvas.width).toBeGreaterThanOrEqual(sw!)
+    expect(main.calls.slice(1)).toEqual(['fill Hi'])
+    // Redrawn: the reduced canvas is reused.
+    large.update('Ho', '#fff', Infinity)
+    expect(surfaces).toHaveLength(3)
+  })
+})
+
+describe('TextRaster.setPixelsPerEm', () => {
+  it('redraws at the new size on the next update, and shrinks a canvas twice too large', () => {
+    const surface = fakeSurface()
+    const raster = new TextRaster(STYLE, () => surface, { basePx: 200 })
+    raster.update('abcd', '#fff', Infinity)
+    expect(surface.canvas).toEqual({ width: 448, height: 256 })
+    raster.setPixelsPerEm(200)
+    expect(raster.update('abcd', '#fff', Infinity)).toBe(false)
+    raster.setPixelsPerEm(50)
+    raster.setPixelsPerEm(-1)
+    expect(raster.pixelsPerEm).toBe(50)
+    expect(raster.update('abcd', '#fff', Infinity)).toBe(true)
+    expect(raster.resized).toBe(true)
+    expect(surface.canvas).toEqual({ width: 128, height: 64 })
+    expect(raster.width).toBeCloseTo(2.04)
     expect(raster.draws).toBe(2)
   })
 })
