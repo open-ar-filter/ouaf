@@ -130,14 +130,6 @@ async function render(job: PreviewJob): Promise<PreviewPageOutcome> {
       for (const w of handle.warnings) warnings.push(`${handle.id}: ${w}`)
     }
     const loadMs = performance.now() - loadStart
-    const top = engine.filters.at(-1)
-    // Faces present: those that entered minus those that left (expression events of the top filter).
-    let faces = 0
-    top?.on('expression', (e) => {
-      if (e.name === 'faceEnter') faces++
-      else if (e.name === 'faceLeave') faces--
-    })
-
     const frameMs: number[] = []
     let pushed = 0
     const push = async (image: FrameImage, time: number) => {
@@ -174,6 +166,9 @@ async function render(job: PreviewJob): Promise<PreviewPageOutcome> {
     const size = image instanceof VideoFrame ? [image.displayWidth, image.displayHeight] : [image.width, image.height]
     const raw = read(image, size[0]!, size[1]!).getImageData(0, 0, w, h).data
     const time = last.time
+    // The faces of the screenshot: a face lost in the last half second still has an id (the grace delay of
+    // faceLeave) but nothing is drawn on it.
+    const faces = engine.faceCount
     last.close()
     last = undefined
 

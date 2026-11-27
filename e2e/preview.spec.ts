@@ -114,3 +114,19 @@ test('the reference face set: the tracker finds the faces each reference documen
     else expect(shot.changed, shot.id).toBeLessThan(0.003)
   }
 })
+
+test('faces counts the faces of the screenshot, not a face lost in the grace delay of faceLeave (#196)', async () => {
+  test.setTimeout(120_000)
+  // pesquet-talk: the head turns away at about 7.15 s; at 7.2 s the face is lost but its id lives 0.5 s more.
+  const at = async (time: string) => {
+    const { code, json } = await preview('filters/glasses', '--input', 'test-media/pesquet-talk.mp4', '--from', '6', '--at', time, '--max-size', '256', '-o', join(dir, `turn-${time}`))
+    expect(code).toBe(0)
+    return json.references[0]!
+  }
+  const before = await at('7')
+  expect(before.faces).toBe(1)
+  expect(before.changed).toBeGreaterThan(0.005)
+  const lost = await at('7.2')
+  expect(lost.faces).toBe(0)
+  expect(lost.changed).toBeLessThan(0.003)
+})

@@ -38,7 +38,7 @@ export interface PreviewPageResult {
   pixelsSha256: string
   /** Share of the pixels that differ clearly (more than 24/255 on a channel) from the same frame without filter. */
   changed: number
-  /** Faces tracked on the last frame (faces that entered minus faces that left). */
+  /** Faces tracked on the screenshot: those its face layers are drawn for (`engine.faceCount`). */
   faces: number
   /** Frames rendered (pushed to the engine), the settling frames included. */
   framesRendered: number

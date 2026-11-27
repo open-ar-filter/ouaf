@@ -817,10 +817,9 @@ spec and the schema. An agent writing a filter follows this loop:
    `--from 0`, the screenshot shows what the events of the whole clip did. Look at
    each screenshot: is every layer where it should be, at the right size? In the JSON, each reference has
    `errors` and `warnings` from the engine (an asset that fails to decode, a script error: things `validate` cannot
-   see), `faces` (faces tracked; a face lost less than 0.5 s before the screenshot still counts but is not drawn;
-   `expectedFaces` is what the reference set documents: 0 on `no-face` and on the hard cases of the full set, where
-   a filter rightly shows nothing), `changed` (share of the pixels the filter changed:
-   near 0 means nothing shows), `pixelsSha256` and `perf` (frame times, measured with software rendering: compare
+   see), `faces` (faces tracked on the screenshot, those the face layers are drawn for; `expectedFaces` is what the
+   reference set documents: 0 on `no-face` and on the hard cases of the full set, where a filter rightly shows
+   nothing), `changed` (share of the pixels the filter changed: near 0 means nothing shows), `pixelsSha256` and `perf` (frame times, measured with software rendering: compare
    filters, do not predict a phone). Exit code 0: rendered without engine errors; 1: errors; 2: usage error (also when
    Playwright's Chromium is missing: `npx playwright install chromium`). The same command gives the same pixels on
    every run on one machine. The test clips seldom reach an event's threshold (no clip opens the mouth wider than

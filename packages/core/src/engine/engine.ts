@@ -572,6 +572,14 @@ export class Engine {
   }
 
   /**
+   * Faces of the last frame drawn: those its face layers were drawn for. A face the tracker just lost is not counted,
+   * even while its id survives the grace delay of `faceLeave` (spec §5.4). 0 before the first frame.
+   */
+  get faceCount(): number {
+    return this.#drawnFaces.count
+  }
+
+  /**
    * Sets the image source (see `SourceInput`). The engine renders and tracks every new frame of it. A source passed
    * by the host stays the host's: the engine does not dispose it (not even in `dispose()`: stop a `CameraSource`
    * yourself), and a still image or canvas must stay readable while it is the source. A source that a source plugin
