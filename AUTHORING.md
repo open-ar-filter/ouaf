@@ -825,7 +825,9 @@ spec and the schema. An agent writing a filter follows this loop:
    Playwright's Chromium is missing: `npx playwright install chromium`). The same command gives the same pixels on
    every run on one machine. The test clips seldom reach an event's threshold (no clip opens the mouth wider than
    `jawOpen` ≈ 0.35): to see an effect, preview a copy of the filter with a lower threshold, and keep the intended
-   one in the filter. For a live view, `npm run dev`, then
+   one in the filter. Debug on such a copy (in a scratch folder, not in `filters/<id>/`): a text layer bound to a
+   value (`{ "bind": "face.blendshapes.jawOpen" }`) shows it on the screenshot; nothing of it can then stay in the
+   filter. For a live view, `npm run dev`, then
    `https://localhost:5173/engine.html?filter=/filters/<id>/&source=pesquet-talk&autostart` (section 1).
 4. **Report** what the filter does, the commands run and their result, and anything section 14 made impossible.
 
