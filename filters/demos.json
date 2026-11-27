@@ -9,6 +9,7 @@
     { "id": "smile-counter", "clip": "pesquet-talk", "maxFaces": 1, "reference": { "from": 1.5, "time": 6.8, "crop": [0.05, 0.02, 0.65, 0.56] } },
     { "id": "canvas-bubble", "clip": "pesquet-talk", "maxFaces": 1, "reference": { "from": 1.5, "time": 6.8, "crop": [0.15, 0.04, 0.75, 0.36] } },
     { "id": "duo", "clip": "two-faces-stacked", "maxFaces": 2, "reference": { "from": 0, "time": 1.5 } },
-    { "id": "stress", "clip": "four-faces-grid", "maxFaces": 4, "reference": { "from": 0, "time": 1.5 } }
+    { "id": "stress", "clip": "four-faces-grid", "maxFaces": 4, "reference": { "from": 0, "time": 1.5 } },
+    { "id": "ai-birthday", "clip": "two-faces-stacked", "maxFaces": 2, "reference": { "from": 0.5, "time": 1.5 } }
   ]
 }

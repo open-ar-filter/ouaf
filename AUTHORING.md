@@ -122,9 +122,13 @@ engine. "Left/right" in anchor names are the person's side (their left eye is on
 - `orient: "face"` (default) turns the layer with the head; `orient: "screen"` keeps it facing the screen (readable
   text).
 - `faces`: `"all"` (default, one instance per face), `"first"`, `"largest"`, or a maximum count (1–16). The host
-  sets how many faces are tracked (`maxFaces`, default 1 in the reference engine).
+  sets how many faces are tracked (`maxFaces`, default 1 in the reference engine): a filter cannot ask for more. For
+  a filter meant for several people, say so in its `description`, and test it with two faces (the `two-faces`
+  reference of `ouaf preview`, or `maxFaces=2` on the engine page).
 - `offset` `[x, y, z]` is in anchor units (screen heights with `screen`); `rotation` `[x, y, z]` in degrees, applied
-  z, then y, then x; `scale` a number or `[x, y, z]`.
+  z, then y, then x, around the layer's own point (anchor + offset); `scale` a number or `[x, y, z]`. Layers have no
+  parent: an object made of several layers (a hat from a cone and rings) needs each part's offset computed, for
+  example by a helper in `filter.ts`.
 
 ## 5. Layers
 
@@ -157,7 +161,9 @@ every bound and default; the main ones are below.
 bindable), `font` (default `builtin:font/sans-bold`, a font asset, or a param: section 7), `color` (default `#ffffff`, bindable),
 `outline: { width, color }` (width relative to the font size, ≤ 0.5), `shadow: { color, blur?, offset? }`, `align`
 (`left`, `center`, `right`), `maxWidth` (wraps lines, anchor units), `lineHeight` (multiple of `size`, default 1.2).
-The anchor is on the alignment edge, at the vertical middle of the block. Emoji use the platform's emoji font.
+The anchor is on the alignment edge, at the vertical middle of the block: each wrapped line grows the block up and
+down. `\n` starts a new line; a word wider than `maxWidth` breaks between characters. Emoji use the platform's emoji
+font.
 
 ```json ouaf=layer
 { "id": "score", "type": "text", "text": "SCORE 0", "anchor": "screen", "offset": [0, 0.42, 0], "size": 0.06,
@@ -185,8 +191,9 @@ of the list, kept while the face is tracked: `by: "face"` (default) cycles throu
 the bounding box to this size in anchor units), `animation` (glTF clip played from activation), `loop` (default
 true), `occlusion: "head"` (parts behind the head are hidden: hats, glasses temples; the head is the tracked face,
 closed by the back of an average head, and what is less than about 1.3 cm under the face surface stays visible, so
-a temple modelled as wide as the head near the ear, x ≈ ±1.2 face units, shows up to the ear). 1 glTF unit = 1 face
-unit.
+a temple modelled as wide as the head near the ear, x ≈ ±1.2 face units, shows up to the ear; the average head
+covers the crown, not big hair: a hat sunk slightly into the head, its base behind the forehead, hides its own
+underside). 1 glTF unit = 1 face unit.
 Shapes need no file: `{ "shape": "box" | "sphere" | "torus" | "ring" | "cone" | "cylinder" | "plane", "color"?,
 "metalness"?, "roughness"?, "emissive"?, "thickness"? }`, all of size 1 centred on the anchor (`torus`, `ring` and
 `plane` in the xy plane, facing the camera; `cone` and `cylinder` along y; `thickness` for `torus` and `ring`).
@@ -230,8 +237,12 @@ boolean, `[x, y]`, `[x, y, z]` or color; each bindable; 32 max), `textures` (nam
 A Canvas 2D image drawn by the script's `draw.<id>` function (section 10): `id` (required), `width`, `height`
 (pixels, 16–2048, required), `size` (displayed height in anchor units, default 1, bindable), `fps` (maximum redraws
 per second of media time, default 30; `0`: only the first time and after `invalidate()`). Keep it small and `fps`
-low: each redraw is uploaded to the GPU. Text uses the fonts declared in `assets` by their name (section 10).
-Example in section 15.
+low: each redraw is uploaded to the GPU, and a hidden canvas (`visible: false`) is still drawn at `fps`: for an
+effect that shows now and then, use `fps: 0` and call `invalidate()` from a timer while it is shown. Text uses the
+fonts declared in `assets` by their name (section 10). The width follows `width / height`; what falls outside the
+screen is not shown. **Full screen**: with `anchor: "screen"`, `size: 1` is the screen height; make the canvas wider
+than any screen you expect (2:1 covers phones and laptops) and draw in its visible middle, `frame.aspect × height`
+pixels wide. Example in section 15.
 
 ## 6. Assets
 
@@ -314,6 +325,10 @@ change them.
   `reload`), `transition` (ms; numbers, colors and vectors animate to a new value).
 - A parameter binding must fit the property: a number param for a number, a `color` for a color, `vec3` for
   `offset`; text properties accept `string`, `text`, `select` and `color` params. Preset values must be valid.
+- A binding uses the whole value: a text made of a parameter and fixed words ("Happy birthday, {name}!") is set by a
+  script, in `setup` (`f.params` already holds the values) and in `on.paramChange`, which fires only for later
+  changes. In a script, values are numbers (`number`), booleans (`boolean`), strings (`string`, `text`, `select`,
+  and `color` as written: `#rgb` to `#rrggbbaa`), arrays (`vec2`, `vec3`).
 
 **Choosing an asset** (§8.1). The asset properties `src` (sticker, model), `font` (text) and `lut` (color) take a
 param too: a `select` (or `string`) param with `map` from its values to the filter's own assets, or an `asset` param
@@ -400,8 +415,11 @@ Expression events fire **once** at the start of a gesture, with hysteresis (§13
 Tune them in the manifest: `"events": { "smile": { "threshold": 0.6, "minDurationMs": 150 } }` (`threshold` 0–1,
 only for events that have one; `minDurationMs` 0–5000). Face events need `requires.face`. They keep working when the
 engine drops blendshapes. Blinks and winks also use the shape of the eyelids, so a person whose `eyeBlink` score stays
-low still blinks; keep the default blink threshold unless you have measured otherwise. Pair events need at least two
-faces (the engine's `maxFaces`); a threshold of `0.2` fires slightly before the faces touch.
+low still blinks; keep the default blink threshold unless you have measured otherwise. Talking moves `jawOpen` up to
+about 0.35 on the test clips: the default `mouthOpen` fires on a wide-open word; for a deliberate wide-open mouth,
+use a threshold of 0.5 or more. Pair events need at least two faces (the engine's `maxFaces`); a threshold of `0.2`
+fires slightly before the faces touch. Payloads carry no time: to time an effect, read `frame.time` in the next
+`update` or `draw` (section 10), or use `f.after`.
 
 ## 10. Scripts
 
@@ -425,7 +443,7 @@ be plain JSON (no `Date`, `Map`, getters, `undefined` in lists). The top level o
 
 | | |
 |---|---|
-| `f.layer(id, face?)` | handle on a layer: every instance, or with `face` only that face's |
+| `f.layer(id, face?)` | handle on a layer: every instance (faces that appear later included), or with `face` only that face's |
 | `.set({ … })` | sets properties until set to `null` (back to the manifest value: fixed, picked or bound). Settable: the bindable properties: `visible`, `opacity`, `offset`, `rotation`, `size`, `scale`, `text`, `color`, sticker `rate`, warp `radius` / `strength` / `direction`, the color-layer numbers and `tint`, shader `uniforms: { name: value }` (one by one: `{ uniforms: { amount: null } }` restores only `amount`; a value keeps the uniform's type); and the asset properties `src` (sticker, model), `font`, `lut`, to the **name** of an asset declared in `assets` of the right kind (`{ src: 'crownGold' }`; not a path or `builtin:`), and model `animation` to a clip name |
 | `.animate({ prop: target }, { duration, easing?, delay?, repeat? })` | tween numbers, vectors, colors from the current value; `{ prop: { keyframes: [a, b, …] } }` plays evenly spaced values; `repeat: -1` loops |
 | `.play(name)` | model layers: start a glTF animation |
@@ -465,7 +483,9 @@ browser cannot load fonts in the script's Worker, the platform font is used and 
 
 - The script runs in a sandboxed Worker: no DOM, no network (`fetch`, `XMLHttpRequest`, `WebSocket`…), no storage,
   no `import()`; it cannot see the page or other filters. `ouaf pack` bundles imports, so `script.js` has none.
-- Commands apply at the next frame at the earliest (one frame of latency); a slow script skips frames (`frame.dt`
+- In a frame, the script runs its due timers, then the events, then `update`, then the `draw` functions; all of
+  them share `f.state`, so a value a `draw` writes is seen by the handlers and timers of the next frame. Commands
+  apply at the next frame at the earliest (one frame of latency); a slow script skips frames (`frame.dt`
   covers them) but never slows the rendering. Events are queued, never dropped, except while the filter is disabled or
   hidden: past 256 waiting events, only the last `message:<name>` of each name and `paramChange` of each parameter stay.
 - **Watchdog**: a script that does not answer within **1 s** (`setup` included) is stopped (`SCRIPT_STOPPED`); the
@@ -555,6 +575,9 @@ Specified, or reserved, but not working in the reference engine today. Do not re
 - A `.gltf` model with external buffers or images (use GLB).
 - KTX2 textures; reserved `requires` (`hands`, `segmentation`, `pose`, `audio`)
   and reserved events (`tap`…): warnings.
+- Reserved layer types (`particles`, `lottie`, `background`, `faceTexture`…): unknown types, errors. Draw particles
+  (confetti, snow, sparks) on a `canvas` layer with a script (section 15; the demo `filters/ai-birthday` rains
+  confetti on `mouthOpen`).
 
 ## 15. Complete examples
 
@@ -789,15 +812,22 @@ spec and the schema. An agent writing a filter follows this loop:
    of the test clips (`talk`, `dark-frontal`, `elder-beard-bw`, `mask-hijab`, `three-quarter`, `selfie-lowres`,
    `two-faces`, `no-face`, which has no face; `--ref <id>` picks some, `--references test-media/faces/all.json` uses
    the full set, with hard cases where no face is found, `--input <clip.mp4 | image.png>` another file, `--at <s>`
-   its time) and writes `ouaf-preview/<reference>.png` (`-o <dir>` elsewhere). Look at
+   its time, `--from <s>` its first frame, `--max-faces <n>` its faces) and writes `ouaf-preview/<reference>.png`
+   (`-o <dir>` elsewhere). Every frame from `from` to `at` is rendered, so events fire and scripts run: with
+   `--from 0`, the screenshot shows what the events of the whole clip did. Look at
    each screenshot: is every layer where it should be, at the right size? In the JSON, each reference has
    `errors` and `warnings` from the engine (an asset that fails to decode, a script error: things `validate` cannot
-   see), `faces` (faces tracked; `expectedFaces` is what the reference set documents: 0 on `no-face` and on the hard
-   cases of the full set, where a filter rightly shows nothing), `changed` (share of the pixels the filter changed:
+   see), `faces` (faces tracked; a face lost less than 0.5 s before the screenshot still counts but is not drawn;
+   `expectedFaces` is what the reference set documents: 0 on `no-face` and on the hard cases of the full set, where
+   a filter rightly shows nothing), `changed` (share of the pixels the filter changed:
    near 0 means nothing shows), `pixelsSha256` and `perf` (frame times, measured with software rendering: compare
    filters, do not predict a phone). Exit code 0: rendered without engine errors; 1: errors; 2: usage error (also when
    Playwright's Chromium is missing: `npx playwright install chromium`). The same command gives the same pixels on
-   every run on one machine. For a live view, `npm run dev`, then
+   every run on one machine. The test clips seldom reach an event's threshold (no clip opens the mouth wider than
+   `jawOpen` ≈ 0.35): to see an effect, preview a copy of the filter with a lower threshold, and keep the intended
+   one in the filter. Debug on such a copy (in a scratch folder, not in `filters/<id>/`): a text layer bound to a
+   value (`{ "bind": "face.blendshapes.jawOpen" }`) shows it on the screenshot; nothing of it can then stay in the
+   filter. For a live view, `npm run dev`, then
    `https://localhost:5173/engine.html?filter=/filters/<id>/&source=pesquet-talk&autostart` (section 1).
 4. **Report** what the filter does, the commands run and their result, and anything section 14 made impossible.
 

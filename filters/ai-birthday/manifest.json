@@ -1,0 +1,203 @@
+{
+  "ouaf": "1",
+  "id": "ai-birthday",
+  "name": "Happy birthday",
+  "description": "A party hat on every head, a birthday greeting with your name, and confetti when you open your mouth wide.",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "tags": [
+    "birthday",
+    "party",
+    "hat",
+    "confetti"
+  ],
+  "requires": {
+    "face": true
+  },
+  "params": {
+    "name": {
+      "type": "string",
+      "default": "Alex",
+      "maxLength": 24,
+      "label": {
+        "en": "Name",
+        "fr": "Prénom"
+      }
+    }
+  },
+  "assets": {
+    "title": "builtin:font/rounded-bold"
+  },
+  "events": {
+    "mouthOpen": {
+      "threshold": 0.5,
+      "minDurationMs": 120
+    }
+  },
+  "layers": [
+    {
+      "id": "hat",
+      "type": "model",
+      "src": {
+        "shape": "cone",
+        "color": "#ff3d8b",
+        "roughness": 0.6
+      },
+      "anchor": "forehead",
+      "offset": [
+        0,
+        1.04,
+        -1.046
+      ],
+      "rotation": [
+        -8,
+        0,
+        0
+      ],
+      "scale": [
+        1.6,
+        2.1,
+        1.6
+      ],
+      "occlusion": "head"
+    },
+    {
+      "id": "stripe1",
+      "type": "model",
+      "src": {
+        "shape": "torus",
+        "color": "#ffd400",
+        "roughness": 0.5,
+        "thickness": 0.1
+      },
+      "anchor": "forehead",
+      "offset": [
+        0,
+        0.693,
+        -0.997
+      ],
+      "rotation": [
+        82,
+        0,
+        0
+      ],
+      "scale": 1.23,
+      "occlusion": "head"
+    },
+    {
+      "id": "stripe2",
+      "type": "model",
+      "src": {
+        "shape": "torus",
+        "color": "#2ec4ff",
+        "roughness": 0.5,
+        "thickness": 0.1
+      },
+      "anchor": "forehead",
+      "offset": [
+        0,
+        1.386,
+        -1.095
+      ],
+      "rotation": [
+        82,
+        0,
+        0
+      ],
+      "scale": 0.637,
+      "occlusion": "head"
+    },
+    {
+      "id": "trim",
+      "type": "model",
+      "src": {
+        "shape": "torus",
+        "color": "#ffffff",
+        "roughness": 0.9,
+        "thickness": 0.14
+      },
+      "anchor": "forehead",
+      "offset": [
+        0,
+        0.04,
+        -0.906
+      ],
+      "rotation": [
+        82,
+        0,
+        0
+      ],
+      "scale": 1.872,
+      "occlusion": "head"
+    },
+    {
+      "id": "pompom",
+      "type": "model",
+      "src": {
+        "shape": "sphere",
+        "color": "#ffffff",
+        "roughness": 1
+      },
+      "anchor": "forehead",
+      "offset": [
+        0,
+        2.198,
+        -1.209
+      ],
+      "scale": 0.48,
+      "occlusion": "head"
+    },
+    {
+      "id": "greeting",
+      "type": "text",
+      "text": "Happy birthday!",
+      "anchor": "forehead",
+      "offset": [
+        0,
+        3.02,
+        -1.324
+      ],
+      "size": 0.38,
+      "orient": "screen",
+      "font": "title",
+      "color": "#ffd400",
+      "align": "center",
+      "maxWidth": 3.6,
+      "outline": {
+        "width": 0.14,
+        "color": "#c2185b"
+      },
+      "shadow": {
+        "color": "#00000099",
+        "blur": 0.1,
+        "offset": [
+          0,
+          -0.06
+        ]
+      }
+    },
+    {
+      "id": "confetti",
+      "type": "canvas",
+      "width": 1024,
+      "height": 512,
+      "fps": 0,
+      "anchor": "screen",
+      "size": 1,
+      "overlay": true,
+      "visible": false
+    }
+  ],
+  "script": {
+    "entry": "script.js",
+    "setup": true,
+    "on": [
+      "paramChange",
+      "mouthOpen"
+    ],
+    "draw": [
+      "confetti"
+    ],
+    "uses": []
+  }
+}

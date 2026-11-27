@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { packFolder } from '../src/pack.ts'
 import { validatePath } from '../src/validate.ts'
 import { formatReport } from '../src/report.ts'
+import { readZipEntries, readZipEntry } from '../src/zip.ts'
 
 /**
  * The demo filters (#37): every one listed in `filters/demos.json` (the playground's list and the browser test of
@@ -35,4 +37,17 @@ describe('demo filters', () => {
     const types = new Set(ids.flatMap((id) => manifest(id).layers.map((l) => l.type)))
     expect([...types].sort()).toEqual(['canvas', 'color', 'model', 'shader', 'sticker', 'text', 'warp'])
   })
+
+  it('ai-birthday is what ouaf pack builds from the filter.ts the agent wrote (#38)', async () => {
+    // The acceptance test keeps the agent's source; the demo folder holds its package, as the playground loads it.
+    const source = join(root, '../docs/acceptance/ai-birthday')
+    const { zip, report } = await packFolder(source)
+    expect(report.errors, formatReport(report)).toEqual([])
+    const entries = readZipEntries(zip!)
+    expect(entries.map((e) => e.name).sort()).toEqual(['manifest.json', 'script.js'])
+    for (const e of entries) {
+      const packed = new TextDecoder().decode(readZipEntry(zip!, e))
+      expect(packed, `filters/ai-birthday/${e.name}: pack docs/acceptance/ai-birthday again`).toBe(readFileSync(join(root, 'ai-birthday', e.name), 'utf8'))
+    }
+  }, 30_000)
 })
