@@ -19,6 +19,7 @@
       fieldset .presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
       #demos { max-width: 640px; margin: 12px 0; }
       #demos dd { margin: 0 0 8px 16px; font-size: 14px; }
+      #banner { max-width: 640px; padding: 8px 12px; border-left: 4px solid #d33; background: color-mix(in srgb, #d33 12%, transparent); }
     </style>
   </head>
   <body>
@@ -28,6 +29,8 @@
       <code>&amp;filter=&lt;url&gt;</code> (repeatable) loads filter folders, e.g. <code>/filters/&lt;id&gt;/</code>, or
       <code>.ouaf</code> packages, e.g. <code>/filters/&lt;id&gt;.ouaf</code>,
       <code>&amp;maxFaces=N</code>, <code>&amp;seed=N</code>, <code>&amp;autostart</code>.
+      With <code>npm run dev</code>, a folder written as <code>filter.ts</code> loads too, and a filter of
+      <code>filters/</code> reloads when one of its files changes.
       Device adaptation: <code>&amp;throttle=&lt;ms&gt;</code> simulates slow tracking (also in the panel),
       <code>&amp;adapt=1|0</code> turns the governor on or off (default: on for the camera or with a throttle),
       <code>&amp;signals</code> compares the expression signals from blendshapes and from the geometry,
@@ -44,6 +47,7 @@
     <button id="snapshot" type="button">Snapshot</button>
     <button id="record" type="button">Record</button>
     <a id="output" hidden></a>
+    <pre id="banner" role="alert" hidden></pre>
     <canvas id="canvas"></canvas>
     <video id="video" muted playsinline></video>
     <div id="params"></div>

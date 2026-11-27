@@ -52,7 +52,9 @@ live, open `https://localhost:5173/engine.html?filter=/filters/hello/&source=pes
 plays a [test clip](test-media/README.md) (`source=<clip>`, `autostart` starts it) with your filter on top. Without
 `source`, click **Start** to use the camera. Other query parameters: `filter` can be repeated to stack filters,
 `maxFaces=<1–16>` (default 1), `seed=<n>` fixes random choices. Parameters (section 7) appear as controls on the page;
-warnings and errors are printed under the video. Reload the page after editing a file.
+warnings and errors are printed under the video. A filter under `filters/` reloads by itself when you save one of
+its files: the clip keeps playing, the values you set on the page are kept, the script restarts; a version with
+errors shows its report above the video and the previous one stays on screen.
 
 ## 2. Package layout
 
@@ -61,7 +63,7 @@ A filter is a folder; `ouaf pack` turns it into a `.ouaf` package (a zip) for di
 | Form | Folder content | Check | Preview |
 |---|---|---|---|
 | **Manifest folder** (no code) | `manifest.json`, optional `assets/` | `npx ouaf validate <folder>` | the folder itself |
-| **Source folder** (with a script) | `filter.ts` or `filter.js`, optional `assets/` | `npx ouaf pack <folder> -o <file.ouaf>` (packs and validates) | the package it packs to (below) |
+| **Source folder** (with a script) | `filter.ts` or `filter.js`, optional `assets/` | `npx ouaf pack <folder> -o <file.ouaf>` (packs and validates) | the folder itself (`npm run dev` packs it, below) |
 | **Package** | `<id>.ouaf`: `manifest.json`, `script.js`, `assets/` | `npx ouaf validate <file.ouaf>` | `?filter=/filters/<id>.ouaf`, or open / drop the file on the page |
 
 - Asset files live under `assets/`; paths are relative, use `/`, never `..`, and are case-sensitive; no symbolic
@@ -70,12 +72,10 @@ A filter is a folder; `ouaf pack` turns it into a `.ouaf` package (a zip) for di
   to read its default export, writes `manifest.json` from the data and `script.js` from the functions, then zips
   and validates the result. Nothing is written when there are errors. Other files of the folder (README…) are left out.
 - `ouaf validate` on a source folder fails with `missing-manifest`: pack it instead.
-- To preview a source folder, pack it where the dev server serves it, e.g.
-  `npx ouaf pack filters/my-filter -o filters/my-filter.ouaf`, then open
-  `/engine.html?filter=/filters/my-filter.ouaf&source=pesquet-talk&autostart` (`.ouaf` files under `filters/` are
-  git-ignored); pack again and reload after each edit. A `.ouaf` from anywhere else can be opened with the page's
-  **Open .ouaf** button or dropped on the page (it is read locally). `npx ouaf preview <folder>` packs it in memory
-  and renders it, nothing to serve (section 17).
+- The dev server (`npm run dev`) packs a source folder under `filters/` in memory, as `ouaf pack` does, each time
+  one of its files changes: open `/engine.html?filter=/filters/my-filter/&source=pesquet-talk&autostart` and save.
+  A `.ouaf` from anywhere else can be opened with the page's **Open .ouaf** button or dropped on the page (it is
+  read locally). `npx ouaf preview <folder>` packs it in memory and renders it, nothing to serve (section 17).
 - A manifest folder may also hold a hand-written `script.js` (a self-contained ES module, as in
   `filters/fixtures/canvas-screen/`), but then you write the manifest's `script` section yourself (§12.2): prefer
   `filter.ts`.
@@ -833,7 +833,8 @@ spec and the schema. An agent writing a filter follows this loop:
    filter. To see another value, debug on a copy (in a scratch folder, not in `filters/<id>/`): a text layer bound
    to it (`{ "bind": "face.pose.yaw" }`) shows it on the screenshot; nothing of it can then stay in the filter.
    For a live view, `npm run dev`, then
-   `https://localhost:5173/engine.html?filter=/filters/<id>/&source=pesquet-talk&autostart` (section 1).
+   `https://localhost:5173/engine.html?filter=/filters/<id>/&source=pesquet-talk&autostart`, which reloads the
+   filter on every save (section 1).
 4. **Report** what the filter does, the commands run and their result, and anything section 14 made impossible.
 
 Rules for agents: do not invent properties, anchors, events or data paths (the validator rejects them); do not use

@@ -2,11 +2,14 @@ import { createReadStream, existsSync, readdirSync, readFileSync, statSync } fro
 import { createRequire } from 'node:module'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DevFilters } from '@ouaf/cli'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 import { defineConfig, type Plugin } from 'vite'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
+/** Folder of the filters served at `/filters/` (demos, fixtures, the author's own). */
+const FILTERS_DIR = resolve(here, '../../filters')
 
 /**
  * Self-hosted tracking assets, served from the playground origin (no CDN at runtime):
@@ -49,7 +52,7 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
     // Filter folders (demos #37, test fixtures), committed at the repository root: `/filters/<id>/manifest.json`; and
     // the packages built from them with `ouaf pack` (`/filters/<id>.ouaf`, gitignored).
     prefix: 'filters/',
-    dir: resolve(here, '../../filters'),
+    dir: FILTERS_DIR,
     files: /\.(json|png|webp|jpe?g|avif|svg|ktx2|mp4|webm|glb|gltf|bin|cube|frag|glsl|woff2?|ttf|otf|ogg|mp3|wav|opus|js|ouaf)$/,
     nested: true,
   },
@@ -154,6 +157,61 @@ function selfHostedAssets(): Plugin {
 }
 
 /**
+ * Hot reload of filters (#36), dev server only:
+ * - a folder written as `filter.ts` / `filter.js` is packed in memory, as `ouaf pack` does, and served as a package
+ *   folder (`/filters/<folder>/manifest.json`, `script.js`, `assets/…`); a folder that does not pack answers its
+ *   `manifest.json` with 422 and the report;
+ * - `GET /__ouaf__/report?filter=/filters/<folder>/` gives `{ ok, text }`, the folder's validation report;
+ * - every change under `filters/` sends the custom HMR event `ouaf:filter-change` with the URL of the filter it
+ *   belongs to (`/filters/<folder>/`, or a `.ouaf`), which the engine page reloads in place.
+ */
+function devFilters(): Plugin {
+  const filters = new DevFilters(FILTERS_DIR)
+  let base = '/'
+  return {
+    name: 'ouaf-dev-filters',
+    configResolved(config) {
+      base = config.base
+    },
+    configureServer(server) {
+      server.watcher.add(FILTERS_DIR)
+      server.watcher.on('all', (_event, file) => {
+        if (!resolve(file).startsWith(FILTERS_DIR + sep)) return
+        const filter = filters.filterOf(file)
+        if (filter === undefined) return
+        filters.invalidate(filter)
+        const url = `${base}filters/${filter}${filter.endsWith('.ouaf') ? '' : '/'}`
+        server.ws.send({ type: 'custom', event: 'ouaf:filter-change', data: { url } })
+      })
+      const prefix = `${base}filters/`
+      server.middlewares.use((req, res, next) => {
+        const url = new URL(req.url ?? '/', 'https://localhost')
+        const send = (status: number, type: string, body: Uint8Array | string) => {
+          res.statusCode = status
+          res.setHeader('Content-Type', type)
+          res.setHeader('Cache-Control', 'no-store')
+          res.end(body)
+        }
+        if (url.pathname === `${base}__ouaf__/report`) {
+          const target = url.searchParams.get('filter') ?? ''
+          const folder = target.startsWith(prefix) ? decodeURIComponent(target.slice(prefix.length)).replace(/\/$/, '') : ''
+          if (!SAFE_PATH.test(folder)) return send(400, 'application/json', JSON.stringify({ ok: false, text: `Not a filter under ${prefix}: ${target}` }))
+          filters.report(folder).then((r) => send(200, 'application/json', JSON.stringify(r)), next)
+          return
+        }
+        if (!url.pathname.startsWith(prefix)) return next()
+        const path = decodeURIComponent(url.pathname.slice(prefix.length))
+        if (!SAFE_PATH.test(path)) return next()
+        filters.file(path).then((file) => {
+          if (!file) return next()
+          send(file.status, file.status === 200 ? (CONTENT_TYPES[extname(path)] ?? 'application/octet-stream') : 'text/plain; charset=utf-8', file.body)
+        }, next)
+      })
+    },
+  }
+}
+
+/**
  * The malicious filters' sink (#27, `e2e/evil.spec.ts`): records every request that reaches `/__evil__/…` (HTTP, or a
  * WebSocket upgrade) and answers it as a willing accomplice (200, any origin allowed), so a request that gets out of
  * the sandbox both succeeds and is seen here. `GET /__evil-sink__?token=<t>` lists the hits whose URL contains `t`.
@@ -207,10 +265,13 @@ const HEADERS = { 'Content-Security-Policy': "connect-src 'self' ws: wss:" }
 // getUserMedia requires a secure context: serve over HTTPS (self-signed certificate) and listen on
 // every interface so a phone on the same network can open the playground.
 export default defineConfig({
-  plugins: [basicSsl({ name: 'ouaf-playground' }), selfHostedAssets(), evilSink()],
+  plugins: [basicSsl({ name: 'ouaf-playground' }), devFilters(), selfHostedAssets(), evilSink()],
   server: { host: true, port: 5173, headers: HEADERS },
   preview: { host: true, port: 4173, headers: HEADERS },
   build: { target: 'es2023', rolldownOptions: { input: pages() } },
   // Module workers, as in dev (the #6 worker imports MediaPipe lazily, which a classic IIFE worker cannot split).
   worker: { format: 'es' },
+  // Pre-bundled at start: found only when the tracker's worker starts, it made Vite reload the page on the first run
+  // (and a hot-reloaded filter with it).
+  optimizeDeps: { include: ['@litertjs/core'] },
 })
