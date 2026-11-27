@@ -15,6 +15,7 @@ import { run } from '../packages/cli/src/cli.ts'
 
 interface PreviewJson {
   ok: boolean
+  filters: Array<{ id: string; params?: Record<string, unknown>; thresholds?: Record<string, number> }>
   references: Array<{
     id: string
     ok: boolean
@@ -23,6 +24,8 @@ interface PreviewJson {
     faces: number
     changed: number
     filters: string[]
+    events: Array<{ filter: string; name: string; time: number; face: number }>
+    signals: Record<string, { peak: number; time: number }>
     warnings: string[]
     errors: string[]
     error?: string
@@ -129,4 +132,38 @@ test('faces counts the faces of the screenshot, not a face lost in the grace del
   const lost = await at('7.2')
   expect(lost.faces).toBe(0)
   expect(lost.changed).toBeLessThan(0.003)
+})
+
+test('--event-threshold and --param: the events that fired and the peak of their signal (#197)', async () => {
+  test.setTimeout(180_000)
+  // pesquet-talk from 2.5 to 4 s: jawOpen peaks at about 0.18, so the shipped mouthOpen threshold (0.5) does not fire
+  // and a lowered one does: the confetti of ai-birthday fall.
+  const talk = (name: string, ...args: string[]) =>
+    preview('filters/ai-birthday', '--input', 'test-media/pesquet-talk.mp4', '--from', '2.5', '--at', '4', '--max-size', '256', '-o', join(dir, name), ...args)
+  const shipped = await talk('mouth-shipped')
+  expect(shipped.code).toBe(0)
+  expect(shipped.json.filters[0]!.thresholds).toEqual({ mouthOpen: 0.5 })
+  const peak = shipped.json.references[0]!.signals.jawOpen!
+  expect(peak.peak).toBeGreaterThan(0.12)
+  expect(peak.peak).toBeLessThan(0.5)
+  expect(peak.time).toBeGreaterThanOrEqual(2.5)
+  expect(shipped.json.references[0]!.events.filter((e) => e.name === 'mouthOpen')).toEqual([])
+
+  const lowered = await talk('mouth-lowered', '--event-threshold', 'mouthOpen=0.1')
+  expect(lowered.code).toBe(0)
+  expect(lowered.json.filters[0]!.thresholds).toEqual({ mouthOpen: 0.1 })
+  const opens = lowered.json.references[0]!.events.filter((e) => e.name === 'mouthOpen')
+  expect(opens).toHaveLength(1)
+  expect(opens[0]).toMatchObject({ filter: 'ai-birthday', face: 1 })
+  expect(opens[0]!.time).toBeGreaterThan(2.5)
+  expect(opens[0]!.time).toBeLessThanOrEqual(peak.time)
+  expect(lowered.json.references[0]!.changed).toBeGreaterThan(shipped.json.references[0]!.changed + 0.02)
+
+  // two-faces shows the greeting: the name changes the pixels.
+  const greet = (name: string, ...args: string[]) => preview('filters/ai-birthday', '--ref', 'two-faces', '--max-size', '256', '-o', join(dir, name), ...args)
+  const alex = await greet('name-default')
+  const sam = await greet('name-sam', '--param', 'name=Sam')
+  expect(sam.code).toBe(0)
+  expect(sam.json.filters[0]!.params).toEqual({ name: 'Sam' })
+  expect(sam.json.references[0]!.pixelsSha256).not.toBe(alex.json.references[0]!.pixelsSha256)
 })

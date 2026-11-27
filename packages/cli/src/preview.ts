@@ -24,6 +24,7 @@ import { BrowserSetupError as PreviewSetupError, launchChromium, loadChromium } 
 import { packFolder, PackSourceError } from './pack.ts'
 import type { PreviewJob, PreviewPageOutcome, PreviewPageResult } from './preview/protocol.ts'
 import { IMAGE_TYPES, VIDEO_TYPES, type Reference } from './preview/references.ts'
+import { handledThresholds, readManifest, replaceManifest, resolveParams, TuningError, withEventThresholds } from './preview/tuning.ts'
 import { SourceError } from './source.ts'
 import { validatePath, type PackageReport } from './validate.ts'
 
@@ -49,8 +50,12 @@ export interface PreviewFilter {
   entry?: string
   /** Validation report (`ouaf validate` / `ouaf pack`). */
   report: PackageReport
-  /** The package, when it has no errors. */
+  /** The package, when it has no errors (its manifest rewritten by `eventThresholds`). */
   zip?: Uint8Array
+  /** Values set with `params`, when any. */
+  params?: Record<string, unknown>
+  /** Threshold of each threshold event its script handles (`eventThresholds` applied), when it has a script. */
+  thresholds?: Record<string, number>
 }
 
 export interface PreviewShot extends Omit<PreviewPageResult, 'png'> {
@@ -79,6 +84,10 @@ export interface PreviewOptions {
   seed?: number
   /** Overrides each reference's `maxFaces`. */
   maxFaces?: number
+  /** Parameter values (`--param`), as typed: set on every filter that declares the name, checked against its type. */
+  params?: ReadonlyMap<string, string>
+  /** Event thresholds (`--event-threshold`, checked by `parseEventThresholds`), written into every filter's manifest. */
+  eventThresholds?: ReadonlyMap<string, number>
   /** Folder of the face model files. Default `DEFAULT_MODELS`. */
   modelsDir?: string
   timeoutMs?: number
@@ -238,6 +247,7 @@ class PreviewOrigin {
 export async function previewFilters(options: PreviewOptions): Promise<PreviewResult> {
   const filters = await loadFilters(options.filters)
   if (filters.some((f) => !f.zip)) return { filters, shots: [], browser: null }
+  const params = tuneFilters(filters, options)
 
   const modelsDir = resolve(options.modelsDir ?? DEFAULT_MODELS)
   if (!existsSync(join(modelsDir, FACE_MODEL))) {
@@ -260,6 +270,7 @@ export async function previewFilters(options: PreviewOptions): Promise<PreviewRe
       origin.files.set(url, new Uint8Array(await readFile(ref.file)))
       const job: PreviewJob = {
         filters: filters.map((_, j) => `/filters/${j}.ouaf`),
+        ...(params.some((p) => Object.keys(p).length) ? { params } : {}),
         frames: ref.kind === 'video' ? { kind: 'video', url, from: ref.from, time: ref.time } : { kind: 'image', url, frames: ref.frames },
         maxFaces: options.maxFaces ?? ref.maxFaces,
         ...(options.seed === undefined ? {} : { seed: options.seed }),
@@ -279,6 +290,30 @@ export async function previewFilters(options: PreviewOptions): Promise<PreviewRe
     return { filters, shots, browser: browser.version() }
   } finally {
     await browser.close()
+  }
+}
+
+/**
+ * Applies `eventThresholds` to the packages and resolves `params` (throws `PreviewSetupError`: a usage error); fills
+ * `params` and `thresholds` of each filter. Returns the parameter values of each filter, for the page.
+ */
+export function tuneFilters(filters: PreviewFilter[], options: Pick<PreviewOptions, 'params' | 'eventThresholds'>): Array<Record<string, unknown>> {
+  const thresholds = options.eventThresholds ?? new Map<string, number>()
+  const manifests = filters.map((f) => {
+    const manifest = withEventThresholds(readManifest(f.zip!), thresholds)
+    if (thresholds.size) f.zip = replaceManifest(f.zip!, manifest)
+    if (manifest.script) f.thresholds = handledThresholds(manifest)
+    return manifest
+  })
+  try {
+    const params = resolveParams(manifests, options.params ?? new Map())
+    params.forEach((p, i) => {
+      if (Object.keys(p).length) filters[i]!.params = p
+    })
+    return params
+  } catch (e) {
+    if (e instanceof TuningError) throw new PreviewSetupError(e.message)
+    throw e
   }
 }
 

@@ -116,6 +116,8 @@ describe('ouaf preview', () => {
     framesRendered: 10,
     time: 0,
     filters: ['valid'],
+    events: [],
+    signals: {},
     warnings: [],
     errors: [],
     perf: { loadMs: 1, firstFrameMs: 2, frameMs: { mean: 3, p50: 3, p95: 4, max: 5 }, engineFrameMs: null, tracker: null, renderWidth: 1, renderHeight: 1, renderer: null },
@@ -215,6 +217,56 @@ describe('ouaf preview', () => {
     expect(r.out).toContain('valid on 1 reference: 1 screenshot in ouaf-preview/ (Chromium ?)')
     expect(r.out).toContain('360×640, 2 faces, 0.0 % of the pixels changed')
     expect(r.out).toContain('    error: line 1\n      line 2')
+  })
+
+  it('--param and --event-threshold: parsed and passed on; malformed ones are usage errors', async () => {
+    const { c, calls } = command(() => ({}))
+    const still = ['preview', valid, '--input', join(dir, 'still.png')]
+    expect((await cli([c], ...still, '--param', 'name=Sam', '--param', 'size=1.5', '--event-threshold', 'mouthOpen=0.25')).code).toBe(EXIT.OK)
+    expect(calls[0]!.params).toEqual(new Map([['name', 'Sam'], ['size', '1.5']]))
+    expect(calls[0]!.eventThresholds).toEqual(new Map([['mouthOpen', 0.25]]))
+    await cli([c], ...still)
+    expect(calls[1]).not.toHaveProperty('params')
+    expect(calls[1]).not.toHaveProperty('eventThresholds')
+    for (const [args, message] of [
+      [['--param', 'size'], '--param expects <name>=<value>, got "size".'],
+      [['--event-threshold', 'mouthClose=0.2'], '"mouthClose" has no threshold of its own'],
+      [['--event-threshold', 'smile=2'], '--event-threshold smile expects a number from 0 to 1, got "2".'],
+    ] as const) {
+      const r = await cli([c], ...still, ...args)
+      expect(r.code).toBe(EXIT.USAGE)
+      expect(r.err).toContain(message)
+    }
+    expect(calls).toHaveLength(2)
+  })
+
+  it('events and signal peaks: in the JSON of each reference, and against the handled thresholds in the text', async () => {
+    const events = [
+      { filter: 'valid', name: 'faceEnter', time: 0.5, face: 1 },
+      { filter: 'valid', name: 'mouthOpen', time: 0.8, face: 1 },
+      { filter: 'valid', name: 'wink', time: 0.9, face: 1, side: 'left' as const },
+    ]
+    const signals = { jawOpen: { peak: 0.41, time: 0.8 } }
+    const { c } = command(({ filters }) => ({
+      filters: filters.map(() => ({ input: valid, report: { input: valid, kind: 'folder' as const, ok: true, errors: [], warnings: [], skipped: [], stats: { files: 1, bytes: 1 } }, params: { name: 'Sam' }, thresholds: { mouthOpen: 0.25, smile: 0.5 } })),
+      shots: [shot('still', { events, signals })],
+    }))
+    const text = await cli([c], 'preview', valid, '--input', join(dir, 'still.png'))
+    expect(text.out).toContain('    events: mouthOpen at 0.80 s (face 1), wink (left) at 0.90 s (face 1)\n' +
+      '    mouthOpen (threshold 0.25): fired 1×; jawOpen peak 0.41 at 0.80 s\n' +
+      '    smile (threshold 0.5): did not fire; mouthSmile: no face tracked')
+    const json = JSON.parse((await cli([c], 'preview', valid, '--input', join(dir, 'still.png'), '--json')).out)
+    expect(json.filters[0]).toMatchObject({ params: { name: 'Sam' }, thresholds: { mouthOpen: 0.25, smile: 0.5 } })
+    expect(json.references[0]).toMatchObject({ events, signals })
+  })
+
+  it('text: a long list of events is cut, no line without events or handled thresholds', async () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({ filter: 'valid', name: 'blink', time: i / 10, face: 1 }))
+    const { c } = command(() => ({ shots: [shot('a', { events: many }), shot('b', { events: [{ filter: 'valid', name: 'faceEnter', time: 0, face: 1 }] })] }))
+    const r = await cli([c], 'preview', valid, '--ref', 'talk', '--ref', 'no-face')
+    expect(r.out).toMatch(/blink at 0\.70 s \(face 1\), and 2 more\n/)
+    expect(r.out).not.toContain('faceEnter')
+    expect(r.out.match(/^ {4}events: /gm)).toHaveLength(1)
   })
 })
 

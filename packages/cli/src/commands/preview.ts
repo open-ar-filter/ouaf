@@ -9,7 +9,10 @@ import {
   type PreviewOptions,
   type PreviewResult,
 } from '../preview.ts'
+import { SIGNAL_OF_EVENT } from '../preview/protocol.ts'
 import { DEFAULT_REFERENCES, inputReference, loadReferences, ReferenceError, type Reference } from '../preview/references.ts'
+import { parseAssignments, parseEventThresholds, TuningError } from '../preview/tuning.ts'
+import type { PreviewEvent, PreviewPageResult } from '../preview/protocol.ts'
 import { formatReport, REPORT_FORMAT } from '../report.ts'
 
 export interface PreviewDeps {
@@ -42,6 +45,23 @@ dark-frontal, elder-beard-bw, mask-hijab, three-quarter, selfie-lowres, two-face
   --at <s>              With a clip --input: media time of the screenshot (default 1)
   --from <s>            With a clip --input: first frame rendered (default: half a second before --at)
   --max-faces <n>       Faces tracked (default: the reference's maxFaces; 1 for --input)
+
+Filters, without editing them:
+  --param <name>=<value>
+                        Set a parameter, as a host does at load (repeatable), on every filter of the stack that
+                        declares it. The value is checked against its type: a number, true or false, a color
+                        (#rrggbb), an option of a select, numbers separated by commas for vec2 and vec3; asset
+                        parameters cannot be set. Example: --param name=Sam --param size=1.5
+  --event-threshold <event>=<value>
+                        Try another threshold (0 to 1) for an event, as if the filters' manifests set
+                        events.<event>.threshold (repeatable): blink, wink, mouthOpen, smile, eyebrowRaise, kiss,
+                        nod, shake, pairContact. Example: --event-threshold mouthOpen=0.25
+
+Events: each reference reports the events delivered to the filters between "from" and "time" (faceEnter, blink,
+mouthOpen…, with their media time and face; pair events not included) and the peak of the signals that drive them
+(jawOpen for mouthOpen, mouthSmile for smile, browInnerUp for eyebrowRaise, mouthPucker for kiss, eyeBlink for
+blink), to compare with the thresholds. An event fires once at the start of a gesture: render a range of the clip
+that covers it (--from).
 
 Output:
   -o, --out <dir>       Folder of the screenshots, <reference>.png, replaced if they exist (default ${DEFAULT_OUT_DIR}/)
@@ -100,6 +120,8 @@ export function createPreview(deps: PreviewDeps = {}): Command {
               at: { type: 'string' },
               from: { type: 'string' },
               'max-faces': { type: 'string' },
+              param: { type: 'string', multiple: true },
+              'event-threshold': { type: 'string', multiple: true },
               out: { type: 'string', short: 'o' },
               'max-size': { type: 'string' },
               seed: { type: 'string' },
@@ -124,6 +146,15 @@ export function createPreview(deps: PreviewDeps = {}): Command {
       const seed = number('seed', values.seed, (n) => integer(n) && n >= 0 && n <= 0xffffffff, 'an integer from 0 to 2^32 − 1')
       const at = number('at', values.at, (n) => n >= 0, 'a time in seconds')
       const from = number('from', values.from, (n) => n >= 0, 'a time in seconds')
+      let params: Map<string, string>
+      let eventThresholds: Map<string, number>
+      try {
+        params = parseAssignments('param', values.param)
+        eventThresholds = parseEventThresholds(parseAssignments('event-threshold', values['event-threshold']))
+      } catch (e) {
+        if (e instanceof TuningError) throw new UsageError(e.message)
+        throw e
+      }
 
       let references: Reference[]
       try {
@@ -159,6 +190,8 @@ export function createPreview(deps: PreviewDeps = {}): Command {
           ...(maxSize === undefined ? {} : { maxSize }),
           ...(seed === undefined ? {} : { seed }),
           ...(maxFaces === undefined ? {} : { maxFaces }),
+          ...(params.size ? { params } : {}),
+          ...(eventThresholds.size ? { eventThresholds } : {}),
           ...((values.models ?? env.OUAF_MODELS) ? { modelsDir: (values.models ?? env.OUAF_MODELS)! } : {}),
           ...(progress ? { onReference: (r: Reference, i: number) => progress(`[${i + 1}/${references.length}] ${r.id}…`) } : {}),
         })
@@ -185,7 +218,13 @@ function json(r: PreviewResult, references: Reference[], outDir: string, ok: boo
   return JSON.stringify({
     format: REPORT_FORMAT,
     ok,
-    filters: r.filters.map((f) => ({ ...f.report, input: f.input, ...(f.entry ? { entry: f.entry } : {}) })),
+    filters: r.filters.map((f) => ({
+      ...f.report,
+      input: f.input,
+      ...(f.entry ? { entry: f.entry } : {}),
+      ...(f.params ? { params: f.params } : {}),
+      ...(f.thresholds ? { thresholds: f.thresholds } : {}),
+    })),
     outDir,
     browser: r.browser ? { name: 'chromium', version: r.browser, renderer } : null,
     references: r.shots.map((s, i) => {
@@ -224,6 +263,11 @@ function text(r: PreviewResult, references: Reference[], outDir: string): string
   const width = Math.max(...references.map((ref) => ref.id.length))
   const shotWidth = Math.max(0, ...done.map((s) => s.screenshot.length))
   const indent = (text: string) => text.replaceAll('\n', '\n      ')
+  // The threshold events the scripts handle: the lowest threshold of the stack for each one.
+  const thresholds = new Map<string, number>()
+  for (const f of r.filters) {
+    for (const [name, t] of Object.entries(f.thresholds ?? {})) thresholds.set(name, Math.min(t, thresholds.get(name) ?? Infinity))
+  }
   for (const s of r.shots) {
     const id = s.reference.padEnd(width)
     if (!s.ok) {
@@ -234,8 +278,30 @@ function text(r: PreviewResult, references: Reference[], outDir: string): string
         `${pct(s.changed)} of the pixels changed; frame ${Math.round(p.frameMs.p50)} ms (p95 ${Math.round(p.frameMs.p95)}), first frame ${p.firstFrameMs} ms, ` +
         `load ${p.loadMs} ms`)
     }
+    if (s.ok) lines.push(...eventLines(s.events, s.signals, thresholds))
     for (const e of s.errors) lines.push(`    error: ${indent(e)}`)
     for (const w of s.warnings) lines.push(`    warning: ${indent(w)}`)
   }
   return lines.join('\n')
+}
+
+/**
+ * Lines of a reference in the text output: the events other than faceEnter / faceLeave, and, for each threshold
+ * event a script handles, the peak of its signal against the threshold.
+ */
+function eventLines(events: PreviewEvent[], signals: PreviewPageResult['signals'], thresholds: ReadonlyMap<string, number>): string[] {
+  const lines: string[] = []
+  const shown = events.filter((e) => e.name !== 'faceEnter' && e.name !== 'faceLeave')
+  if (shown.length) {
+    const list = shown.slice(0, 8).map((e) => `${e.name}${e.side ? ` (${e.side})` : ''} at ${e.time.toFixed(2)} s (face ${e.face})`)
+    lines.push(`    events: ${list.join(', ')}${shown.length > 8 ? `, and ${shown.length - 8} more` : ''}`)
+  }
+  for (const [name, threshold] of thresholds) {
+    const signal = SIGNAL_OF_EVENT[name as keyof typeof SIGNAL_OF_EVENT]
+    const peak = signals[signal]
+    const fired = shown.filter((e) => e.name === name).length
+    const reached = peak ? `${signal} peak ${peak.peak.toFixed(2)} at ${peak.time.toFixed(2)} s` : `${signal}: no face tracked`
+    lines.push(`    ${name} (threshold ${threshold}): ${fired ? `fired ${fired}×` : 'did not fire'}; ${reached}`)
+  }
+  return lines
 }
