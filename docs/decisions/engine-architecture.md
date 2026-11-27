@@ -209,12 +209,19 @@ it (mirrored for a front camera, spec §5.1), at the internal render size, minus
   default). It waits while nothing is rendered (no source, a paused video) and rejects if the engine is disposed.
 - **`outputStream({ frameRate })`**: `captureStream()` of the capture surface, a new stream per call, one video track,
   a frame per rendered frame. The copy runs until the host stops every track it was given; `dispose()` ends them.
-- **`record(options)`**: `MediaRecorder` on such a track plus the audio tracks the host passes (`audio`: the engine
-  never opens the microphone and never stops the host's tracks). Real time: an `OfflineVideoSource` at `rate: Infinity`
-  is not recorded frame by frame. Type: `mimeType` if given (refused when unsupported), else the first supported of
-  `RECORDING_TYPES`: H.264 MP4 (plays everywhere, iOS and messaging apps included, hardware-encoded on most devices),
-  then WebM VP9, VP8, then the bare `video/mp4` / `video/webm`. Chunks every second; `stop()` and `done` resolve with
-  one `Blob`. Errors: `OuafError` with code `unsupported` (no `MediaRecorder`, type, `captureStream` in a worker).
+- **`record(options)`**: real time. Without `audio` or `mimeType`, where WebCodecs is present (#137): each captured
+  frame goes to a `FrameEncoder` (below) at its clock time, minus the time paused, into an MP4 with its duration and
+  index (`EncodedRecording`). The encoder starts at the first frame, sized from it (frames of another size later are
+  scaled into it); a frame is dropped while the encoder has more than 4 queued, and skipped closer than `1 / frameRate`
+  to the previous one. `mimeType` is `video/mp4` until the encoder is ready, then `video/mp4; codecs="…"`. When no
+  codec can encode the size, the recording goes on with `MediaRecorder`. An encoder failing midway stops the
+  recording, and `done` resolves with the frames encoded until then. Otherwise (`audio`: the engine never opens the
+  microphone and never stops the host's tracks; an explicit `mimeType`; no WebCodecs): `MediaRecorder` on a
+  `captureStream()` track plus the audio tracks. Type: `mimeType` if given (refused when unsupported), else the first
+  supported of `RECORDING_TYPES`: H.264 MP4 (plays everywhere, iOS and messaging apps included, hardware-encoded on
+  most devices), then WebM VP9, VP8, then the bare `video/mp4` / `video/webm`; WebM from Chrome has no duration in its
+  header. Chunks every second; `stop()` and `done` resolve with one `Blob`. Errors: `OuafError` with code
+  `unsupported` (no `MediaRecorder` nor WebCodecs, type, `captureStream` in a worker).
 - **`export(clip, options)`** (#137): an `OfflineVideoSource` becomes the source and every frame is rendered in the
   file regime, then encoded with WebCodecs `VideoEncoder` at its media time (`FrameEncoder`): H.264 High, Main or
   Baseline at the level the size needs, else VP9 (`videoCodecCandidates`), a keyframe every 2 s, the render size
@@ -290,7 +297,7 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 | `performance` events, hiding below the floor | `Compositor.render(passes, showFilters)` ready | #90 governor |
 | Head occluder (`model.occlusion: "head"`) | the face landmark mesh, moved back 0.2 face units along the camera rays, closed by the back of an average head (#155); the ellipsoid alone without usable landmarks | ears and hair (segmentation), one occluder per face shared by the layers |
 | Model animations | three's `AnimationMixer` (boxes a few numbers per animated face and frame) | an allocation-free sampler, if profiles show GC |
-| Live recording | `record()`: `MediaRecorder`, real time; WebM without duration in its header (not seekable until remuxed). File sources: `export()`, frame-exact (WebCodecs + in-tree MP4 muxer), video only | `record()` on the same encoder and muxer where WebCodecs is present; the clip's audio in `export()` (#137) |
+| Audio of WebCodecs outputs | `export()` and `record()` without `audio` are video only (WebCodecs + in-tree MP4 muxer); `record({ audio })` uses `MediaRecorder` (WebM without duration in Chrome) | the clip's audio copied into `export()` (#137); host audio through `AudioEncoder` where `MediaStreamTrackProcessor` exists |
 | glTF limits | 32 MB per file, textures not size-checked, no KTX2 textures | the limits of spec Appendix C; KTX2 with #116 |
 
 ## Testing a layer type

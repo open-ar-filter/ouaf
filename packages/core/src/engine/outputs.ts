@@ -14,6 +14,7 @@
  *
  * Nothing leaves the device: the host decides what to do with the blobs and streams (docs/privacy.md).
  */
+import { EncodedRecording } from './encoded-recording.ts'
 import { OuafError, disposedError } from './errors.ts'
 
 /** `engine.snapshot()`. */
@@ -39,8 +40,9 @@ export interface OutputStreamOptions {
 /** `engine.record()`. */
 export interface RecordOptions {
   /**
-   * Container and codecs, e.g. `video/webm;codecs=vp9`; it must be supported (`MediaRecorder.isTypeSupported`).
-   * Default: the first supported of `RECORDING_TYPES` (H.264 MP4 first, then WebM).
+   * Container and codecs, e.g. `video/webm;codecs=vp9`; it must be supported (`MediaRecorder.isTypeSupported`). Given,
+   * the recording uses `MediaRecorder`. Default: an MP4 encoded with WebCodecs (H.264, else VP9) where the browser has
+   * it and no `audio` is given, else the first `MediaRecorder` type of `RECORDING_TYPES` (H.264 MP4 first, then WebM).
    */
   mimeType?: string
   /** Target video bitrate (bits per second). Default: the browser's. */
@@ -58,7 +60,10 @@ export interface RecordOptions {
 
 /** A recording in progress (`engine.record()`). */
 export interface Recording {
-  /** Container and codecs actually recorded (from the `MediaRecorder`). */
+  /**
+   * Container and codecs recorded: `video/mp4; codecs="…"` with WebCodecs (`video/mp4` until the encoder is ready,
+   * from the first frame), else the `MediaRecorder`'s.
+   */
   readonly mimeType: string
   readonly state: 'recording' | 'paused' | 'inactive'
   pause(): void
@@ -109,6 +114,11 @@ export interface OutputsEnv {
   createCanvas(): CaptureCanvas
   /** Default: the global `MediaRecorder`, when there is one. */
   MediaRecorder: typeof MediaRecorder | undefined
+  /** WebCodecs, for recordings without audio (default: the globals, when there are). */
+  VideoEncoder: typeof VideoEncoder | undefined
+  VideoFrame: typeof VideoFrame | undefined
+  /** Clock of the WebCodecs recordings, in ms (default: `performance.now`). */
+  now(): number
 }
 
 function defaultEnv(): OutputsEnv {
@@ -116,6 +126,9 @@ function defaultEnv(): OutputsEnv {
     createSurface: () => (typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1) : document.createElement('canvas')),
     createCanvas: () => (typeof document !== 'undefined' ? document.createElement('canvas') : new OffscreenCanvas(1, 1)),
     MediaRecorder: typeof MediaRecorder !== 'undefined' ? MediaRecorder : undefined,
+    VideoEncoder: typeof VideoEncoder !== 'undefined' ? VideoEncoder : undefined,
+    VideoFrame: typeof VideoFrame !== 'undefined' ? VideoFrame : undefined,
+    now: () => performance.now(),
   }
 }
 
@@ -127,10 +140,10 @@ interface PendingSnapshot {
 }
 
 interface ActiveRecording {
-  recorder: MediaRecorder
-  /** The capture track the recorder reads, stopped with the recording. */
-  track: MediaStreamTrack
+  /** Stops the recording (its `done` resolves with what was recorded). */
   finish(): void
+  /** A WebCodecs recording: gets the capture surface after each frame. `MediaRecorder` ones read the stream canvas. */
+  frame?(surface: CaptureCanvas): void
 }
 
 export class Outputs {
@@ -142,6 +155,8 @@ export class Outputs {
   /** Streams given to the host, until all their video tracks have ended (`track.stop()`). */
   #streams: MediaStream[] = []
   #recordings = new Set<ActiveRecording>()
+  /** `MediaRecorder` recordings: they read the stream canvas. */
+  #mediaRecordings = 0
   /** Exports in progress (`hold`): they read the capture surface after each frame. */
   #holds = 0
   #disposed = false
@@ -175,7 +190,7 @@ export class Outputs {
       canvas.height = height
     }
     ctx.drawImage(source, 0, 0, width, height)
-    if (this.#streams.length > 0 || this.#recordings.size > 0) {
+    if (this.#streams.length > 0 || this.#mediaRecordings > 0) {
       const stream = this.#streamSurface()
       if (stream.canvas.width !== width || stream.canvas.height !== height) {
         stream.canvas.width = width
@@ -183,6 +198,7 @@ export class Outputs {
       }
       stream.drawImage(canvas, 0, 0)
     }
+    for (const r of this.#recordings) r.frame?.(canvas)
     const snapshots = this.#snapshots
     if (snapshots.length === 0) return
     this.#snapshots = []
@@ -225,12 +241,32 @@ export class Outputs {
     return stream
   }
 
-  /** Starts recording the output (`MediaRecorder`, real time). */
+  /**
+   * Starts recording the output, in real time: WebCodecs into an MP4 when the browser has it, no `audio` and no
+   * `mimeType` are given (falling back to `MediaRecorder` when no codec can encode the size), else `MediaRecorder`.
+   */
   record(options: RecordOptions = {}): Recording {
     this.#assertAlive()
+    const audio = options.audio === undefined ? [] : 'getAudioTracks' in options.audio ? options.audio.getAudioTracks() : options.audio.filter((t) => t.kind === 'audio')
+    const env = this.#env
+    if (audio.length > 0 || options.mimeType !== undefined || !env.VideoEncoder || !env.VideoFrame) return this.#mediaRecord(options, audio)
+    const { frameRate, videoBitsPerSecond } = options
+    if (frameRate !== undefined && !(frameRate > 0)) throw new RangeError(`frameRate must be positive, got ${frameRate}`)
+    if (videoBitsPerSecond !== undefined && !(videoBitsPerSecond > 0 && Number.isFinite(videoBitsPerSecond))) throw new RangeError(`videoBitsPerSecond must be a positive number, got ${videoBitsPerSecond}`)
+    const active: ActiveRecording = { finish: () => void recording.stop().catch(() => {}), frame: (surface) => recording.frame(surface) }
+    const recording: EncodedRecording = new EncodedRecording(
+      { ...(frameRate !== undefined ? { frameRate } : {}), ...(videoBitsPerSecond !== undefined ? { videoBitsPerSecond } : {}) },
+      { VideoEncoder: env.VideoEncoder, VideoFrame: env.VideoFrame, now: env.now, createCanvas: env.createSurface },
+      () => this.#mediaRecord(options, []),
+      () => this.#recordings.delete(active),
+    )
+    this.#recordings.add(active)
+    return recording
+  }
+
+  #mediaRecord(options: RecordOptions, audio: readonly MediaStreamTrack[]): Recording {
     const Recorder = this.#env.MediaRecorder
     if (!Recorder) throw new OuafError('unsupported', 'Recording needs MediaRecorder, which this browser does not provide.')
-    const audio = options.audio === undefined ? [] : 'getAudioTracks' in options.audio ? options.audio.getAudioTracks() : options.audio.filter((t) => t.kind === 'audio')
     let mimeType = options.mimeType
     if (mimeType !== undefined && !Recorder.isTypeSupported(mimeType)) throw new OuafError('unsupported', `This browser cannot record "${mimeType}".`)
     mimeType ??= pickRecordingType((t) => Recorder.isTypeSupported(t), audio.length > 0)
@@ -254,8 +290,6 @@ export class Outputs {
     let settle!: { resolve(blob: Blob): void; reject(error: unknown): void }
     const done = new Promise<Blob>((resolve, reject) => (settle = { resolve, reject }))
     const active: ActiveRecording = {
-      recorder,
-      track,
       finish: () => {
         if (recorder.state !== 'inactive') recorder.stop() // `stop` fires `dataavailable` (the last chunk), then `stop`
       },
@@ -267,7 +301,7 @@ export class Outputs {
       failure = (e as Event & { error?: unknown }).error ?? new Error('MediaRecorder error')
     })
     recorder.addEventListener('stop', () => {
-      this.#recordings.delete(active)
+      if (this.#recordings.delete(active)) this.#mediaRecordings--
       track.stop()
       if (chunks.length === 0 && failure !== undefined) settle.reject(failure)
       else settle.resolve(new Blob(chunks, { type: recorder.mimeType || mimeType || chunks[0]?.type || '' }))
@@ -275,6 +309,7 @@ export class Outputs {
     // Chunks every second: a recorder that fails midway still gives what it recorded until then.
     recorder.start(1000)
     this.#recordings.add(active)
+    this.#mediaRecordings++
 
     return {
       get mimeType() {

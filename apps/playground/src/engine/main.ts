@@ -571,7 +571,8 @@ document.getElementById('snapshot')!.addEventListener('click', () => engine.snap
 let recording: ReturnType<Engine['record']> | undefined
 recordButton.addEventListener('click', () => {
   if (recording) {
-    void recording.stop().then((b) => offer(b, 'recording'), outputError)
+    const stopped = recording
+    void stopped.stop().then((b) => (show('recording', stopped.mimeType), offer(b, 'recording')), outputError)
     recording = undefined
     recordButton.textContent = 'Record'
     return

@@ -713,10 +713,12 @@ export class Engine {
   }
 
   /**
-   * Records the output in real time with `MediaRecorder` (#33), like `snapshot` (excluded overlays left out). H.264
-   * MP4 where the browser can encode it, else WebM (`RECORDING_TYPES`); `audio` adds tracks the host opened. Stop it
-   * with `recording.stop()`, which resolves with the video. Throws `OuafError` (`unsupported`) without
-   * `MediaRecorder` or for a type the browser cannot record.
+   * Records the output in real time (#33, #137), like `snapshot` (excluded overlays left out). Without `audio` or
+   * `mimeType`, where the browser has WebCodecs: an MP4 (H.264, else VP9) with its duration and index, so it plays and
+   * seeks at once. With `audio` (tracks the host opened), a `mimeType`, or without WebCodecs: `MediaRecorder`, H.264
+   * MP4 where it can, else WebM (`RECORDING_TYPES`). Stop it with `recording.stop()`, which resolves with the video.
+   * Throws `OuafError` (`unsupported`) when neither can record, or for a type the browser cannot record. For a file
+   * source rendered frame by frame, see `export`.
    */
   record(options?: RecordOptions): Recording {
     this.#assertAlive()

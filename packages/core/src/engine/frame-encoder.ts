@@ -23,6 +23,9 @@ export interface VideoEncodingOptions {
   keyFrameInterval?: number
 }
 
+/** What `FrameEncoder` encodes: a canvas (the capture surface), or a frame. */
+export type EncoderImage = HTMLCanvasElement | OffscreenCanvas | VideoFrame
+
 /** Browser services of the encoder, replaced in tests. */
 export interface FrameEncoderEnv {
   VideoEncoder: typeof VideoEncoder | undefined
@@ -127,25 +130,10 @@ export class FrameEncoder {
    * The image is read at once: it may change as soon as this returns (before the promise settles). Rejects with
    * `OuafError('unsupported')` when the encoder failed.
    */
-  async encode(image: CanvasImageSource | OffscreenCanvas | VideoFrame, time: number): Promise<void> {
+  async encode(image: EncoderImage, time: number): Promise<void> {
     this.#check()
     const encoder = this.#encoder
-    const timestamp = Math.round(time * 1e6)
-    const init: VideoFrameInit = { timestamp }
-    const iw = 'displayWidth' in image ? image.displayWidth : (image as { width: number }).width
-    const ih = 'displayHeight' in image ? image.displayHeight : (image as { height: number }).height
-    // An odd size: the encoded frame leaves out the last column or row.
-    if (iw !== this.width || ih !== this.height) init.visibleRect = { x: 0, y: 0, width: Math.min(iw, this.width), height: Math.min(ih, this.height) }
-    const frame = new this.#env.VideoFrame!(image as CanvasImageSource, init)
-    // A keyframe every interval, and where the time goes back (a new run of the source).
-    const keyFrame = time - this.#lastKey >= this.#keyInterval || time < this.#lastTime
-    if (keyFrame) this.#lastKey = time
-    this.#lastTime = time
-    try {
-      encoder.encode(frame, { keyFrame })
-    } finally {
-      frame.close()
-    }
+    this.#submit(image, time)
     while (encoder.encodeQueueSize > MAX_QUEUE && !this.#error) {
       await new Promise<void>((resolve) => {
         encoder.addEventListener('dequeue', () => resolve(), { once: true })
@@ -154,6 +142,37 @@ export class FrameEncoder {
       })
     }
     this.#check()
+  }
+
+  /**
+   * Encodes `image` at `time` (s) unless the encoder has more than a few frames queued (a live recording drops the
+   * frame instead of waiting), it failed or it is closed. True when the frame went to the encoder.
+   */
+  tryEncode(image: EncoderImage, time: number): boolean {
+    if (this.#error || this.#closed || this.#encoder.encodeQueueSize > MAX_QUEUE) return false
+    try {
+      this.#submit(image, time)
+      return true
+    } catch (cause) {
+      this.#error ??= new OuafError('unsupported', `The video encoder failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause })
+      return false
+    }
+  }
+
+  /** The encoder failed (`tryEncode` does not throw): `finish` will reject, `partial` gives what came out before. */
+  get failed(): boolean {
+    return this.#error !== undefined
+  }
+
+  /**
+   * The MP4 of the frames encoded so far, without waiting for those still queued (a recording whose encoder failed);
+   * `undefined` when none came out. The encoder is closed afterwards.
+   */
+  partial(end?: number): Blob | undefined {
+    const writer = this.#writer
+    this.close()
+    if (!writer || writer.frameCount === 0) return undefined
+    return writer.finish(end)
   }
 
   /**
@@ -195,6 +214,25 @@ export class FrameEncoder {
       this.#writer.add(data, chunk.timestamp / 1e6, chunk.type === 'key')
     } catch (cause) {
       this.#error = new OuafError('unsupported', `Cannot write the encoded video: ${cause instanceof Error ? cause.message : String(cause)}`, { cause })
+    }
+  }
+
+  #submit(image: EncoderImage, time: number): void {
+    const timestamp = Math.round(time * 1e6)
+    const init: VideoFrameInit = { timestamp }
+    const iw = 'displayWidth' in image ? image.displayWidth : (image as { width: number }).width
+    const ih = 'displayHeight' in image ? image.displayHeight : (image as { height: number }).height
+    // An odd size: the encoded frame leaves out the last column or row.
+    if (iw !== this.width || ih !== this.height) init.visibleRect = { x: 0, y: 0, width: Math.min(iw, this.width), height: Math.min(ih, this.height) }
+    const frame = new this.#env.VideoFrame!(image as CanvasImageSource, init)
+    // A keyframe every interval, and where the time goes back (a new run of the source).
+    const keyFrame = time - this.#lastKey >= this.#keyInterval || time < this.#lastTime
+    if (keyFrame) this.#lastKey = time
+    this.#lastTime = time
+    try {
+      this.#encoder.encode(frame, { keyFrame })
+    } finally {
+      frame.close()
     }
   }
 

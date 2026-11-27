@@ -115,9 +115,10 @@ test('snapshot, outputStream and record leave out the excludeFromCapture overlay
   const recorded = await page.evaluate(async () => {
     const { engine } = window.ouaf!
     const recording = engine.record()
-    const mimeType = recording.mimeType
     await new Promise((resolve) => setTimeout(resolve, 1500))
     const blob = await recording.stop()
+    // Known once the encoder has started (`video/mp4` before).
+    const mimeType = recording.mimeType
     const video = document.createElement('video')
     video.muted = true
     video.src = URL.createObjectURL(blob)
@@ -143,14 +144,71 @@ test('snapshot, outputStream and record leave out the excludeFromCapture overlay
     URL.revokeObjectURL(video.src)
     return result
   })
-  // Chromium: H.264 MP4 or WebM VP9; Firefox: WebM VP8 (its MediaRecorder has no VP9).
-  expect(recorded.mimeType).toMatch(/^video\/(mp4;codecs=avc1|webm;codecs=vp9|webm;codecs=vp8)/)
-  expect(recorded.type).toMatch(/^video\/(mp4|webm)/)
+  // WebCodecs (#137): an MP4, H.264 (Chromium) or VP9 (Firefox on Linux has no H.264 encoder).
+  expect(recorded.mimeType).toMatch(/^video\/mp4; codecs="(avc1|vp09)\./)
+  expect(recorded.type).toBe('video/mp4')
   expect(recorded.state).toBe('inactive')
   expect(recorded.size).toBeGreaterThan(1000)
   expect([recorded.width, recorded.height]).toEqual(recorded.canvas)
   expect(near(recorded.colors[0]!, YELLOW, 50), `recording left: ${recorded.colors[0]}`).toBe(true)
   expect(near(recorded.colors[1]!, MAGENTA, 80), `recording right: ${recorded.colors[1]}`).toBe(false)
 
+  expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
+})
+
+test('record gives an MP4 with its duration that seeks, leaves pauses out, and uses MediaRecorder for audio', async ({ page }) => {
+  await page.goto('/engine.html?source=no-face&autostart&filter=/filters/fixtures/capture/')
+  await page.waitForFunction(() => ((window.ouaf?.engine.filters.length ?? 0) > 0 && (window.ouaf?.frames ?? 0) > 0) || (window.ouaf?.errors.length ?? 0) > 0, undefined, { timeout: 60_000 })
+  const result = await page.evaluate(async () => {
+    const { engine } = window.ouaf!
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+    // 1 s recorded, 1 s paused, 1 s recorded.
+    const recording = engine.record()
+    await wait(1000)
+    recording.pause()
+    const paused = recording.state
+    await wait(1000)
+    recording.resume()
+    await wait(1000)
+    const blob = await recording.stop()
+    const video = document.createElement('video')
+    video.muted = true
+    video.src = URL.createObjectURL(blob)
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = resolve
+      video.onerror = () => reject(new Error(`cannot load the recording (${blob.type})`))
+    })
+    const duration = video.duration
+    video.currentTime = duration / 2
+    await new Promise((resolve, reject) => {
+      video.onseeked = resolve
+      setTimeout(() => reject(new Error('no seeked event')), 10_000)
+    })
+    URL.revokeObjectURL(video.src)
+
+    // With the host's audio: MediaRecorder (WebCodecs records video only).
+    const audio = new AudioContext()
+    const oscillator = audio.createOscillator()
+    const destination = audio.createMediaStreamDestination()
+    oscillator.connect(destination)
+    oscillator.start()
+    const withAudio = engine.record({ audio: destination.stream })
+    const audioType = withAudio.mimeType
+    await wait(300)
+    const audioBlob = await withAudio.stop()
+    oscillator.stop()
+    await audio.close()
+    return { type: blob.type, mimeType: recording.mimeType, paused, duration, seeked: video.currentTime, audioType, audioSize: audioBlob.size }
+  })
+  expect(result.type).toBe('video/mp4')
+  expect(result.mimeType).toMatch(/^video\/mp4; codecs="(avc1|vp09)\./)
+  expect(result.paused).toBe('paused')
+  // 2 s recorded: the pause is left out (a busy CI machine may render a frame or two late).
+  expect(result.duration).toBeGreaterThan(1.7)
+  expect(result.duration).toBeLessThan(2.4)
+  expect(result.seeked).toBeCloseTo(result.duration / 2, 1)
+  expect(result.audioType).toMatch(/^video\/(mp4|webm)/)
+  expect(result.audioType).not.toMatch(/^video\/mp4; codecs="/)
+  expect(result.audioSize).toBeGreaterThan(0)
   expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
 })

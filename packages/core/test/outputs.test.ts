@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { OuafError } from '../src/engine/errors.ts'
 import { Outputs, RECORDING_TYPES, pickRecordingType, type OutputsEnv } from '../src/engine/outputs.ts'
+import { demuxMp4 } from '../src/mp4.ts'
+import { fakeEnv } from './fake-webcodecs.ts'
 
 // Fakes of the browser objects the outputs use (Node has no canvas, MediaStream or MediaRecorder).
 
@@ -243,6 +245,60 @@ describe('Outputs', () => {
     expect(outputs().record({ mimeType: 'video/webm' }).mimeType).toBe('video/webm')
     expect(outputs().record().mimeType).toBe('video/webm')
     expect(() => outputs({ MediaRecorder: undefined }).record()).toThrow(expect.objectContaining({ code: 'unsupported' }))
+  })
+
+  it('record: WebCodecs into an MP4 when there is no audio and no mimeType', async () => {
+    supported = new Set(['video/webm'])
+    let clock = 0
+    const webcodecs = fakeEnv(undefined, true)
+    const o = outputs({ ...webcodecs.env, now: () => (clock += 40) })
+    const rec = o.record()
+    expect(FakeRecorder.instances).toHaveLength(0)
+    expect([rec.mimeType, rec.state, o.active]).toEqual(['video/mp4', 'recording', true])
+    o.capture(frame('f0'), 64, 48) // starts the encoder
+    await new Promise((r) => setTimeout(r, 0))
+    for (let i = 1; i <= 3; i++) o.capture(frame(`f${i}`), 64, 48)
+    expect(canvases).toHaveLength(0) // no stream canvas: the encoder reads the capture surface
+    await new Promise((r) => setTimeout(r, 0))
+    const blob = await rec.stop()
+    expect(rec.mimeType).toBe('video/mp4; codecs="avc1.64001e"')
+    expect(demuxMp4(new Uint8Array(await blob.arrayBuffer())).samples.map((s) => Math.round(s.time * 1000))).toEqual([0, 40, 80])
+    expect(o.active).toBe(false)
+
+    // Audio, or a mimeType: MediaRecorder.
+    o.record({ audio: [new FakeTrack('audio') as unknown as MediaStreamTrack] }).stop()
+    o.record({ mimeType: 'video/webm' }).stop()
+    expect(FakeRecorder.instances).toHaveLength(2)
+    expect(() => o.record({ frameRate: 0 })).toThrow(RangeError)
+    expect(() => o.record({ videoBitsPerSecond: -1 })).toThrow(RangeError)
+  })
+
+  it('record: falls back to MediaRecorder when no codec can encode the size', async () => {
+    supported = new Set(['video/webm'])
+    const o = outputs({ ...fakeEnv(() => false).env })
+    const rec = o.record({ frameRate: 24, videoBitsPerSecond: 1e6 })
+    o.capture(frame('f0'), 64, 48)
+    await new Promise((r) => setTimeout(r, 0))
+    const recorder = FakeRecorder.instances[0]!
+    expect(recorder.options).toEqual({ mimeType: 'video/webm', videoBitsPerSecond: 1e6 })
+    expect(canvases[0]!.frameRates).toEqual([24])
+    expect(rec.mimeType).toBe('video/webm')
+    o.capture(frame('f1'), 64, 48)
+    expect(canvases[0]!.content).toBe('copy of f1 0,0 64x48 into 64x48')
+    expect(await (await rec.stop()).text()).toBe('end')
+    expect(o.active).toBe(false)
+  })
+
+  it('dispose: stops a WebCodecs recording with what it recorded', async () => {
+    const o = outputs({ ...fakeEnv(undefined, true).env })
+    const rec = o.record()
+    o.capture(frame('f0'), 64, 48)
+    await new Promise((r) => setTimeout(r, 0))
+    o.capture(frame('f1'), 64, 48)
+    await new Promise((r) => setTimeout(r, 0))
+    o.dispose()
+    expect(demuxMp4(new Uint8Array(await (await rec.done).arrayBuffer())).samples).toHaveLength(1)
+    expect(rec.state).toBe('inactive')
   })
 
   it('dispose: rejects pending snapshots, ends recordings and the tracks of the streams', async () => {
