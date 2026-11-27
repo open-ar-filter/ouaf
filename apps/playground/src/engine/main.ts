@@ -1,6 +1,7 @@
+/// <reference types="vite/client" />
 /**
- * Engine page (`/engine.html`): drives `@ouaf/core`'s public API, the way a host would. Used by the browser tests
- * (`window.ouaf`) and by the layer-type work as a harness, until the playground app (#36) is rebuilt on the engine.
+ * Engine page (`/engine.html`), the playground (#36): drives `@ouaf/core`'s public API, the way a host would, and
+ * reloads the filters of `filters/` when their files change. Used by the browser tests (`window.ouaf`).
  */
 import {
   BACKEND_STORE_PREFIX,
@@ -12,6 +13,7 @@ import {
   throttlePlugin,
   type Engine,
   type EngineStats,
+  type FilterHandle,
   type LiteRtTrackerOptions,
   type OuafPlugin,
   type PerformanceEvent,
@@ -45,6 +47,8 @@ declare global {
        * time of its frame callback, s): a test can wait for results of a frame it presented.
        */
       results: { count: number; time: number }
+      /** Hot reloads of filters done (#36): a test can wait for the next one. */
+      reloads: number
     }
   }
 }
@@ -139,6 +143,7 @@ const hook = {
   performance: perf.events,
   throttle,
   results,
+  reloads: 0,
 }
 window.ouaf = hook
 
@@ -207,11 +212,42 @@ async function start(): Promise<void> {
   }
 }
 
+/** Where each filter of the stack was loaded from (a URL, or a file opened in the page): what a hot reload reloads. */
+const sources = new Map<FilterHandle, string | File>()
+
+/**
+ * Changes of the stack run one after the other: a hot reload waits for the filters still loading (their handle, and
+ * so their URL, is known only once `engine.addFilter` resolves), and two quick saves do not reload at the same time.
+ */
+let stackTasks: Promise<unknown> = Promise.resolve()
+function serial<T>(task: () => Promise<T>): Promise<T> {
+  const run = stackTasks.then(task, task)
+  stackTasks = run.catch(() => {})
+  return run
+}
+
 /** Adds a filter on top of the stack, logs its expression events and refreshes the params panel. */
-async function addFilter(src: string | File, label: string): Promise<void> {
-  const handle = await engine.addFilter(src)
+function addFilter(src: string | File, label: string): Promise<void> {
+  return serial(() => loadFilter(src, label))
+}
+
+async function loadFilter(src: string | File, label: string): Promise<void> {
+  let handle: FilterHandle
+  try {
+    handle = await engine.addFilter(src)
+  } catch (error) {
+    if (typeof src === 'string') await showReport(src, error)
+    throw error
+  }
+  hideReport()
+  wire(handle, src, label)
+  renderParams(document.getElementById('params') as HTMLElement, engine.filters, (message) => show('param error', message))
+}
+
+/** Logs a filter of the stack and its expression events (spec §13): counts and the last one. */
+function wire(handle: FilterHandle, src: string | File, label: string): void {
+  sources.set(handle, src)
   show(`filter ${handle.index}`, `${handle.id} (${label})${handle.warnings.length ? ` — ${handle.warnings.join('; ')}` : ''}`)
-  // Expression events delivered to the filter (spec §13): counts and the last one.
   const counts = new Map<string, number>()
   handle.on('expression', (e) => {
     perf.expression(e)
@@ -220,7 +256,92 @@ async function addFilter(src: string | File, label: string): Promise<void> {
     const last = `${e.name}${e.side ? ` (${e.side})` : ''}, face ${e.faceId}`
     show(`events ${handle.id}`, `last: ${last} — ${[...counts].map(([n, c]) => `${n} ×${c}`).join(', ')}`)
   })
+}
+
+// Hot reload (#36, dev server only): the server sends `ouaf:filter-change` with the URL of a filter whose files
+// changed (`vite.config.ts`, `devFilters`); `filter.ts` folders are packed by the server on each load.
+const banner = document.getElementById('banner') as HTMLPreElement
+const pathOf = (url: string) => new URL(url, document.baseURI).pathname
+
+/** Shows why `url` failed to load: the validation report of its folder when the dev server has one. */
+async function showReport(url: string, error: unknown): Promise<void> {
+  let text = error instanceof Error ? error.message : String(error)
+  if (import.meta.hot && !pathOf(url).endsWith('.ouaf')) {
+    try {
+      const report = (await (await fetch(`${import.meta.env.BASE_URL}__ouaf__/report?filter=${encodeURIComponent(pathOf(url))}`)).json()) as { ok: boolean; text: string }
+      if (!report.ok) text = report.text
+    } catch {
+      // No report: the engine's error says enough.
+    }
+  }
+  banner.textContent = `${url} did not load; the previous version stays on screen.\n${text}`
+  banner.hidden = false
+}
+const hideReport = () => {
+  banner.hidden = true
+  banner.textContent = ''
+}
+
+/**
+ * Reloads every filter of the stack loaded from `url`: the whole stack is loaded again and swapped in one frame
+ * (`engine.setFilters`), the source keeps playing. The parameter values set in the page and the enabled states are
+ * kept (a value the new version refuses is dropped); scripts restart. On failure the stack stays as it was and the
+ * banner says why. A stack with a filter the page did not load (added through `window.ouaf.engine`) is left alone.
+ */
+async function reload(url: string): Promise<void> {
+  const stack = engine.filters.slice()
+  const changed = (h: FilterHandle) => {
+    const src = sources.get(h)
+    return typeof src === 'string' && pathOf(src) === pathOf(url)
+  }
+  if (!stack.some(changed)) return
+  if (stack.some((h) => !sources.has(h))) {
+    show('reload', `${url} changed; not reloaded: a filter of the stack was added outside the page`)
+    return
+  }
+  let fresh: FilterHandle[]
+  try {
+    // The others keep their values; the changed ones get theirs back one by one, below.
+    fresh = await engine.setFilters(stack.map((h) => (changed(h) ? { src: sources.get(h)! } : { src: sources.get(h)!, params: h.params })))
+  } catch (error) {
+    await showReport(url, error)
+    return
+  }
+  hideReport()
+  for (const [i, old] of stack.entries()) {
+    const handle = fresh[i]!
+    if (changed(old)) {
+      for (const [name, value] of Object.entries(old.params)) {
+        // Only the values set in the page: a default the author just changed must show.
+        const def = old.manifest.params?.[name]
+        if (def && 'default' in def && JSON.stringify(def.default) === JSON.stringify(value)) continue
+        try {
+          handle.setParam(name, value, { transition: 0 })
+        } catch {
+          // Removed, or no longer valid in the new version: the new default applies.
+        }
+      }
+    }
+    handle.enabled = old.enabled
+    const src = sources.get(old)!
+    sources.delete(old)
+    wire(handle, src, typeof src === 'string' ? src : src.name)
+  }
   renderParams(document.getElementById('params') as HTMLElement, engine.filters, (message) => show('param error', message))
+  hook.reloads++
+  show('reload', `${url} at ${new Date().toLocaleTimeString()}`)
+}
+
+if (import.meta.hot) {
+  // Editors write a file in several steps: one reload per burst.
+  const pending = new Map<string, ReturnType<typeof setTimeout>>()
+  import.meta.hot.on('ouaf:filter-change', ({ url }: { url: string }) => {
+    clearTimeout(pending.get(url))
+    pending.set(url, setTimeout(() => {
+      pending.delete(url)
+      void serial(() => reload(url))
+    }, 150))
+  })
 }
 
 /** Opens `.ouaf` packages chosen in the file picker or dropped on the page (read locally, nothing is uploaded). */

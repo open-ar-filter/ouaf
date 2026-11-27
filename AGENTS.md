@@ -40,7 +40,7 @@ npm run fetch-models   # face model into apps/playground/models/ (gitignored); n
 npm run test:browser   # Playwright (starts `npm run dev` itself; all of e2e/ but evil.spec.ts); first run: npx playwright install chromium
 npm run test:browser:coverage  # same with V8 coverage (page and workers) → coverage-browser/index.html; fails below 80 % on the browser-only modules
 npm run test:security  # malicious filters (filters/evil/) on Chromium, Firefox, WebKit; Linux: xvfb-run -a …
-npm run dev            # playground on https://localhost:5173 (self-signed); /?source=<clip> plays a test clip
+npm run dev            # playground on https://localhost:5173 (self-signed); /engine.html?source=<clip>&filter=/filters/<id>/ (reloads on save)
 npx ouaf validate <folder|file.ouaf> [--json]   # check a filter; exit 0 valid, 1 invalid, 2 usage error
 npx ouaf pack <folder> [-o out.ouaf]   # filter.ts/filter.js + assets/ → .ouaf (spec §3.1); same exit codes
 npx ouaf preview <filter>... [--json]  # render on reference faces in headless Chromium → ouaf-preview/<ref>.png
