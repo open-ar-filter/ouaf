@@ -10,6 +10,8 @@ const here = dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
 /** Folder of the filters served at `/filters/` (demos, fixtures, the author's own). */
 const FILTERS_DIR = resolve(here, '../../filters')
+/** The test clips (`test-media/<clip>.mp4`), played with `?source=<clip>`. */
+const CLIPS_DIR = resolve(here, '../../test-media')
 
 /**
  * Self-hosted tracking assets, served from the playground origin (no CDN at runtime):
@@ -39,7 +41,7 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
   {
     // Test clips (#77), committed at the repository root; played with `?source=<clip>`.
     prefix: 'test-media/',
-    dir: resolve(here, '../../test-media'),
+    dir: CLIPS_DIR,
     files: /^[\w-]+\.mp4$/,
   },
   // Built-in resources (#65), lazy-loaded by URL: `assetsBaseUrl` is `<base>builtins/` (see @ouaf/builtins).
@@ -96,7 +98,10 @@ function listFiles(dir: string, files: RegExp, nested = false): string[] {
 const SAFE_NAME = /^[\w.-]+$/
 const SAFE_PATH = /^[\w-][\w.-]*(\/[\w-][\w.-]*)*$/
 
-/** Serves `SELF_HOSTED` in dev and copies it into the build output. */
+/** The test clips, for the engine page's source picker: `test-media/clips.json`, in dev and in the build. */
+const clipsJson = () => JSON.stringify({ clips: listFiles(CLIPS_DIR, /^[\w-]+\.mp4$/).sort().map((name) => name.replace(/\.mp4$/, '')) })
+
+/** Serves `SELF_HOSTED` (and `test-media/clips.json`) in dev and copies it into the build output. */
 function selfHostedAssets(): Plugin {
   let base = '/'
   return {
@@ -107,6 +112,12 @@ function selfHostedAssets(): Plugin {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const path = req.url?.split('?')[0] ?? ''
+        if (path === `${base}test-media/clips.json`) {
+          res.setHeader('Content-Type', 'application/json')
+          res.setHeader('Cache-Control', 'no-store')
+          res.end(clipsJson())
+          return
+        }
         for (const { prefix, dir, files, nested } of SELF_HOSTED) {
           if (!path.startsWith(base + prefix)) continue
           const name = decodeURIComponent(path.slice(base.length + prefix.length))
@@ -145,6 +156,7 @@ function selfHostedAssets(): Plugin {
       })
     },
     generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'test-media/clips.json', source: clipsJson() })
       for (const { prefix, dir, files, hint, nested } of SELF_HOSTED) {
         const names = listFiles(dir, files, nested)
         if (names.length === 0 && hint) this.warn(`No file in ${dir}: ${hint}.`)

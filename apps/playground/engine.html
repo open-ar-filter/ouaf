@@ -19,6 +19,8 @@
       fieldset .presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
       #demos { max-width: 640px; margin: 12px 0; }
       #demos dd { margin: 0 0 8px 16px; font-size: 14px; }
+      #sources { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 12px 0; }
+      #sources select { font: inherit; padding: 6px; max-width: 100%; }
       #stack { max-width: 640px; margin: 12px 0; }
       #stack h2 { font-size: 1.1em; margin: 0 0 8px; }
       #add > summary { cursor: pointer; padding: 8px 0; }
@@ -42,7 +44,8 @@
   <body>
     <h1>Ouaf engine</h1>
     <p>
-      <code>?source=&lt;clip&gt;</code> plays <code>test-media/&lt;clip&gt;.mp4</code> (camera otherwise),
+      <code>?source=&lt;clip&gt;</code> plays <code>test-media/&lt;clip&gt;.mp4</code>, <code>?source=camera-back</code>
+      the rear camera (the front camera otherwise); the picker below changes it, live once started,
       <code>&amp;filter=&lt;url&gt;</code> (repeatable) loads filter folders, e.g. <code>/filters/&lt;id&gt;/</code>, or
       <code>.ouaf</code> packages, e.g. <code>/filters/&lt;id&gt;.ouaf</code>,
       <code>&amp;maxFaces=N</code>, <code>&amp;seed=N</code>, <code>&amp;autostart</code>.
@@ -60,6 +63,10 @@
       <p>Each demo on a test clip, or on the camera (then press Start).</p>
       <div></div>
     </details>
+    <p id="sources">
+      <label>Source <select id="source-picker"></select></label>
+      <label>or a video file <input id="source-file" type="file" accept="video/*" /></label>
+    </p>
     <button id="start" type="button">Start</button>
     <button id="snapshot" type="button">Snapshot</button>
     <button id="record" type="button">Record</button>

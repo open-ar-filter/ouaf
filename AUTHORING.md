@@ -50,7 +50,8 @@ npm run dev                            # https://localhost:5173 (self-signed cer
 writes one screenshot per reference (section 17); it needs Playwright's Chromium once: `npx playwright install chromium`. To see it
 live, open `https://localhost:5173/engine.html?filter=/filters/hello/&source=pesquet-talk&autostart`: the engine page
 plays a [test clip](test-media/README.md) (`source=<clip>`, `autostart` starts it) with your filter on top. Without
-`source`, click **Start** to use the camera. Other query parameters: `filter` can be repeated to stack filters,
+`source`, click **Start** to use the camera. The **Source** picker above Start switches to another clip, the front or
+rear camera, or a video file of your own (read in the page, not uploaded), live once started. Other query parameters: `filter` can be repeated to stack filters,
 `maxFaces=<1–16>` (default 1), `seed=<n>` fixes random choices. The **Stack** panel under the video adds filters (its
 menu lists the demos and the folders of `filters/`), orders, turns off and removes them, and keeps the stack in the
 URL; the parameters (section 7) of the filter selected there appear as controls. Warnings show on the filter's row,
