@@ -162,6 +162,8 @@ function selfHostedAssets(): Plugin {
  *   folder (`/filters/<folder>/manifest.json`, `script.js`, `assets/…`); a folder that does not pack answers its
  *   `manifest.json` with 422 and the report;
  * - `GET /__ouaf__/report?filter=/filters/<folder>/` gives `{ ok, text }`, the folder's validation report;
+ * - `GET /__ouaf__/filters` gives `{ filters }`, the filters of `filters/` but `evil/` (`DevFilters.list`), for the
+ *   engine page's "Add" menu;
  * - every change under `filters/` sends the custom HMR event `ouaf:filter-change` with the URL of the filter it
  *   belongs to (`/filters/<folder>/`, or a `.ouaf`), which the engine page reloads in place.
  */
@@ -191,6 +193,10 @@ function devFilters(): Plugin {
           res.setHeader('Content-Type', type)
           res.setHeader('Cache-Control', 'no-store')
           res.end(body)
+        }
+        if (url.pathname === `${base}__ouaf__/filters`) {
+          // The malicious filters are left out: some hang the page on purpose (filters/evil/README.md).
+          return send(200, 'application/json', JSON.stringify({ filters: filters.list().filter((f) => !f.path.startsWith('evil/')) }))
         }
         if (url.pathname === `${base}__ouaf__/report`) {
           const target = url.searchParams.get('filter') ?? ''

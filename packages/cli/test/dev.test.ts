@@ -26,6 +26,9 @@ beforeAll(async () => {
   await write('group/deep/assets/a.png', 'png')
   await write('group/readme.md', '# not a filter')
   await write('pack.ouaf', 'zip')
+  await write('localized/manifest.json', JSON.stringify({ id: 'localized', name: { fr: 'Bonjour', en: 'Hello' } }))
+  await write('.hidden/manifest.json', '{}')
+  await write('node_modules/x/manifest.json', '{}')
   dev = new DevFilters(root)
 })
 afterAll(() => rm(root, { recursive: true, force: true }))
@@ -81,6 +84,20 @@ describe('file', () => {
     expect(await id()).toBe('one')
     dev.invalidate('cached')
     expect(await id()).toBe('two')
+  })
+})
+
+describe('list', () => {
+  it('every filter folder and package, with the names of the manifests that read', () => {
+    expect(dev.list().filter((e) => e.path !== 'cached')).toEqual([
+      { path: 'bad', kind: 'source' },
+      { path: 'both', kind: 'folder' },
+      { path: 'group/deep', kind: 'folder' },
+      { path: 'localized', kind: 'folder', id: 'localized', name: 'Hello' },
+      { path: 'pack.ouaf', kind: 'package' },
+      { path: 'plain', kind: 'folder', id: 'plain', name: 'X' },
+      { path: 'src', kind: 'source' },
+    ])
   })
 })
 
