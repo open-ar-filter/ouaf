@@ -1,0 +1,13 @@
+{
+  "ouaf": "1",
+  "id": "tracking-only",
+  "name": "Tracking only (benchmark fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "Benchmark fixture (#39): face tracking and one tiny dot on the nose, so that the benchmark page measures what tracking costs with next to nothing drawn.",
+  "requires": { "face": true },
+  "assets": {
+    "dot": { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 2 2'><circle cx='1' cy='1' r='1' fill='#00ff00'/></svg>" }
+  },
+  "layers": [{ "type": "sticker", "src": "dot", "anchor": "noseTip", "size": 0.02 }]
+}

@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process'
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, extname, join, resolve, sep } from 'node:path'
@@ -267,10 +268,22 @@ function pages(): Record<string, string> {
     main: resolve(here, 'index.html'),
     engine: resolve(here, 'engine.html'),
     builtins: resolve(here, 'builtins.html'),
+    bench: resolve(here, 'bench.html'),
   }
   const dir = resolve(here, 'spikes')
   for (const name of listFiles(dir, /\.html$/)) input[`spikes/${name.replace(/\.html$/, '')}`] = join(dir, name)
   return input
+}
+
+/** The commit the page is built from, for the benchmark's results (`+` when the working tree has changes). */
+function commit(): string {
+  try {
+    const hash = execSync('git rev-parse --short HEAD', { cwd: here, encoding: 'utf8' }).trim()
+    const dirty = execSync('git status --porcelain --untracked-files=no', { cwd: here, encoding: 'utf8' }).trim() !== ''
+    return `${hash}${dirty ? '+' : ''}`
+  } catch {
+    return 'unknown'
+  }
 }
 
 /**
@@ -283,6 +296,7 @@ const HEADERS = { 'Content-Security-Policy': "connect-src 'self' ws: wss:" }
 // getUserMedia requires a secure context: serve over HTTPS (self-signed certificate) and listen on
 // every interface so a phone on the same network can open the playground.
 export default defineConfig({
+  define: { __OUAF_COMMIT__: JSON.stringify(commit()) },
   plugins: [basicSsl({ name: 'ouaf-playground' }), devFilters(), selfHostedAssets(), evilSink()],
   server: { host: true, port: 5173, headers: HEADERS },
   preview: { host: true, port: 4173, headers: HEADERS },

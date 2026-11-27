@@ -1,0 +1,12 @@
+{
+  "$comment": "Cases of the benchmark page (/bench.html, #39) besides the demos of demos.json, which it adds one by one on their clip: the baselines first, then the stacks after the demos. filters: URLs, bottom of the stack first; clip: a test clip of test-media/; maxFaces: what the host gives the engine.",
+  "baselines": [
+    { "name": "no filter", "clip": "pesquet-talk", "maxFaces": 1, "filters": [] },
+    { "name": "tracking only", "clip": "pesquet-talk", "maxFaces": 1, "filters": ["/filters/fixtures/tracking-only/"] },
+    { "name": "tracking only, 4 faces", "clip": "four-faces-grid", "maxFaces": 4, "filters": ["/filters/fixtures/tracking-only/"] }
+  ],
+  "stacks": [
+    { "name": "glasses + vintage + text-bubble", "clip": "pesquet-walk", "maxFaces": 1, "filters": ["/filters/glasses/", "/filters/vintage/", "/filters/text-bubble/"] },
+    { "name": "big-eyes + duo + ai-birthday", "clip": "two-faces-stacked", "maxFaces": 2, "filters": ["/filters/big-eyes/", "/filters/duo/", "/filters/ai-birthday/"] }
+  ]
+}
