@@ -552,7 +552,9 @@ analysis resolution; below 12 Hz of tracking for 3 s it hides face filters and s
 is back above 14 Hz. Give blendshape bindings a sensible `default`. To see it on a desktop, open
 `/engine.html?throttle=120&filter=…` (simulated slow tracking, also a slider in the panel). When the device cannot
 draw every camera frame, the engine also renders at a lower resolution (down to half size) until it can: in shaders,
-use `ouaf_resolution` and `uv`, never a size in pixels.
+use `ouaf_resolution` and `uv`, never a size in pixels. To know what your filter costs, open
+`/bench.html?filter=/filters/<id>/&source=<clip>` (with `npm run dev`; on a phone too): it times every frame on the
+clip next to the demos and the baselines (no filter, tracking alone), and copies the table for an issue.
 
 ## 13. Privacy and security
 

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- No data leaves: blocks MediaPipe's usage metrics (POST to odml.pa.googleapis.com); ws/wss for Vite HMR. -->
+    <meta http-equiv="Content-Security-Policy" content="connect-src 'self' ws: wss:" />
+    <title>Ouaf benchmark</title>
+    <style>
+      :root { font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 16px; max-width: 960px; }
+      button, input, textarea { font: inherit; }
+      button { padding: 8px 16px; }
+      #cases { display: grid; grid-template-columns: repeat(auto-fill, minmax(16em, 1fr)); gap: 4px 16px; }
+      #cases small, td small { opacity: 0.7; }
+      td small { display: block; overflow-wrap: anywhere; }
+      td small.error { color: #d33; opacity: 1; }
+      .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 12px 0; }
+      .controls input[type=number] { width: 6em; }
+      #stage canvas { display: block; width: 180px; background: #000; }
+      .table { overflow-x: auto; }
+      table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+      th, td { padding: 4px 8px; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); text-align: right; }
+      th:first-child, td:first-child { text-align: left; }
+      .better { color: #2a2; }
+      .worse { color: #d33; }
+      textarea { width: 100%; box-sizing: border-box; height: 16em; font-family: ui-monospace, monospace; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Ouaf benchmark</h1>
+    <p>
+      Renders each case frame by frame on its test clip, as fast as this device can (device adaptation off), and times
+      each frame from tracking to the GPU finishing it. The first frames of each case are a warm-up, not counted.
+      <code>?case=&lt;name&gt;</code> (repeatable) picks cases, <code>&amp;filter=&lt;url&gt;</code> (repeatable),
+      <code>&amp;source=&lt;clip&gt;</code> and <code>&amp;maxFaces=N</code> add a stack of your own,
+      <code>&amp;frames=N</code>, <code>&amp;warmup=N</code>, <code>&amp;backend=litert|GPU|CPU</code>,
+      <code>&amp;autorun</code>. Results stay on this device unless you download or copy them.
+    </p>
+    <fieldset>
+      <legend>Cases</legend>
+      <div id="cases"></div>
+    </fieldset>
+    <p class="controls">
+      <label>Frames per case <input id="frames" type="number" min="1" /></label>
+      <label>Warm-up <input id="warmup" type="number" min="0" /></label>
+      <button id="run" type="button" disabled>Run</button>
+      <button id="stop" type="button" disabled>Stop</button>
+    </p>
+    <p class="controls">
+      <label>Compare with an earlier result <input id="compare" type="file" accept=".json,application/json" /></label>
+    </p>
+    <p id="status" role="status"></p>
+    <div id="stage"></div>
+    <div class="table"><table id="results"></table></div>
+    <p class="controls">
+      <button id="download" type="button">Download JSON</button>
+      <button id="copy" type="button">Copy as Markdown</button>
+    </p>
+    <textarea id="output" readonly hidden></textarea>
+    <script type="module" src="/src/bench/main.ts"></script>
+  </body>
+</html>

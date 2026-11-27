@@ -20,7 +20,7 @@ npm workspaces monorepo, TypeScript only, Node >= 24.
 | `e2e/` | Playwright browser tests, driving the playground on the test clips |
 | `test-media/` | Licensed test clips (CC BY 4.0), the reference face set `faces/` (CC0, #31), and the `make.sh` scripts that rebuild them |
 | `docs/spec/` | Format specification `ouaf-v1.md` and the generated `ouaf-v1.schema.json` |
-| `docs/decisions/`, `docs/perf/` | Design decisions and spike reports, perf export format |
+| `docs/decisions/`, `docs/perf/` | Design decisions and spike reports, perf session and benchmark export formats |
 | `docs/privacy.md` | What leaves the device |
 | `docs/acceptance/` | AI acceptance tests (#38): the request, the source an agent wrote from `AUTHORING.md` alone, its report |
 | `filters/` | Demo filters, test fixtures, and the malicious filters of `filters/evil/` ([`SECURITY.md`](SECURITY.md)) |
@@ -41,6 +41,7 @@ npm run test:browser   # Playwright (starts `npm run dev` itself; all of e2e/ bu
 npm run test:browser:coverage  # same with V8 coverage (page and workers) → coverage-browser/index.html; fails below 80 % on the browser-only modules
 npm run test:security  # malicious filters (filters/evil/) on Chromium, Firefox, WebKit; Linux: xvfb-run -a …
 npm run dev            # playground on https://localhost:5173 (self-signed); /engine.html?source=<clip>&filter=/filters/<id>/ (reloads on save)
+                       # /bench.html: mean and p95 time per frame of each demo and stack (filters/bench.json), JSON export
 npx ouaf validate <folder|file.ouaf> [--json]   # check a filter; exit 0 valid, 1 invalid, 2 usage error
 npx ouaf pack <folder> [-o out.ouaf]   # filter.ts/filter.js + assets/ → .ouaf (spec §3.1); same exit codes
 npx ouaf preview <filter>... [--json]  # render on reference faces in headless Chromium → ouaf-preview/<ref>.png

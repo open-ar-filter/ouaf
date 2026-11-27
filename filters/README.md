@@ -35,6 +35,10 @@ filter" menu stacks them). `duo`, `big-eyes` and
 that is not enough; `e2e/device-adaptation.spec.ts` checks that on `stress` they drop in order, that the filter is
 hidden and shown again, and that its script copes without blendshapes.
 
+[`bench.json`](bench.json) lists the other cases of the benchmark page (`/bench.html`, #39): baselines (no filter,
+tracking alone with [`fixtures/tracking-only`](fixtures/tracking-only/)) and stacks of demos; the page adds each demo
+alone ([results format](../docs/perf/bench-format.md)).
+
 [`demos.json`](demos.json) lists the demos for the playground and for `e2e/demos.spec.ts`, which renders each one
 frame by frame on its clip and compares it with its reference image (`e2e/demos.spec.ts-snapshots/<id>.jpeg`;
 `npx playwright test demos --update-snapshots=all` rewrites them after an intended change, check them before
