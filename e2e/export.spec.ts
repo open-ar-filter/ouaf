@@ -4,7 +4,8 @@ import { expect, test, type Page } from './fixtures.ts'
  * Frame-exact export (#137): `engine.export()` of the `no-face` clip (72 frames, 2.4 s) with
  * `filters/fixtures/capture/` (a yellow overlay square on the left, a magenta one on the right marked
  * `excludeFromCapture`). The MP4 has one frame per clip frame at the clip's times and its duration, whatever the
- * speed of the run; the browser plays and seeks it; the excluded overlay is left out. `cancel()` stops it.
+ * speed of the run; the browser plays and seeks it; the excluded overlay is left out. `cancel()` stops it. The audio
+ * of `pesquet-closeup-sound` (AAC) is copied byte for byte, and the browser decodes it.
  */
 
 const CLIP = '/test-media/no-face.mp4'
@@ -174,9 +175,82 @@ test('the playground exports the clip it plays, then plays it again', async ({ p
   await open(page)
   await page.locator('#export').click()
   await expect(page.locator('#output')).toHaveText(/^export\.mp4 \(video\/mp4, \d+ KB\)$/, { timeout: 60_000 })
-  await expect(page.locator('#log')).toContainText(`export: ${FRAMES} frames in`)
+  await expect(page.locator('#log')).toContainText(new RegExp(`export: ${FRAMES} frames in [\\d.]+ s, no audio`))
   await expect(page.locator('#export')).toHaveText('Export')
   // Back on the playing clip (live regime).
   await expect.poll(() => page.evaluate(() => window.ouaf!.engine.regime)).toBe('live')
   expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
+})
+
+test('the clip audio is copied as is, and the browser decodes it; audio: false leaves it out', async ({ page }) => {
+  await open(page)
+  const result = await page.evaluate(async () => {
+    const { engine, core } = window.ouaf!
+    const response = await fetch('/test-media/pesquet-closeup-sound.mp4')
+    const source = new Uint8Array(await response.arrayBuffer())
+    const clip = await core.OfflineVideoSource.open(source)
+    const blob = await engine.export(clip).done
+    const silent = await engine.export(clip, { audio: false }).done
+    clip.dispose()
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    const before = core.demuxMp4Audio(source)!
+    const after = core.demuxMp4Audio(bytes)!
+    const same = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((v, i) => v === b[i])
+    const sameSamples = before.samples.length === after.samples.length && before.samples.every((s, i) => {
+      const t = after.samples[i]!
+      return Math.abs(s.time - t.time) < 1e-4 && same(source.subarray(s.offset, s.offset + s.size), bytes.subarray(t.offset, t.offset + t.size))
+    })
+    // Decoded back: the sound lasts as long as the video.
+    let decoded = 0
+    let decodeError = ''
+    try {
+      const context = new OfflineAudioContext(2, 48000, 48000)
+      decoded = (await context.decodeAudioData(await blob.arrayBuffer())).duration
+    } catch (error) {
+      decodeError = String(error)
+    }
+    return {
+      info: clip.audio,
+      samples: [before.samples.length, after.samples.length],
+      sameEntry: same(before.sampleEntry, after.sampleEntry),
+      sameSamples,
+      frames: core.demuxMp4(bytes).samples.length,
+      duration: core.demuxMp4(bytes).duration,
+      decoded,
+      decodeError,
+      silent: core.demuxMp4Audio(new Uint8Array(await silent.arrayBuffer())),
+    }
+  })
+  expect(result.info).toEqual({ format: 'mp4a', channels: 2, sampleRate: 48000, duration: expect.closeTo(3.1, 2) })
+  expect(result.samples[1]).toBe(result.samples[0])
+  expect(result.sameEntry).toBe(true)
+  expect(result.sameSamples).toBe(true)
+  expect(result.frames).toBe(93)
+  expect(result.duration).toBeCloseTo(3.1, 4)
+  expect(result.decodeError).toBe('')
+  expect(result.decoded).toBeCloseTo(3.1, 1)
+  expect(result.silent).toBeUndefined()
+  expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
+})
+
+test('an audio track that cannot be copied is left out with a warning', async ({ page }) => {
+  await open(page)
+  const result = await page.evaluate(async () => {
+    const { engine, core } = window.ouaf!
+    const source = new Uint8Array(await (await fetch('/test-media/pesquet-closeup-sound.mp4')).arrayBuffer())
+    // The AAC sample description renamed to a codec the export does not copy.
+    const at = new TextDecoder('latin1').decode(source).indexOf('mp4a')
+    source.set([0x74, 0x77, 0x6f, 0x73], at) // "twos"
+    const clip = await core.OfflineVideoSource.open(source)
+    const warnings: string[] = []
+    const off = engine.on('warning', (w) => warnings.push(w.message))
+    const blob = await engine.export(clip).done
+    off()
+    clip.dispose()
+    return { audio: clip.audio, audioError: clip.audioError, warnings, copied: core.demuxMp4Audio(new Uint8Array(await blob.arrayBuffer())) }
+  })
+  expect(result.audio).toBeUndefined()
+  expect(result.audioError).toBe('Unsupported audio codec "twos" (supported: AAC, Opus, FLAC).')
+  expect(result.warnings).toEqual([expect.stringContaining('the audio track cannot be copied (Unsupported audio codec "twos"')])
+  expect(result.copied).toBeUndefined()
 })

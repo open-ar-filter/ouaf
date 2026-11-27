@@ -9,9 +9,11 @@
  * await engine.setSource(clip)
  * ```
  *
- * The whole file is read into memory (fine for clips of a few minutes; streaming is not implemented).
+ * The whole file is read into memory (fine for clips of a few minutes; streaming is not implemented). The audio track
+ * is not played: `engine.export()` copies it into the exported MP4 (`audio`).
  */
-import { demuxMp4, Mp4Error, type Mp4VideoTrack } from './mp4.ts'
+import { demuxMp4, demuxMp4Audio, Mp4Error, type Mp4AudioTrack, type Mp4VideoTrack } from './mp4.ts'
+import type { Mp4WriterAudio } from './mp4-writer.ts'
 import { VideoFileError } from './video-source.ts'
 
 export interface OfflineVideoOptions {
@@ -39,6 +41,16 @@ export interface OfflineFrame {
   close(): void
 }
 
+/** The clip's audio track (`OfflineVideoSource.audio`), copied as is by `engine.export()`. */
+export interface OfflineAudioInfo {
+  /** Sample description type: `mp4a` (AAC), `Opus` or `fLaC`. */
+  readonly format: string
+  readonly channels: number
+  readonly sampleRate: number
+  /** Duration in seconds. */
+  readonly duration: number
+}
+
 /** Decoded frames kept ahead of the reader. Decoders have a small pool of output frames: do not hold many. */
 const MAX_AHEAD = 4
 
@@ -54,9 +66,14 @@ export class OfflineVideoSource {
   /** Number of frames shown (frames before the start of the edit list are decoded but not shown). */
   readonly frameCount: number
   readonly mirrored: boolean
+  /** The first audio track, `undefined` when the file has none or it cannot be copied (see `audioError`). */
+  readonly audio: OfflineAudioInfo | undefined
+  /** Why the file's audio track cannot be copied (unsupported codec, corrupt tables), `undefined` otherwise. */
+  readonly audioError: string | undefined
   loop: boolean
   #rate = 1
   #track: Mp4VideoTrack
+  #audio: Mp4AudioTrack | undefined
   #data: Uint8Array
   #config: VideoDecoderConfig
   #decoder: VideoDecoder | undefined
@@ -86,6 +103,14 @@ export class OfflineVideoSource {
     this.mirrored = options.mirror ?? false
     this.loop = options.loop ?? false
     this.rate = options.rate ?? 1
+    try {
+      this.#audio = demuxMp4Audio(data)
+    } catch (cause) {
+      this.audioError = cause instanceof Mp4Error ? cause.message : String(cause)
+    }
+    if (this.#audio && this.#audio.samples.length === 0) this.#audio = undefined
+    const a = this.#audio
+    this.audio = a && { format: a.format, channels: a.channels, sampleRate: a.sampleRate, duration: a.duration }
     const shown = track.samples.map((s) => s.time).filter((t) => t >= -1e-6).sort((a, b) => a - b)
     this.frameCount = shown.length
     shown.forEach((t, i) => {
@@ -168,6 +193,21 @@ export class OfflineVideoSource {
       this.#feed(decoder)
       if (this.#flushed) return null
       await new Promise<void>((resolve) => (this.#wake = resolve))
+    }
+  }
+
+  /**
+   * The audio track's samples (views on the file, not copies) and description, for `Mp4Writer.finish`; `undefined`
+   * without an audio track. They stay valid after `dispose`.
+   */
+  audioSamples(): Mp4WriterAudio | undefined {
+    const a = this.#audio
+    if (!a || this.#disposed) return undefined
+    const data = this.#data
+    return {
+      sampleEntry: a.sampleEntry,
+      timescale: a.timescale,
+      samples: a.samples.map((s) => ({ data: data.subarray(s.offset, s.offset + s.size), time: s.time, duration: s.duration })),
     }
   }
 

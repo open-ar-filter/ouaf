@@ -7,7 +7,7 @@
  * before it is chosen. `encode` waits while the encoder has frames queued, so the engine renders no faster than the
  * device can encode, and no frame is dropped.
  */
-import { Mp4Writer } from '../mp4-writer.ts'
+import { Mp4Writer, type Mp4WriterAudio } from '../mp4-writer.ts'
 import { OuafError } from './errors.ts'
 
 /** Encoding options of `engine.export()`. */
@@ -177,9 +177,10 @@ export class FrameEncoder {
 
   /**
    * Encodes the frames still queued and returns the MP4. `end` (s) is when the last frame stops showing (the source's
-   * duration); default: one frame interval after it. The encoder is closed afterwards.
+   * duration); default: one frame interval after it. `audio`: an encoded audio track to write with the frames (cut at
+   * `end`). The encoder is closed afterwards.
    */
-  async finish(end?: number): Promise<Blob> {
+  async finish(end?: number, audio?: Mp4WriterAudio): Promise<Blob> {
     this.#check()
     try {
       await this.#encoder.flush()
@@ -190,7 +191,7 @@ export class FrameEncoder {
     const writer = this.#writer
     this.close()
     if (!writer) throw new OuafError('unsupported', 'The video encoder gave no frame.')
-    return writer.finish(end)
+    return writer.finish(end, audio)
   }
 
   /** Stops encoding and frees the encoder. Idempotent. */
