@@ -24,6 +24,7 @@ types (spec §6.3).
 | [`smile-counter`](smile-counter/) | script sandbox: `smile` events, per-face and global state, `.set()`, `.animate()` keyframes, `f.emit()`; a sticker whose opacity follows the smile | `pesquet-talk` |
 | [`canvas-bubble`](canvas-bubble/) | `canvas` drawn by the script: `fps`, `frame.time`, `face.pose`, `f.asset()`, a built-in font declared as an asset in `ctx.font`, `invalidate()` on `blink` | `pesquet-talk` |
 | [`duo`](duo/) | two faces: `{ pick }` by face; distance between faces computed in the script from `face.anchors`, `face.size` and `frame.aspect`; a screen sticker placed by the script midway between the faces | `two-faces-stacked` |
+| [`ai-birthday`](ai-birthday/) | written by an AI agent from `AUTHORING.md` alone (#38, [acceptance test](../docs/acceptance/ai-birthday/README.md)): a party hat built from model shapes with head occlusion on every face, a greeting set by the script from a string parameter, confetti drawn on a full-screen canvas for 2.6 s on `mouthOpen` | `two-faces-stacked` |
 | [`stress`](stress/) | internal benchmark: every layer type at once on four faces, a feedback shader, canvases fed with every landmark; each group has a switch (parameters, presets) | `four-faces-grid` |
 
 Try them on `/engine.html` (the "Demo filters" list: each one on its clip, or on the camera). `duo`, `big-eyes` and

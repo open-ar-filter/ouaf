@@ -18,10 +18,11 @@ npm workspaces monorepo, TypeScript only, Node >= 24.
 | `packages/builtins` | `@ouaf/builtins`: built-in fonts and LUTs (`assets/`, credits in `assets/CREDITS.md`) and the `builtin:` resolver; `scripts/make.sh` rebuilds the fonts |
 | `apps/playground` | Vite dev app; `spikes/*.html` are extra pages for phase 0 spikes; `scripts/fetch-models.ts` |
 | `e2e/` | Playwright browser tests, driving the playground on the test clips |
-| `test-media/` | Licensed test clips (CC BY 4.0) and `make.sh` to rebuild them |
+| `test-media/` | Licensed test clips (CC BY 4.0), the reference face set `faces/` (CC0, #31), and the `make.sh` scripts that rebuild them |
 | `docs/spec/` | Format specification `ouaf-v1.md` and the generated `ouaf-v1.schema.json` |
 | `docs/decisions/`, `docs/perf/` | Design decisions and spike reports, perf export format |
 | `docs/privacy.md` | What leaves the device |
+| `docs/acceptance/` | AI acceptance tests (#38): the request, the source an agent wrote from `AUTHORING.md` alone, its report |
 | `filters/` | Demo filters, test fixtures, and the malicious filters of `filters/evil/` ([`SECURITY.md`](SECURITY.md)) |
 
 Packages export their TypeScript sources directly (`exports: ./src/index.ts`); there is no package build step.
