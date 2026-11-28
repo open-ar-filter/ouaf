@@ -314,7 +314,9 @@ export async function loadFilter(
   })
   // The files of the asset parameters layers show (spec §9, §15): loaded and checked, then swapped in at a frame.
   const bound = boundAssetParams(decls, env.registry, manifest.params)
-  const hostAssets = new HostAssets({ filterId: manifest.id, params: manifest.params, bound, loaders: env.loaders, assetsBaseUrl: env.assetsBaseUrl })
+  const hostAssets = new HostAssets({
+    filterId: manifest.id, params: manifest.params, bound, loaders: env.loaders, assetsBaseUrl: env.assetsBaseUrl, renderer: env.renderer,
+  })
   for (const name of bound.keys()) {
     const def = manifest.params?.[name]
     if (def?.type === 'asset' && !def.optional && !(initialParams && Object.hasOwn(initialParams, name))) {
@@ -372,6 +374,7 @@ export async function loadFilter(
       loaders: env.loaders,
       builtinUrl: env.builtinUrl,
       assetsBaseUrl: env.assetsBaseUrl,
+      renderer: env.renderer,
       fetchImpl: env.fetchImpl,
     })
   } catch (error) {

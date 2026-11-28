@@ -303,7 +303,7 @@ filter is added to the stack, the engine starts a `ScriptHost` for it:
 | Head occluder (`model.occlusion: "head"`) | the face landmark mesh, moved back 0.2 face units along the camera rays, closed by the back of an average head (#155); the ellipsoid alone without usable landmarks | ears and hair (segmentation), one occluder per face shared by the layers |
 | Model animations | three's `AnimationMixer` (boxes a few numbers per animated face and frame) | an allocation-free sampler, if profiles show GC |
 | Audio of WebCodecs outputs | `export()` copies the clip's audio track as is (#137); `record()` without `audio` is video only (WebCodecs + in-tree MP4 muxer); `record({ audio })` uses `MediaRecorder` (WebM without duration in Chrome) | host audio through `AudioEncoder` where `MediaStreamTrackProcessor` exists (#54) |
-| glTF limits | 32 MB per file, textures not size-checked, no KTX2 textures | the limits of spec Appendix C; KTX2 with #116 |
+| glTF limits | 32 MB per file, textures not size-checked, no KTX2 textures (KTX2 sticker images load, #177) | the limits of spec Appendix C; KTX2 with #116 |
 
 ## Testing a layer type
 

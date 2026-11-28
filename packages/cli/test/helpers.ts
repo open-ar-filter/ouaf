@@ -58,8 +58,39 @@ export function webpExtended(width: number, height: number): Uint8Array {
   return concat(bytes('RIFF'), u32le(22), bytes('WEBPVP8X'), u32le(10), [0, 0, 0, 0], u24(width - 1), u24(height - 1))
 }
 
-export function ktx2(width: number, height: number): Uint8Array {
-  return concat([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a], u32le(0), u32le(1), u32le(width), u32le(height), new Uint8Array(40))
+export interface Ktx2Options {
+  /** Default 0 (Basis Universal). */
+  vkFormat?: number
+  /** Default 0 (none). */
+  supercompression?: number
+  /** Default 166 (UASTC). */
+  colorModel?: number
+  /** Default 2 (sRGB). */
+  transfer?: number
+  /** Default 1. */
+  faces?: number
+  layers?: number
+  depth?: number
+  premultiplied?: boolean
+}
+
+/**
+ * KTX2 header, level index and basic data format descriptor, without texel data: a UASTC sRGB 2D texture by default
+ * (spec §10.2), the fields set by `o` otherwise.
+ */
+export function ktx2(width: number, height: number, o: Ktx2Options = {}): Uint8Array {
+  const dfdOffset = 80 + 24 // one level
+  const dfd = concat(
+    u32le(28), u32le(0), u16le(2), u16le(24),
+    [o.colorModel ?? 166, 1, o.transfer ?? 2, o.premultiplied ? 1 : 0],
+    [0, 0, 0, 0], [16, 0, 0, 0, 0, 0, 0, 0],
+  )
+  return concat(
+    [0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a],
+    u32le(o.vkFormat ?? 0), u32le(1), u32le(width), u32le(height), u32le(o.depth ?? 0), u32le(o.layers ?? 0), u32le(o.faces ?? 1),
+    u32le(1), u32le(o.supercompression ?? 0), u32le(dfdOffset), u32le(dfd.length), u32le(0), u32le(0), new Uint8Array(16),
+    new Uint8Array(24), dfd,
+  )
 }
 
 const box = (type: string, ...payload: Array<Uint8Array | number[]>) => {

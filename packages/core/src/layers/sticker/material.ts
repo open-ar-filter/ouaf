@@ -16,7 +16,7 @@ import {
   OneMinusSrcAlphaFactor,
   OneMinusSrcColorFactor,
   RawShaderMaterial,
-  Vector2,
+  Vector3,
   Vector4,
   ZeroFactor,
   type BlendingDstFactor,
@@ -79,12 +79,14 @@ precision highp float;
 uniform sampler2D uMap;
 uniform vec4 uRect;      // frame in the texture: top-left corner, size
 uniform vec4 uClamp;     // sampling limits (half a texel inside the frame): min u, min v, max u, max v
-uniform vec2 uParams;    // opacity; mask offset (> 0: packed alpha, the mask is this far to the right of the color)
+uniform vec3 uParams;    // opacity; mask offset (> 0: packed alpha, the mask is this far to the right of the color);
+                         // straight alpha (> 0: a transcoded KTX2 texture, premultiplied here)
 in vec2 vUv;
 out vec4 fragColor;
 void main() {
   vec2 uv = clamp(uRect.xy + vUv * uRect.zw, uClamp.xy, uClamp.zw);
   vec4 c = texture(uMap, uv);
+  if (uParams.z > 0.0) c.rgb *= c.a;
   if (uParams.y > 0.0) {
     float a = texture(uMap, uv + vec2(uParams.y, 0.0)).g;
     c = vec4(c.rgb * a, a);
@@ -100,7 +102,7 @@ export class StickerMaterial extends RawShaderMaterial {
   readonly #map: { value: Texture | null }
   readonly #rect: { value: Vector4 }
   readonly #clamp: { value: Vector4 }
-  readonly #params: { value: Vector2 }
+  readonly #params: { value: Vector3 }
   #asset: StickerAsset | undefined
 
   constructor(blend: BlendMode) {
@@ -108,7 +110,7 @@ export class StickerMaterial extends RawShaderMaterial {
       uMap: { value: null as Texture | null },
       uRect: { value: new Vector4(0, 0, 1, 1) },
       uClamp: { value: new Vector4(0, 0, 1, 1) },
-      uParams: { value: new Vector2(1, 0) },
+      uParams: { value: new Vector3(1, 0, 0) },
     }
     super({
       glslVersion: GLSL3,
@@ -133,9 +135,9 @@ export class StickerMaterial extends RawShaderMaterial {
   /**
    * `x`: opacity of the instance, 0–1 (premultiplied into the color, so every blend mode fades out). Written
    * directly by the layer: a fractional number passed to a method, or stored in a `{ value }` uniform (a shape shared
-   * with object uniforms), is boxed every frame; a `Vector2` field is not.
+   * with object uniforms), is boxed every frame; a `Vector3` field is not.
    */
-  get params(): Vector2 {
+  get params(): Vector3 {
     return this.#params.value
   }
 
@@ -145,6 +147,7 @@ export class StickerMaterial extends RawShaderMaterial {
     this.#asset = asset
     this.#map.value = asset.texture
     this.#params.value.y = asset.packed ? 0.5 : 0
+    this.#params.value.z = asset.straightAlpha ? 1 : 0
     if (asset.frames) this.setFrame(0)
     else {
       this.#rect.value.set(0, 0, asset.packed ? 0.5 : 1, 1)
