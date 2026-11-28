@@ -74,6 +74,23 @@ const pending: Pending[] = params.getAll('filter').map((src, i) => ({ src, enabl
 const MAX_FACES = Math.min(16, Math.max(1, Math.trunc(Number(params.get('maxFaces'))) || 1))
 /** `?seed=N`: fixes the seed of random choices (spec §12.5). */
 const SEED = /^\d+$/.test(params.get('seed') ?? '') ? Number(params.get('seed')) : undefined
+/**
+ * `?sandbox=cross`: scripts run in a sandbox document loaded from the other loopback name (`localhost` ↔ `127.0.0.1`),
+ * another site, as a host would serve it (#181; `/sandbox.html`, vite.config.ts). On a
+ * phone, open the page as `https://localhost:5173` through `adb reverse tcp:5173 tcp:5173`. Only that one URL: a sandbox
+ * from anywhere else would receive the face data the scripts get. Default: a `srcdoc` iframe.
+ */
+const SANDBOX_URL = params.get('sandbox') === 'cross' ? crossSandboxUrl() : undefined
+function crossSandboxUrl(): string | undefined {
+  const other = location.hostname === 'localhost' ? '127.0.0.1' : location.hostname === '127.0.0.1' ? 'localhost' : undefined
+  if (!other) {
+    console.warn('?sandbox=cross needs the page on localhost or 127.0.0.1: scripts use the default sandbox')
+    return undefined
+  }
+  const url = new URL('sandbox.html', document.baseURI)
+  url.hostname = other
+  return url.href
+}
 const canvas = document.getElementById('canvas') as HTMLCanvasElement
 /** The `<video>` of the source playing (a switch gives the next source its own, then the id). */
 let video = document.getElementById('video') as HTMLVideoElement
@@ -145,6 +162,7 @@ const engine = createEngine({
   adaptation: ADAPT,
   ...(BACKEND && BACKEND !== 'measure' ? { trackerBackend: BACKEND } : {}),
   ...(SEED === undefined ? {} : { seed: SEED }),
+  ...(SANDBOX_URL === undefined ? {} : { sandboxUrl: SANDBOX_URL }),
 })
 perf.attach(engine)
 const hook = {

@@ -5,7 +5,8 @@ import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DevFilters } from '@ouaf/cli'
 import basicSsl from '@vitejs/plugin-basic-ssl'
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, type Connect, type Plugin } from 'vite'
+import { SANDBOX_HEADERS, sandboxDocument } from '../../packages/core/src/script/sandbox-document.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
@@ -269,6 +270,37 @@ function evilSink(): Plugin {
   }
 }
 
+/**
+ * The script sandbox's document (#181) at `/sandbox.html`, with its headers, for `EngineOptions.sandboxUrl`: the engine
+ * page's `?sandbox=cross` loads it from the other loopback name (`localhost` ↔ `127.0.0.1`), another site, as a host
+ * would serve it from a domain of its own. The build gets the file (a static server sends no headers: the document's
+ * `<meta>` CSP and the iframe's `sandbox` attribute still apply).
+ */
+function sandboxPage(): Plugin {
+  let base = '/'
+  const serve: Connect.NextHandleFunction = (req, res, next) => {
+    if (req.url?.split('?')[0] !== `${base}sandbox.html`) return next()
+    for (const [name, value] of Object.entries(SANDBOX_HEADERS)) res.setHeader(name, value)
+    res.setHeader('Cache-Control', 'no-store')
+    res.end(sandboxDocument())
+  }
+  return {
+    name: 'ouaf-sandbox-page',
+    configResolved(config) {
+      base = config.base
+    },
+    configureServer(server) {
+      server.middlewares.use(serve)
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(serve)
+    },
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'sandbox.html', source: sandboxDocument() })
+    },
+  }
+}
+
 /** Extra pages: the engine and built-ins pages, and every `spikes/*.html` as a separate entry (one page per phase 0 spike). */
 function pages(): Record<string, string> {
   const input: Record<string, string> = {
@@ -304,7 +336,7 @@ const HEADERS = { 'Content-Security-Policy': "connect-src 'self' ws: wss:" }
 // every interface so a phone on the same network can open the playground.
 export default defineConfig({
   define: { __OUAF_COMMIT__: JSON.stringify(commit()) },
-  plugins: [basicSsl({ name: 'ouaf-playground' }), devFilters(), selfHostedAssets(), evilSink()],
+  plugins: [basicSsl({ name: 'ouaf-playground' }), devFilters(), selfHostedAssets(), sandboxPage(), evilSink()],
   server: { host: true, port: 5173, headers: HEADERS },
   preview: { host: true, port: 4173, headers: HEADERS },
   build: { target: 'es2023', rolldownOptions: { input: pages() } },

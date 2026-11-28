@@ -114,6 +114,14 @@ export interface EngineOptions {
   /** Opens the sandbox of a filter's script (tests). Default: a sandboxed iframe running a Worker (spec §15.1). */
   openSandbox?: (label: string) => ReturnType<typeof openSandbox>
   /**
+   * URL of the script sandbox's document, served by the host (`sandboxDocument()` with `SANDBOX_HEADERS`), on another
+   * site than its pages. A page with a strict CSP then needs `frame-src` for it instead of `script-src 'unsafe-inline'`;
+   * where the browser isolates that site, the sandbox runs in a process of its own, and a script that exhausts its
+   * memory crashes that process, not the page (#181; Chrome Android does not isolate it, `SECURITY.md`). Default: a
+   * `srcdoc` iframe.
+   */
+  sandboxUrl?: string
+  /**
    * Device adaptation (spec §16): with live sources, drop optional capabilities when face tracking is too slow, and
    * hide the face filters below the 12 Hz floor (`on('performance')`). Default: true. `false` keeps everything on
    * whatever the rate (tests, benchmarks); an object tunes the governor (`DEFAULT_GOVERNOR_TUNING`).
@@ -504,7 +512,8 @@ export class Engine {
         return c.width > 0 && c.height > 0 ? c.width / c.height : 1
       },
     }
-    this.#openSandbox = options.openSandbox ?? openSandbox
+    const sandboxUrl = options.sandboxUrl
+    this.#openSandbox = options.openSandbox ?? ((label) => openSandbox(label, sandboxUrl === undefined ? {} : { url: sandboxUrl }))
     const adaptation = options.adaptation ?? true
     if (adaptation !== false) this.#governor = new DeviceGovernor(adaptation === true ? {} : adaptation)
     const resolution = adaptation === false ? false : (options.adaptiveResolution ?? true)

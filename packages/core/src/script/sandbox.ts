@@ -7,51 +7,35 @@
  * nothing else. Removing the iframe terminates the Worker, even one stuck in an infinite loop (the watchdog,
  * spec §12.7).
  *
- * The iframe is a `srcdoc` document: no file to host. A `srcdoc` document inherits the host page's CSP, so a host
- * with a CSP must allow inline scripts in it… or keep `script-src` open to `'unsafe-inline'` for frames; when the
+ * The iframe is a `srcdoc` document by default: no file to host. A `srcdoc` document inherits the host page's CSP, so a
+ * host with a CSP must allow inline scripts in it… or keep `script-src` open to `'unsafe-inline'` for frames; when the
  * sandbox does not start, `openSandbox` rejects with an `OuafError('script')` that says so.
+ *
+ * With `url` (`EngineOptions.sandboxUrl`, #181), the iframe loads the same document (`sandboxDocument()`) from there
+ * instead. It does not inherit the page's CSP; served from another site, a browser that isolates that site puts the
+ * iframe and its Worker in a renderer process of their own, which a Worker reaching V8's heap limit takes down instead
+ * of the host page's (Chrome Android does not, `SECURITY.md`). The iframe keeps its `sandbox` attribute, so its origin
+ * stays opaque either way.
  */
 import { OuafError } from '../engine/errors.ts'
 import type { ScriptConnection, ScriptPort } from './host.ts'
 import { workerSource } from './runtime.ts'
-
-/** CSP of the sandbox document, inherited by its Worker (spec §15.1): only the bootstrap and `blob:` scripts run. */
-export const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline' blob:; worker-src blob:; connect-src 'none'; img-src 'none'"
+import { SANDBOX_PROTOCOL, sandboxDocument } from './sandbox-document.ts'
 
 /** How long the sandbox may take to start before `openSandbox` gives up (ms). */
 const START_TIMEOUT_MS = 10_000
 
-/**
- * The bootstrap of the iframe: on the engine's `start` message it creates the Worker from `blob:` and hands it the
- * port. It checks that the message comes from its parent, then removes its listener.
- */
-const BOOTSTRAP = `
-addEventListener('message', function start(e) {
-  if (e.source !== parent || !e.data || e.data.t !== 'ouaf:start' || !e.ports[0]) return
-  removeEventListener('message', start)
-  try {
-    var url = URL.createObjectURL(new Blob([e.data.worker], { type: 'text/javascript' }))
-    // A classic worker: a module worker does not load from a blob: URL of an opaque origin (Chromium), and import()
-    // of script.js works in a classic worker too.
-    var w = new Worker(url, { name: 'ouaf-script' })
-    w.postMessage({ t: 'port' }, [e.ports[0]])
-    parent.postMessage({ t: 'ouaf:started' }, '*')
-  } catch (err) {
-    parent.postMessage({ t: 'ouaf:failed', message: String(err) }, '*')
-  }
-})
-parent.postMessage({ t: 'ouaf:ready' }, '*')
-`
-
-function srcdoc(): string {
-  return `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${SANDBOX_CSP}"><script>${BOOTSTRAP}</script>`
+/** Where the sandbox document comes from. */
+export interface SandboxOptions {
+  /** URL of a hosted sandbox document (`sandboxDocument()`, served with `SANDBOX_HEADERS`). Default: a `srcdoc`. */
+  url?: string
 }
 
 /**
  * Opens a sandbox and connects to its Worker: `port` is the engine's end of the channel, `terminate` removes the
  * iframe (and the Worker with it). Rejects with `OuafError('script')` when it cannot start.
  */
-export function openSandbox(label: string): Promise<ScriptConnection> {
+export function openSandbox(label: string, options: SandboxOptions = {}): Promise<ScriptConnection> {
   if (typeof document === 'undefined' || !document.body) {
     return Promise.reject(new OuafError('script', `${label}: scripts need a document to create their sandbox (an engine running in a worker cannot run them).`))
   }
@@ -61,7 +45,13 @@ export function openSandbox(label: string): Promise<ScriptConnection> {
   iframe.setAttribute('tabindex', '-1')
   iframe.title = 'ouaf script sandbox'
   iframe.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden'
-  iframe.srcdoc = srcdoc()
+  if (options.url === undefined) {
+    iframe.srcdoc = sandboxDocument()
+  } else {
+    // The sandbox's origin does not learn which page hosts it.
+    iframe.referrerPolicy = 'no-referrer'
+    iframe.src = options.url
+  }
 
   return new Promise((resolve, reject) => {
     let done = false
@@ -82,6 +72,11 @@ export function openSandbox(label: string): Promise<ScriptConnection> {
       if (e.source !== iframe.contentWindow) return
       const t = (e.data as { t?: unknown } | null)?.t
       if (t === 'ouaf:ready') {
+        const v = (e.data as { v?: unknown }).v
+        if (v !== SANDBOX_PROTOCOL) {
+          fail(`the sandbox document at ${options.url} is of another version (${String(v)}, expected ${SANDBOX_PROTOCOL}): serve sandboxDocument() of this engine`)
+          return
+        }
         // Opaque origin: the target origin can only be '*'; the message goes to this iframe only.
         iframe.contentWindow!.postMessage({ t: 'ouaf:start', worker: workerSource() }, '*', [channel.port2])
       } else if (t === 'ouaf:started') {
@@ -96,7 +91,12 @@ export function openSandbox(label: string): Promise<ScriptConnection> {
       }
     }
     const timer = setTimeout(
-      () => fail("no answer: a Content-Security-Policy of the page may block the sandbox's inline bootstrap or its blob: worker"),
+      () =>
+        fail(
+          options.url === undefined
+            ? "no answer: a Content-Security-Policy of the page may block the sandbox's inline bootstrap or its blob: worker"
+            : `no answer from ${options.url}: check that it serves sandboxDocument() and that the page's frame-src allows it`,
+        ),
       START_TIMEOUT_MS,
     )
     window.addEventListener('message', onMessage)

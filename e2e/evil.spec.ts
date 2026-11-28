@@ -33,8 +33,11 @@ interface Watch {
   targets: string[]
 }
 
-/** Opens the engine page on a clip with `filter`, without the page's own CSP, and records the requests. */
-async function open(page: Page, filter: string, events: string[] = []): Promise<Watch> {
+/**
+ * Opens the engine page on a clip with `filter`, without the page's own CSP, and records the requests. `query`: extra
+ * parameters of the page (`&sandbox=cross`: the sandbox document from another site, #181).
+ */
+async function open(page: Page, filter: string, events: string[] = [], query = ''): Promise<Watch> {
   const token = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
   const watch: Watch = { answered: [], token, targets: [] }
   page.context().on('requestfinished', (r) => watch.answered.push(r.url()))
@@ -49,9 +52,17 @@ async function open(page: Page, filter: string, events: string[] = []): Promise<
     expect(body).not.toContain('Content-Security-Policy')
     await route.fulfill({ response, headers, body })
   })
-  await start(page, `/engine.html?source=pesquet-talk&autostart&filter=${filter}`, true)
+  if (query.includes('sandbox=cross') && page.context().browser()?.browserType().name() === 'chromium') {
+    // Chromium takes a page Playwright answers (above) for a public one, and blocks its iframe from the loopback name
+    // of the sandbox (Local Network Access); the dev server's own pages are loopback, and a host's sandbox is public.
+    await page.context().grantPermissions(['local-network-access'])
+  }
+  await start(page, `/engine.html?source=pesquet-talk&autostart${query}&filter=${filter}`, true)
   const origin = new URL(page.url()).origin
   watch.targets = [`${origin}/__evil__/${token}/same-origin`, `https://evil.invalid/__evil__/${token}/other-origin`]
+  // A sandbox from another site may also try its own origin, which the same dev server answers.
+  const sandboxUrl = await page.locator('iframe[title="ouaf script sandbox"]').first().getAttribute('src')
+  if (sandboxUrl) watch.targets.push(`${new URL(sandboxUrl).origin}/__evil__/${token}/sandbox-origin`)
   await page.evaluate((events) => {
     window.received = []
     const handle = window.ouaf!.engine.filters[0]!
@@ -105,29 +116,35 @@ async function report(page: Page): Promise<Record<string, string>> {
 const opened = (result: Record<string, string>) => Object.entries(result).filter(([, v]) => v !== 'blocked')
 
 test.describe('the script sandbox', () => {
-  test('evil-network: no network API of the Worker sends anything out', async ({ page, request }) => {
-    test.slow()
-    const watch = await open(page, '/filters/evil/network/', ['report'])
-    const before = await page.evaluate(() => window.ouaf!.frames)
-    await send(page, 'attack', { targets: watch.targets })
-    const result = await report(page)
-    expect(opened(result)).toEqual([])
-    expect(Object.keys(result).length).toBeGreaterThanOrEqual(40)
-    await expectNoLeak(watch, request)
-    // Attacks are the script's business: the page kept rendering meanwhile, without an error.
-    await expect.poll(() => frames(page), POLL).toBeGreaterThan(before + 30)
-    expect(await errors(page)).toEqual([])
-  })
+  for (const sandbox of ['default', 'cross'] as const) {
+    const suffix = sandbox === 'cross' ? ' (sandbox from another site)' : ''
+    const query = sandbox === 'cross' ? '&sandbox=cross' : ''
 
-  test('evil-globals: the removed globals stay removed, and the host page is out of reach', async ({ page, request }) => {
-    const watch = await open(page, '/filters/evil/globals/', ['report'])
-    await send(page, 'attack', { target: watch.targets[0] })
-    const result = await report(page)
-    expect(opened(result)).toEqual([])
-    expect(Object.keys(result).length).toBeGreaterThanOrEqual(18)
-    await expectNoLeak(watch, request)
-    expect(await errors(page)).toEqual([])
-  })
+    test(`evil-network${suffix}: no network API of the Worker sends anything out`, async ({ page, request }) => {
+      test.slow()
+      const watch = await open(page, '/filters/evil/network/', ['report'], query)
+      expect(watch.targets).toHaveLength(sandbox === 'cross' ? 3 : 2)
+      const before = await page.evaluate(() => window.ouaf!.frames)
+      await send(page, 'attack', { targets: watch.targets })
+      const result = await report(page)
+      expect(opened(result)).toEqual([])
+      expect(Object.keys(result).length).toBeGreaterThanOrEqual(40)
+      await expectNoLeak(watch, request)
+      // Attacks are the script's business: the page kept rendering meanwhile, without an error.
+      await expect.poll(() => frames(page), POLL).toBeGreaterThan(before + 30)
+      expect(await errors(page)).toEqual([])
+    })
+
+    test(`evil-globals${suffix}: the removed globals stay removed, and the host page is out of reach`, async ({ page, request }) => {
+      const watch = await open(page, '/filters/evil/globals/', ['report'], query)
+      await send(page, 'attack', { target: watch.targets[0] })
+      const result = await report(page)
+      expect(opened(result)).toEqual([])
+      expect(Object.keys(result).length).toBeGreaterThanOrEqual(18)
+      await expectNoLeak(watch, request)
+      expect(await errors(page)).toEqual([])
+    })
+  }
 
   test('evil-forge: forged answers on the runtime port are checked, and change nothing in the page', async ({ page, request }) => {
     const watch = await open(page, '/filters/evil/forge/', ['stolen', 'spam'])
@@ -184,12 +201,15 @@ test.describe('denial of service', () => {
     })
   }
 
-  for (const mode of ['heap', 'buffers']) {
-    test(`evil-memory (${mode}): a script that exhausts its memory is stopped, the page survives`, async ({ page, browser, browserName }) => {
+  // `cross`: the sandbox document comes from another site (`?sandbox=cross`, `EngineOptions.sandboxUrl`, #181), in a
+  // process of its own on these desktop browsers as the `srcdoc` one (Chrome Android isolates neither, SECURITY.md).
+  for (const [mode, sandbox] of [['heap', 'default'], ['heap', 'cross'], ['buffers', 'default']] as const) {
+    const name = sandbox === 'cross' ? `${mode}, sandbox from another site` : mode
+    test(`evil-memory (${name}): a script that exhausts its memory is stopped, the page survives`, async ({ page, browser, browserName, baseURL }) => {
       test.slow()
       let crashed = false
       page.on('crash', () => (crashed = true))
-      await open(page, '/filters/evil/memory/')
+      await open(page, '/filters/evil/memory/', [], sandbox === 'cross' ? '&sandbox=cross' : '')
       if (browserName === 'chromium') {
         // On Chromium only a process of its own saves the page (#181): a Worker that reaches V8's heap limit takes down
         // its renderer process, and stopping it takes Blink about 2 s, long enough for a fast machine to get there.
@@ -198,7 +218,8 @@ test.describe('denial of service', () => {
         const cdp = await browser.newBrowserCDPSession()
         const { targetInfos } = await cdp.send('Target.getTargets')
         await cdp.detach()
-        expect(targetInfos.filter((t) => t.type === 'iframe').map((t) => t.url)).toContain('about:srcdoc')
+        const url = sandbox === 'cross' ? `https://127.0.0.1:${new URL(baseURL!).port}/sandbox.html` : 'about:srcdoc'
+        expect(targetInfos.filter((t) => t.type === 'iframe').map((t) => t.url)).toContain(url)
       }
       await send(page, mode)
       await expectStoppedAndRendering(page)
