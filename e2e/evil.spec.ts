@@ -240,66 +240,98 @@ test.describe('denial of service', () => {
 test.describe('the GPU', () => {
   test('evil-heavy-shader: a shader that keeps the GPU busy for seconds is disabled, rendering resumes', async ({ page }) => {
     test.slow()
-    await start(page, '/engine.html?source=pesquet-talk&autostart')
+    await page.goto('/engine.html')
+    await page.waitForFunction(() => !!window.ouaf)
+    // The frames are pushed by the page (file regime, `pushFrame`), not played from a clip: WebKit's playback stalls
+    // under the load of the heavy frames on CI runners, and with no frame to draw there is nothing for the watchdog to
+    // time (#201). A frame the size of the clips (720 × 1280), read back once drawn: each frame waits for the GPU, so
+    // its time is the GPU's, on every browser, and no frame is queued behind a slow one.
+    await page.evaluate(async () => {
+      const { engine } = window.ouaf!
+      const heavy: Heavy = ((window as unknown as { heavy: Heavy }).heavy = { frames: 0, lastMs: 0, startedAt: 0, disabledAt: undefined })
+      engine.on('error', () => (heavy.disabledAt ??= performance.now()))
+      await engine.addFilter('/filters/evil/heavy-shader/', { iterations: 3000 })
+      const frame = new OffscreenCanvas(720, 1280)
+      const c = frame.getContext('2d')!
+      const gradient = c.createLinearGradient(0, 0, 720, 1280)
+      gradient.addColorStop(0, 'rgb(200, 120, 80)')
+      gradient.addColorStop(1, 'rgb(40, 60, 160)')
+      c.fillStyle = gradient
+      c.fillRect(0, 0, 720, 1280)
+      const out = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true })!
+      void (async () => {
+        for (let t = 0; ; t += 1 / 30) {
+          heavy.startedAt = performance.now()
+          await engine.pushFrame(frame, t)
+          out.drawImage(engine.canvas, 0, 0, 1, 1)
+          out.getImageData(0, 0, 1, 1)
+          heavy.lastMs = performance.now() - heavy.startedAt
+          heavy.frames++
+          // Lets the test's evaluations in between two frames.
+          await new Promise((resolve) => setTimeout(resolve, 0))
+        }
+      })()
+    })
+    const state = () =>
+      page.evaluate(() => {
+        const heavy = (window as unknown as { heavy: Heavy }).heavy
+        // The frame being drawn counts once it has taken longer than the last one.
+        return { frames: heavy.frames, frameMs: Math.max(heavy.lastMs, performance.now() - heavy.startedAt), disabledAt: heavy.disabledAt, now: performance.now() }
+      })
+    const t0 = (await state()).now
+    const since = (now: number) => `${((now - t0) / 1000).toFixed(1)} s`
+    const disabled = /"evil-heavy-shader" was disabled: (its shader kept the GPU busy|the GPU context was lost)/
     // A loop that takes seconds a frame, whatever the GPU: from a few thousand rounds a pixel (seconds on a software
     // renderer, as in CI), more and more while the frames are still fast, until the engine disables the filter. The
     // filter's default (a million) would hold a software renderer for minutes, during which no page script runs.
-    await page.evaluate(() => window.ouaf!.engine.addFilter('/filters/evil/heavy-shader/', { iterations: 3000 }))
-    const disabled = /"evil-heavy-shader" was disabled: (its shader kept the GPU busy|the GPU context was lost)/
     let iterations = 3000
     let slowWindows = 0
     for (;;) {
-      await page.evaluate(() => ((window as unknown as { statsBefore: unknown }).statsBefore = window.ouaf!.stats))
       const done = await expect
         .poll(() => errors(page), { timeout: 20_000, intervals: [1000] })
         .toEqual([expect.stringMatching(disabled)])
         .then(() => true, () => false)
-      if (done) break
       // Disabled by the engine's GPU watchdog, or after the browser reset the GPU (context loss): either way reported.
-      // Time between two frames now, from the engine's stats (one report a second, at a frame): none since the window
-      // started means that a frame takes about as long as the window.
-      const frameMs = await page.evaluate(() => {
-        const stats = window.ouaf!.stats
-        return stats === (window as unknown as { statsBefore: unknown }).statsBefore || !stats ? Infinity : 1000 / stats.fps
-      })
-      // Frames that slow are the watchdog's: it needs `GPU_STALL_FRAMES` of them in a row, which may take longer than
-      // this window. Wait for it: a heavier shader then (as this test asked for, every 20 s) makes each frame last
-      // minutes on a slow runner, with the page blocked, until the test times out. Twice the watchdog's limit, as the
-      // time between frames is an upper bound of the GPU's.
+      if (done) break
+      const { frameMs, now } = await state()
+      // Frames that slow are the watchdog's: it needs `GPU_STALL_FRAMES` of them in a row (or one of the whole series),
+      // which may take longer than this window. Wait for it: a heavier shader then makes each frame last minutes on a
+      // slow runner, with the page blocked, until the test times out.
       if (frameMs > 2 * GPU_STALL_MS) {
-        // No frame at all may also be the clip that stopped playing: WebKit's playback sometimes stalls on CI runners
-        // (see `start`), and with no frame to draw there is nothing for the watchdog to time. The clip is started
-        // again then; its state goes into the failure message, to tell a stalled clip from a shader never stopped.
-        const clip = await page.evaluate(async () => {
-          const video = document.getElementById('video') as HTMLVideoElement
-          const before = video.currentTime
-          await new Promise((resolve) => setTimeout(resolve, 1000))
-          const state = { playing: video.currentTime !== before, paused: video.paused, ended: video.ended, readyState: video.readyState }
-          if (!state.playing) await video.play().catch(() => {})
-          return state
-        })
-        const what = `a frame takes ${Math.round(frameMs)} ms at ${iterations} iterations, but the filter was never disabled`
-        expect(++slowWindows, `${what} (the clip: ${JSON.stringify(clip)})`).toBeLessThan(8)
+        expect(++slowWindows, `a frame takes ${Math.round(frameMs)} ms at ${iterations} iterations, but the filter was never disabled`).toBeLessThan(8)
         continue
       }
       slowWindows = 0
       expect(iterations, 'the filter was never disabled').toBeLessThan(1_000_000)
-      // Four times more while frames are quick, twice once they take over a second, a quarter more once they take as
-      // long as the watchdog's limit: the frames that follow stay within reach of the watchdog, which needs two of
-      // them in a row. The time of a frame is far from linear on WebKit's software renderer: after frames of 3.9 s at
-      // 12000 rounds, 48000 rounds held the page for more than 100 s a frame (3 min 30 before the filter was disabled
-      // on one run, never within the 160 s of the slow windows on another).
-      const step = frameMs > GPU_STALL_MS ? 1.25 : frameMs > 1000 ? 2 : 4
+      // Four times more while frames are quick (under a quarter of a second), twice up to a second, half more up to the
+      // watchdog's limit, a quarter more past it: the frames that follow stay within reach of the watchdog. The time of
+      // a frame is far from linear on WebKit's software renderer: after frames of 3.9 s at 12000 rounds, 48000 rounds
+      // held the page for more than 100 s a frame, and four times more after frames of 950 ms at 3000 rounds held it
+      // past the test's timeout (#201).
+      const step = frameMs > GPU_STALL_MS ? 1.25 : frameMs > 1000 ? 1.5 : frameMs > 250 ? 2 : 4
       iterations = Math.min(Math.round(iterations * step), 1_000_000)
       await page.evaluate((n) => window.ouaf!.engine.filters[0]!.setParam('iterations', n), iterations)
-      console.log(`evil-heavy-shader: ${Math.round(frameMs)} ms between frames, now ${iterations} iterations`)
+      console.log(`evil-heavy-shader: ${since(now)}: ${Math.round(frameMs)} ms a frame, now ${iterations} iterations`)
     }
+    const after = await state()
+    // When the engine disabled the filter: tells a filter disabled late (the page was blocked) from one never disabled.
+    console.log(`evil-heavy-shader: ${since(after.now)}: disabled at ${iterations} iterations, at ${after.disabledAt === undefined ? '?' : since(after.disabledAt)}`)
     expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.enabled)).toBe(false)
     // The page renders at its pace again.
-    const before = await frames(page)
-    await expect.poll(() => frames(page), POLL).toBeGreaterThan(before + 30)
+    await expect.poll(async () => (await state()).frames, POLL).toBeGreaterThan(after.frames + 30)
   })
 })
+
+/** The frames the page pushes for the heavy shader (`window.heavy`). */
+interface Heavy {
+  frames: number
+  /** Time of the last frame drawn, read back included (ms). */
+  lastMs: number
+  /** `performance.now()` when the frame being drawn was pushed. */
+  startedAt: number
+  /** When the engine reported the filter (`performance.now()`). */
+  disabledAt: number | undefined
+}
 
 test.describe('packages', () => {
   const bombs = zipBombs()

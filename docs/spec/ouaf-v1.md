@@ -532,8 +532,8 @@ vec4 effect(vec2 uv) {
 - An engine MUST handle GPU context loss and disable a filter whose shader causes it.
 - A draw call cannot be interrupted: a shader that runs for seconds stalls the whole page (on some systems the
   browser's compositor too) until the GPU finishes or the browser resets it. An engine SHOULD disable a filter whose
-  shader keeps the GPU busy for more than **3 s** a frame on two frames in a row, or on one frame that has not finished
-  after 6 s, and report it as for a context loss. Informative: the reference engine measures each frame that draws
+  shader keeps the GPU busy for more than **3 s** a frame on two frames in a row, or on one frame that took (or has not
+  finished after) 6 s, and report it as for a context loss. Informative: the reference engine measures each frame that draws
   an author shader with a fence (`fenceSync`) polled on a timer, does not count frames while the page is hidden, and
   emits an `error` event with the code `gpu-stalled`.
 - For a future WebGPU renderer, GLSL → WGSL translation happens at packaging time; authors only write GLSL.
