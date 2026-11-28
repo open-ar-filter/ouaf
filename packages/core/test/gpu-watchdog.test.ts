@@ -114,6 +114,20 @@ describe('GPU watchdog', () => {
     expect(t.stalled).toEqual([])
   })
 
+  it('blames a single frame that took the whole series, even finished (a synchronous renderer, #201)', () => {
+    const s = setup()
+    const started = s.clock()
+    s.advance(GPU_STALL_MS * GPU_STALL_FRAMES + 500)
+    s.watchdog.submitted(['a'], started)
+    s.fences.at(-1)!.done = true
+    s.advance(20)
+    expect(s.stalled).toEqual([[['a'], GPU_STALL_MS * GPU_STALL_FRAMES + 520]])
+    // Just under it, one frame is not enough.
+    const t = setup()
+    t.frame(['a'], GPU_STALL_MS * GPU_STALL_FRAMES)
+    expect(t.stalled).toEqual([])
+  })
+
   it('does not blame a single slow frame between fast ones', () => {
     const s = setup()
     for (let i = 0; i < 5; i++) {

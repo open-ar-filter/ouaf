@@ -1,7 +1,7 @@
 /**
  * GPU watchdog (spec §11, §15.5; #27): measures how long the GPU takes to finish the frames that draw author shader
  * code, and reports a filter whose shader keeps it busy for more than `GPU_STALL_MS` on `GPU_STALL_FRAMES` such frames
- * in a row, or on a single frame that has not finished after `GPU_STALL_FRAMES` × `GPU_STALL_MS`.
+ * in a row, or on a single frame that took (or has not finished after) `GPU_STALL_FRAMES` × `GPU_STALL_MS`.
  *
  * A draw call cannot be interrupted from a page: a heavy shader stalls every GPU client of the browser (its
  * compositor included) until the GPU finishes, or until the browser resets the GPU, which the engine handles as a
@@ -136,7 +136,10 @@ export class GpuWatchdog<T> {
       gl.deleteSync(p.sync as never)
       this.#pending.shift()
       if (hidden || p.hidden) continue
-      if (ms > GPU_STALL_MS) this.#count(p.filters, ms)
+      // A frame that took the whole series is blamed alone, finished or not: on a renderer that does the work inside the
+      // draw calls (WebKit's software one), a frame is never seen running, and waiting for a second one held the page
+      // for minutes (#201).
+      if (ms > GPU_STALL_MS) this.#count(p.filters, ms, ms > GPU_STALL_MS * GPU_STALL_FRAMES)
       else {
         this.#slow = 0
         this.#suspects = []

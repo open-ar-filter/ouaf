@@ -224,6 +224,14 @@ test.describe('the GPU', () => {
     // renderer, as in CI), more and more while the frames are still fast, until the engine disables the filter. The
     // filter's default (a million) would hold a software renderer for minutes, during which no page script runs.
     await page.evaluate(() => window.ouaf!.engine.addFilter('/filters/evil/heavy-shader/', { iterations: 3000 }))
+    // When the engine disabled the filter, on the page's clock: tells a filter disabled late (the page was blocked)
+    // from one never disabled (#201).
+    const t0 = Date.now()
+    await page.evaluate(() => {
+      const w = window as unknown as { disabledAt?: number }
+      window.ouaf!.engine.on('error', () => (w.disabledAt ??= Date.now()))
+    })
+    const since = () => `${((Date.now() - t0) / 1000).toFixed(1)} s`
     const disabled = /"evil-heavy-shader" was disabled: (its shader kept the GPU busy|the GPU context was lost)/
     let iterations = 3000
     let slowWindows = 0
@@ -263,16 +271,19 @@ test.describe('the GPU', () => {
       }
       slowWindows = 0
       expect(iterations, 'the filter was never disabled').toBeLessThan(1_000_000)
-      // Four times more while frames are quick, twice once they take over a second, a quarter more once they take as
-      // long as the watchdog's limit: the frames that follow stay within reach of the watchdog, which needs two of
-      // them in a row. The time of a frame is far from linear on WebKit's software renderer: after frames of 3.9 s at
-      // 12000 rounds, 48000 rounds held the page for more than 100 s a frame (3 min 30 before the filter was disabled
-      // on one run, never within the 160 s of the slow windows on another).
-      const step = frameMs > GPU_STALL_MS ? 1.25 : frameMs > 1000 ? 2 : 4
+      // Four times more while frames are quick (under a quarter of a second), twice up to a second, half more up to the
+      // watchdog's limit, a quarter more past it: the frames that follow stay within reach of the watchdog. The time of
+      // a frame is far from linear on WebKit's software renderer: after frames of 3.9 s at 12000 rounds, 48000 rounds
+      // held the page for more than 100 s a frame (3 min 30 before the filter was disabled on one run, never within the
+      // 160 s of the slow windows on another), and four times more after frames of 950 ms at 3000 rounds held it past
+      // the test's timeout (#201).
+      const step = frameMs > GPU_STALL_MS ? 1.25 : frameMs > 1000 ? 1.5 : frameMs > 250 ? 2 : 4
       iterations = Math.min(Math.round(iterations * step), 1_000_000)
       await page.evaluate((n) => window.ouaf!.engine.filters[0]!.setParam('iterations', n), iterations)
-      console.log(`evil-heavy-shader: ${Math.round(frameMs)} ms between frames, now ${iterations} iterations`)
+      console.log(`evil-heavy-shader: ${since()}: ${Math.round(frameMs)} ms between frames, now ${iterations} iterations`)
     }
+    const disabledAt = await page.evaluate(() => (window as unknown as { disabledAt?: number }).disabledAt)
+    console.log(`evil-heavy-shader: ${since()}: disabled at ${iterations} iterations, ${disabledAt === undefined ? '?' : ((disabledAt - t0) / 1000).toFixed(1)} s`)
     expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.enabled)).toBe(false)
     // The page renders at its pace again.
     const before = await frames(page)
