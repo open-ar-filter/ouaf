@@ -89,7 +89,8 @@ const errors = (page: Page) => page.evaluate(() => window.ouaf!.errors)
 const frames = (page: Page) => page.evaluate(() => window.ouaf!.frames)
 
 /**
- * Whether the clip plays (its time moves over a second), and its state; a clip that does not is started again. WebKit's
+ * Whether the clip plays (its time moves over a second), and its state; a clip that does not is started again (a seek,
+ * then `play()`). WebKit's
  * playback sometimes stalls on CI runners (see `start`), and with no frame to draw the engine renders nothing.
  */
 const restartStalledClip = (page: Page) =>
@@ -98,7 +99,11 @@ const restartStalledClip = (page: Page) =>
     const before = video.currentTime
     await new Promise((resolve) => setTimeout(resolve, 1000))
     const state = { playing: video.currentTime !== before, paused: video.paused, ended: video.ended, readyState: video.readyState }
-    if (!state.playing) await video.play().catch(() => {})
+    if (!state.playing) {
+      // A seek restarts a stalled pipeline; `play()` may then never settle on WebKit: bounded.
+      video.currentTime = video.currentTime
+      await Promise.race([video.play().catch(() => {}), new Promise((resolve) => setTimeout(resolve, 2000))])
+    }
     return state
   })
 
