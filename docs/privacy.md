@@ -37,6 +37,11 @@ allow what the sandbox needs: inline scripts and `blob:` workers for frames (`sc
 `worker-src blob:`, or no `script-src` / `worker-src` at all). Otherwise the script does not start: the engine
 emits an `error` (code `script`) and the rest of the filter keeps working.
 
+A host can serve the sandbox document itself instead, from another site (`EngineOptions.sandboxUrl`, see
+[`SECURITY.md`](../SECURITY.md#the-sandbox-on-a-site-of-its-own)): its server then receives at most one request per
+script start, for the document only, without a referrer (`referrerpolicy="no-referrer"`); what the script gets goes
+from the page to the Worker over a `MessagePort`, in the browser, never through that server. The page's own CSP no longer applies to that document, but it must allow its origin in `frame-src`.
+
 ## Face tracking backends
 
 The built-in face tracker chooses between two runtimes by measuring them on the device (spec §16.4,
@@ -129,7 +134,8 @@ What the engine needs from a page's Content-Security-Policy, directive by direct
 |---|---|---|
 | `connect-src` | the origin of `assetsBaseUrl`, and of the filter packages you load | tracking wasm and models, built-in fonts and LUTs, Draco decoder, `.ouaf` files |
 | `script-src` | `'wasm-unsafe-eval'` | face tracking (both backends) and the Draco decoder compile WebAssembly |
-| `script-src` | `'unsafe-inline' blob:` | the script sandbox (a `srcdoc` iframe inherits the page's policy) |
+| `script-src` | `'unsafe-inline' blob:` | the script sandbox (a `srcdoc` iframe inherits the page's policy); not needed with `sandboxUrl` |
+| `frame-src` | the origin of `sandboxUrl`, when set | the script sandbox served by the host |
 | `worker-src` | `blob:`, and the origin of the tracker worker's script | the script sandbox and the Draco decoder (`blob:`), the LiteRT.js tracker |
 | `img-src` | `blob:` | SVG stickers and glTF textures, decoded from `blob:` URLs |
 | `media-src` | `blob:` | video stickers (and shader video textures), played from `blob:` URLs; a video file source you pass as a `blob:` URL |
