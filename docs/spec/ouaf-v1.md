@@ -453,7 +453,7 @@ is the same on every run; `by: "random"` draws an entry when the face gets its i
 
 | Kind (`kind`) | Formats | Notes |
 |---|---|---|
-| `image` | PNG, WebP, JPEG, AVIF, SVG, KTX2 | KTX2 recommended on mobile. SVG is rendered as an image: no script, no external resource. |
+| `image` | PNG, WebP, JPEG, AVIF, SVG, KTX2 | KTX2 recommended on mobile: a 2D texture (one face, one layer, no depth) with the sRGB transfer function, in Basis Universal (ETC1S or UASTC) or uncompressed `R8G8B8A8_SRGB` without supercompression, with straight or premultiplied alpha (the descriptor's flag). SVG is rendered as an image: no script, no external resource. |
 | `spritesheet` | image + `frames` | Animated grid. |
 | `video` | MP4 (H.264), WebM (VP9) | Transparency: `alpha: "packed"` (color on the left, mask on the right), portable across browsers. Muted by default. |
 | `model` | glTF 2.0 / GLB | Animations, Draco or meshopt compression. |

@@ -11,6 +11,7 @@
  */
 import type { TAssetEntry, TAssetKind, TAssets } from '@ouaf/spec'
 import { kindFromPath } from '@ouaf/spec'
+import type { WebGLRenderer } from 'three'
 import { AssetError, OuafError } from './errors.ts'
 
 export interface FilterSource {
@@ -95,10 +96,15 @@ export interface AssetRequest {
   readonly path: string
   readonly builtin: boolean
   /**
-   * The engine's `assetsBaseUrl`, where the host serves the engine's own files (decoders: `draco/`…). Undefined when
-   * assets are loaded outside an engine (tests, tools).
+   * The engine's `assetsBaseUrl`, where the host serves the engine's own files (decoders: `draco/`, `basis/`).
+   * Undefined when assets are loaded outside an engine (tests, tools).
    */
   readonly assetsBaseUrl?: string
+  /**
+   * The engine's renderer, for loaders that prepare GPU data for it (KTX2 textures are transcoded to a format it
+   * supports). Undefined when assets are loaded outside an engine.
+   */
+  readonly renderer?: WebGLRenderer
   /** Reads the file (package file, built-in resource, or the inline SVG as an `image/svg+xml` blob). */
   read(): Promise<Blob>
   readonly signal: AbortSignal
@@ -165,6 +171,8 @@ export interface PreloadOptions {
   builtinUrl: (name: string) => string
   /** Given to loaders (`AssetRequest.assetsBaseUrl`). */
   assetsBaseUrl?: string
+  /** Given to loaders (`AssetRequest.renderer`). */
+  renderer?: WebGLRenderer
   fetchImpl?: typeof fetch
   signal?: AbortSignal
 }
@@ -197,8 +205,9 @@ export async function preloadAssets(options: PreloadOptions): Promise<PreloadedA
         return source.file(r.path, signal)
       }
       try {
-        const { assetsBaseUrl } = options
-        const value = await loader.load({ ref, kind: r.kind, entry: r.entry, path: r.path, builtin: r.builtin, assetsBaseUrl, read, signal })
+        const { assetsBaseUrl, renderer } = options
+        const { kind, entry, path, builtin } = r
+        const value = await loader.load({ ref, kind, entry, path, builtin, assetsBaseUrl, renderer, read, signal })
         loaded.set(ref, { value, loader })
       } catch (cause) {
         if (cause instanceof AssetError) throw cause

@@ -155,6 +155,9 @@ async function layerTexture(name: string, ref: string, asset: unknown, owner: ob
       },
     }
   }
+  if (a.ktx2) {
+    throw new OuafError('shader', `texture "${name}" ("${ref}") is a KTX2 texture, which shader layers do not read yet: use PNG, WebP, JPEG or AVIF.`)
+  }
   // Images are premultiplied ImageBitmaps with v = 0 at the top (sticker loaders): make a flipped, straight-alpha copy.
   const source = a.texture.image as ImageBitmap
   const bitmap = await createImageBitmap(source, { imageOrientation: 'flipY', premultiplyAlpha: 'none' })

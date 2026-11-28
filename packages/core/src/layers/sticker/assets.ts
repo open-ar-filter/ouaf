@@ -6,12 +6,13 @@
  *   ≤ 1080p (checked again on the video's metadata, for MP4 files whose index comes after the media data).
  * - SVG (files and inline `{ "svg" }`) is drawn as an image (`<img>`: no script, no external resource), rasterized at
  *   `SVG_RASTER_SIZE` px on its long side. Emoji (`{ "emoji" }`) are drawn with the platform's emoji font.
- * - KTX2 is refused for now: transcoding needs three's KTX2Loader with its Basis transcoder served by the host, and the
- *   renderer, which asset loaders do not get yet.
+ * - KTX2 images and spritesheets are GPU textures prepared for the engine's renderer (`ktx2.ts`): Basis Universal
+ *   files are transcoded with the Basis transcoder the host serves under `assetsBaseUrl`.
  *
  * What a loader gives (`StickerAsset`), for any layer type that reads image or video assets: a texture holding
  * sRGB-encoded bytes (`NoColorSpace`), uploaded without flipY (v = 0 is the top row), with premultiplied alpha for
- * images; a video's texture is refreshed only when the video presents a new frame.
+ * images (except transcoded KTX2 textures, `straightAlpha`); a video's texture is refreshed only when the video
+ * presents a new frame.
  */
 import { IMAGE_MAX_SIDE, VIDEO_MAX, sniff, type TAssetEntry } from '@ouaf/spec'
 import {
@@ -24,6 +25,7 @@ import {
 } from 'three'
 import type { AssetLoader, AssetRequest } from '../../engine/assets.ts'
 import { AssetError } from '../../engine/errors.ts'
+import { loadKtx2 } from './ktx2.ts'
 
 /** §10.4 limits, shared with `ouaf validate`: images ≤ 4096 px per side, videos ≤ 1080p. */
 export { IMAGE_MAX_SIDE, VIDEO_MAX }
@@ -59,6 +61,13 @@ export interface StickerAsset {
   readonly frames: SpriteGrid | undefined
   /** Video with packed alpha: color in the left half, mask in the right half. */
   readonly packed: boolean
+  /**
+   * Color not premultiplied by alpha (a transcoded KTX2 texture: compressed blocks cannot be premultiplied at
+   * upload); the sticker shader premultiplies it. Default: false.
+   */
+  readonly straightAlpha?: boolean
+  /** A KTX2 texture: GPU data only, no `ImageBitmap` behind it (shader layers and scripts cannot read it). */
+  readonly ktx2?: boolean
   /** The video element of a video asset (muted, inline, not in the document). */
   readonly video: HTMLVideoElement | undefined
   /**
@@ -102,13 +111,14 @@ async function readHeader(blob: Blob): Promise<Uint8Array> {
 /** Decodes an image asset (raster formats and SVG) into a premultiplied `ImageBitmap`, after checking its header. */
 export async function decodeImage(r: AssetRequest): Promise<ImageBitmap> {
   const blob = await r.read()
-  const info = sniff(await readHeader(blob))
+  return decodeImageBlob(r, blob, sniff(await readHeader(blob)))
+}
+
+async function decodeImageBlob(r: AssetRequest, blob: Blob, info: ReturnType<typeof sniff>): Promise<ImageBitmap> {
   if (info?.format === 'svg') return rasterizeSvg(await blob.text(), r)
-  if (info?.format === 'ktx2') {
-    throw new AssetError(r.ref, `"${r.path}" is a KTX2 texture, which this engine cannot load yet: use PNG, WebP, JPEG, AVIF or SVG.`)
-  }
+  if (info?.format === 'ktx2') throw new AssetError(r.ref, `"${r.path}" is a KTX2 texture: it is loaded as a GPU texture, not decoded to an image.`)
   if (!info || !RASTER_FORMATS.has(info.format)) {
-    throw new AssetError(r.ref, `"${r.path}" is not a PNG, WebP, JPEG, AVIF or SVG image${info ? ` (its content is ${info.format})` : ''}.`)
+    throw new AssetError(r.ref, `"${r.path}" is not a PNG, WebP, JPEG, AVIF, SVG or KTX2 image${info ? ` (its content is ${info.format})` : ''}.`)
   }
   const { width, height } = info
   if (!width || !height) {
@@ -334,11 +344,38 @@ function imageAsset(bitmap: ImageBitmap): StickerAsset {
   })
 }
 
-/** Images: PNG, WebP, JPEG, AVIF, SVG (files and inline). */
+/** A decoded image, or a KTX2 texture: what a texture is made from. */
+type ImageSource = { bitmap: ImageBitmap } | { ktx2: Awaited<ReturnType<typeof loadKtx2>> }
+
+/** Reads an image or spritesheet file: KTX2 is loaded as a GPU texture, the other formats decoded to a bitmap. */
+async function readImage(r: AssetRequest, spritesheet: boolean): Promise<ImageSource> {
+  const blob = await r.read()
+  const info = sniff(await readHeader(blob))
+  if (info?.format === 'ktx2') return { ktx2: await loadKtx2(r, blob, spritesheet) }
+  return { bitmap: await decodeImageBlob(r, blob, info) }
+}
+
+type SourceTexture = Pick<StickerAsset, 'texture' | 'textureWidth' | 'textureHeight' | 'straightAlpha' | 'ktx2'>
+
+/** The texture of an image source, its size and how its alpha is stored. */
+function sourceTexture(source: ImageSource, mipmaps: boolean): SourceTexture {
+  if ('ktx2' in source) {
+    const { texture, width, height, straightAlpha } = source.ktx2
+    return { texture, textureWidth: width, textureHeight: height, straightAlpha, ktx2: true }
+  }
+  const { bitmap } = source
+  return { texture: imageTexture(bitmap, mipmaps), textureWidth: bitmap.width, textureHeight: bitmap.height }
+}
+
+/** Images: PNG, WebP, JPEG, AVIF, SVG (files and inline), KTX2. */
 export const imageLoader: AssetLoader<StickerAsset> = {
   kinds: ['image'],
   async load(r) {
-    return imageAsset(await decodeImage(r))
+    const source = await readImage(r, false)
+    if ('bitmap' in source) return imageAsset(source.bitmap)
+    const t = sourceTexture(source, true)
+    const asset = { kind: 'image', ...t, width: t.textureWidth, height: t.textureHeight, frames: undefined, packed: false } as const
+    return createStickerAsset({ ...asset, video: undefined, owner: undefined })
   },
   dispose: disposeAsset,
 }
@@ -359,16 +396,14 @@ export const spritesheetLoader: AssetLoader<StickerAsset> = {
     const entry = r.entry
     const frames = typeof entry === 'object' && 'src' in entry ? entry.frames : undefined
     if (!frames) throw new AssetError(r.ref, `Spritesheet "${r.ref}" has no "frames" grid: declare it in "assets" with { "src", "frames": { "cols", "rows", "fps" } }.`)
-    const bitmap = await decodeImage(r)
     const cells = frames.cols * frames.rows
     // No mipmaps: minified levels would blend neighbouring frames.
+    const t = sourceTexture(await readImage(r, true), false)
     return createStickerAsset({
       kind: 'spritesheet',
-      texture: imageTexture(bitmap, false),
-      textureWidth: bitmap.width,
-      textureHeight: bitmap.height,
-      width: bitmap.width / frames.cols,
-      height: bitmap.height / frames.rows,
+      ...t,
+      width: t.textureWidth / frames.cols,
+      height: t.textureHeight / frames.rows,
       frames: { cols: frames.cols, rows: frames.rows, count: Math.min(frames.count ?? cells, cells), fps: frames.fps },
       packed: false,
       video: undefined,

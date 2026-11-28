@@ -14,6 +14,7 @@
  * disposed once that frame is drawn.
  */
 import { CONTENT_KINDS, hostFileProblem, sniff, type ContentKind, type TParams } from '@ouaf/spec'
+import type { WebGLRenderer } from 'three'
 import type { AssetFile, AssetParamHooks } from '../params/index.ts'
 import type { AssetLoader, LoaderKind } from './assets.ts'
 import { AssetError, InvalidParamError } from './errors.ts'
@@ -37,6 +38,7 @@ export interface HostAssetsOptions {
   bound: ReadonlyMap<string, ContentKind>
   loaders: ReadonlyMap<LoaderKind, AssetLoader>
   assetsBaseUrl?: string | undefined
+  renderer?: WebGLRenderer | undefined
 }
 
 export class HostAssets implements HostAssetReader, AssetParamHooks<Loaded> {
@@ -86,6 +88,7 @@ export class HostAssets implements HostAssetReader, AssetParamHooks<Loaded> {
         path: label === 'the file' ? name : label.slice(1, -1),
         builtin: false,
         assetsBaseUrl: this.#o.assetsBaseUrl,
+        renderer: this.#o.renderer,
         read: () => Promise.resolve(blob),
         signal,
       })

@@ -276,7 +276,7 @@ directly (§10.1). **Remote URLs (`http:`, `https:`, `data:`…) are forbidden.*
 
 | Kind | Formats | Notes |
 |---|---|---|
-| image | PNG, WebP, JPEG, AVIF, SVG (+ inline `svg`, `emoji`) | ≤ 4096 px per side. SVG is rendered as an image (no script, no external resource). KTX2 is accepted by the format but not loaded by the engine yet (`ouaf validate` warns). |
+| image | PNG, WebP, JPEG, AVIF, SVG, KTX2 (+ inline `svg`, `emoji`) | ≤ 4096 px per side. SVG is rendered as an image (no script, no external resource). KTX2 (smaller in GPU memory, good on mobile): a 2D sRGB texture in Basis Universal, ETC1S or UASTC (`basisu -ktx2 in.png`, `basisu -ktx2 -uastc in.png`), or uncompressed RGBA8 (no supercompression); for stickers only (not shader `textures`, not `f.asset()`). |
 | spritesheet | an image + `frames: { cols, rows, count?, fps }` | Grid read left to right, top to bottom. |
 | video | MP4 (H.264), WebM (VP9) | ≤ 1080p, 720p recommended; muted; at most 2 playing at once on phones. Transparency: `"alpha": "packed"` (color left half, mask right half), made with `npx ouaf pack-alpha <webm, ProRes 4444 or PNG folder> -o assets/x.mp4` (needs ffmpeg). |
 | model | glTF 2.0 / GLB | Draco and meshopt compression supported. Export as GLB: a `.gltf` with external files (under `assets/`) is valid in the format, but the engine only loads models that embed their buffers and images (`ouaf validate` warns). Embedded textures: PNG, JPEG, WebP or AVIF, ≤ 4096 px per side, checked by `ouaf validate` as the engine does (KTX2 textures: valid in the format, not loaded yet, a warning). |
@@ -580,8 +580,9 @@ Specified, or reserved, but not working in the reference engine today. Do not re
 - `apply: "reload"` on a parameter: it is applied at the next frame like a `live` one (no preload and swap of the
   filter), and without its `transition`.
 - A `.gltf` model with external buffers or images (use GLB).
-- KTX2 textures; reserved `requires` (`hands`, `segmentation`, `pose`, `audio`)
-  and reserved events (`tap`…): warnings.
+- KTX2 textures in models (`ouaf validate` warns), and KTX2 images as shader `textures` or in `f.asset()` (use PNG,
+  WebP, JPEG or AVIF there); reserved `requires` (`hands`, `segmentation`, `pose`, `audio`) and reserved events
+  (`tap`…): warnings.
 - Reserved layer types (`particles`, `lottie`, `background`, `faceTexture`…): unknown types, errors. Draw particles
   (confetti, snow, sparks) on a `canvas` layer with a script (section 15; the demo `filters/ai-birthday` rains
   confetti on `mouthOpen`).
@@ -786,6 +787,7 @@ then `→` a hint. Fix errors first; warnings do not block (unless `--strict`). 
 | `unused-asset`, `unreferenced-file` | declared or shipped but never used (a `data` asset: scripts cannot read it) | remove it, or reference it; import JSON in `filter.ts` |
 | `format-mismatch`, `unsupported-format` | the content does not match the extension (a JPEG named `.png`), or an unsupported format (GIF…) | export again in a supported format, fix the extension |
 | `image-too-large`, `video-too-large`, `unsupported-codec` | over the limits of section 12, HEVC video… | resize / re-encode (H.264 MP4 or VP9 WebM) |
+| `ktx2-unsupported` | a KTX2 image that is a cube map or an array, in linear color, or not Basis Universal (ETC1S, UASTC) or RGBA8 | encode it again from the PNG: `basisu -ktx2 in.png` |
 | `unknown-param`, `param-type-mismatch`, `preset-invalid` | binding or preset on a missing param, of the wrong type or out of bounds | declare the param, use a fitting type |
 | `asset-accept`, `asset-kind`, `binding-map-unexpected`, `binding-map-missing` | an asset param whose `accept` lists a type the property cannot show (`video/mp4` for a sticker); a `map` value of the wrong kind (a model for a sticker); `map` on an asset param; a `select` option without a `map` entry (warning) | follow the hint: it lists the accepted types; map every option to an asset the property shows (section 7) |
 | `unknown-data-path`, `binding-range`, `binding-map-required`, `binding-map-key` | wrong `bind` path; `range` without `to`; data bound without `map` to a property of another type (a number into a color, a vector or `visible`; plugin text into a color), or a `select` param bound to an asset property without `map`; a `map` key that never matches (`"1.0"` for a number, a key that is not an option) | use a path of section 8; give both `range` and `to`; add `map` from data (or param) values to property values; write the key the hint gives (`"1"`) |
