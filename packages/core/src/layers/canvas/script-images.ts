@@ -3,8 +3,8 @@
  *
  * Every image, spritesheet, SVG and emoji asset declared in the manifest's `assets` table is given to a script that
  * draws canvas layers, by name: the engine cannot tell which ones the script uses, and spec §10.4 preloads every asset
- * anyway. A spritesheet gives its first frame. The script gets copies (`ImageBitmap`s transferred to its sandbox), made
- * afresh at each activation; the layers keep their own.
+ * anyway. A spritesheet gives its first frame; KTX2 images are left out (GPU textures: no image to copy). The script
+ * gets copies (`ImageBitmap`s transferred to its sandbox), made afresh at each activation; the layers keep their own.
  */
 import type { TManifest } from '@ouaf/spec'
 import { resolveAssetRef, type LoadedAssets } from '../../engine/assets.ts'
@@ -37,7 +37,8 @@ export async function scriptImages(assets: LoadedAssets, refs: readonly string[]
     refs.map(async (ref): Promise<[string, ImageBitmap] | undefined> => {
       if (!assets.has(ref)) return undefined
       const value = assets.get(ref)
-      if (!isStickerAsset(value) || value.kind === 'video') return undefined
+      // A KTX2 texture is GPU data only: there is no image to give.
+      if (!isStickerAsset(value) || value.kind === 'video' || value.ktx2) return undefined
       const source = value.texture.image as ImageBitmap | undefined
       if (!source) return undefined
       // A spritesheet's first frame is its top-left cell; an image is copied whole.

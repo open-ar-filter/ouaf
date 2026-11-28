@@ -136,3 +136,38 @@ test('face stickers follow the tracked face', async ({ page }) => {
   }
   await expect.poll(magenta, POLL).toBeGreaterThan(50)
 })
+
+test('KTX2 stickers (#177): RGBA8, ETC1S and UASTC, sRGB values as they are, straight alpha premultiplied', async ({ page }) => {
+  // filters/fixtures/sticker-ktx2/ (make-ktx2-assets.ts): rings of side 0.18 over black squares. A ring is magenta,
+  // opaque for r < 0.3 of its side, half transparent up to 0.42, transparent outside, where its color is green.
+  await page.goto('/engine.html?source=no-face&autostart&filter=/filters/fixtures/sticker-ktx2/')
+  await page.waitForFunction(() => (window.ouaf?.engine.filters.length ?? 0) > 0 && (window.ouaf?.frames ?? 0) > 0 || (window.ouaf?.errors.length ?? 0) > 0, undefined, { timeout: 60_000 })
+  expect(await page.evaluate(() => window.ouaf!.errors)).toEqual([])
+  expect(await page.evaluate(() => window.ouaf!.warnings)).toEqual([])
+
+  // ETC1S is lossy: wider tolerances. Whatever GPU format the Basis files are transcoded to, the values stay sRGB.
+  const rings: Array<[string, number, number, number, number]> = [['RGBA8', -0.15, 0.1, 0.18, 0], ['ETC1S', 0.15, 0.1, 0.18, 16]]
+  const points = rings.flatMap(([name, x, y, side, lossy]): Array<[string, readonly [number, number], RGB, number]> => [
+    [`${name} opaque centre`, [x, y], [255, 0, 255], 20 + lossy],
+    [`${name} half-transparent ring: magenta over black`, [x + 0.36 * side, y], [128, 0, 128], 24 + lossy],
+    [`${name} transparent corner: black, no green`, [x + 0.07, y + 0.07], [0, 0, 0], 12 + lossy],
+  ])
+  points.push(['UASTC (Zstandard) image', [-0.15, -0.2], [48, 96, 192], 12])
+  await expect
+    .poll(async () => {
+      const colors = await colorsAt(page, points.map(([, p]) => p))
+      return points.flatMap(([name, , e, t], i) => (near(colors[i]!, e, t) ? [] : [`${name}: ${colors[i]!.join(',')}`]))
+    }, POLL)
+    .toEqual([])
+
+  // The UASTC spritesheet alternates its red and green frames at 4 fps.
+  const seen = new Set<string>()
+  await expect
+    .poll(async () => {
+      const [c] = await colorsAt(page, [[0.15, -0.2]])
+      if (near(c!, [255, 0, 0], 30)) seen.add('red')
+      if (near(c!, [0, 255, 0], 30)) seen.add('green')
+      return [...seen].sort()
+    }, POLL)
+    .toEqual(['green', 'red'])
+})

@@ -41,6 +41,13 @@ const SELF_HOSTED: Array<{ prefix: string; dir: string; files: RegExp; hint?: st
     files: /^draco_(wasm_wrapper\.js|decoder\.wasm)$/,
   },
   {
+    // Basis Universal transcoder of KTX2 images (#177), fetched by the engine from `<assetsBaseUrl>basis/` the first
+    // time a Basis-encoded texture loads (packages/core/src/layers/sticker/ktx2.ts).
+    prefix: 'basis/',
+    dir: dirname(require.resolve('three/examples/jsm/libs/basis/basis_transcoder.wasm')),
+    files: /^basis_transcoder\.(js|wasm)$/,
+  },
+  {
     // Test clips (#77), committed at the repository root; played with `?source=<clip>`.
     prefix: 'test-media/',
     dir: CLIPS_DIR,

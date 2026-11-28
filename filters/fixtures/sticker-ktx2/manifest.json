@@ -1,0 +1,21 @@
+{
+  "ouaf": "1",
+  "id": "sticker-ktx2",
+  "name": "KTX2 stickers (engine test fixture)",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "description": "KTX2 stickers (#177) on the screen for pixel checks: rings in RGBA8 and ETC1S over black, UASTC image and spritesheet. Synthetic assets.",
+  "requires": {},
+  "assets": {
+    "black": { "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10' fill='#000000'/></svg>" },
+    "walk": { "src": "assets/walk.ktx2", "frames": { "cols": 2, "rows": 1, "fps": 4 } }
+  },
+  "layers": [
+    {"type": "sticker", "src": "black", "anchor": "screen", "offset": [-0.15, 0.1, 0], "size": 0.2},
+    {"id": "rgba8", "type": "sticker", "src": "assets/ring-rgba8.ktx2", "anchor": "screen", "offset": [-0.15, 0.1, 0.01], "size": 0.18},
+    {"type": "sticker", "src": "black", "anchor": "screen", "offset": [0.15, 0.1, 0], "size": 0.2},
+    {"id": "etc1s", "type": "sticker", "src": "assets/ring-etc1s.ktx2", "anchor": "screen", "offset": [0.15, 0.1, 0.01], "size": 0.18},
+    {"id": "uastc", "type": "sticker", "src": "assets/blue.ktx2", "anchor": "screen", "offset": [-0.15, -0.2, 0], "size": 0.1},
+    {"id": "spritesheet", "type": "sticker", "src": "walk", "anchor": "screen", "offset": [0.15, -0.2, 0], "size": 0.15}
+  ]
+}

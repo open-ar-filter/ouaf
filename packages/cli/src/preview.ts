@@ -183,8 +183,8 @@ interface Mount {
 
 /**
  * The engine's self-hosted files under its `assetsBaseUrl` (the page's origin), laid out as the playground serves
- * them (apps/playground/vite.config.ts): MediaPipe's and LiteRT.js's wasm, the Draco decoder, the built-in fonts and
- * LUTs, the models.
+ * them (apps/playground/vite.config.ts): MediaPipe's and LiteRT.js's wasm, the Draco decoder, the Basis transcoder,
+ * the built-in fonts and LUTs, the models.
  */
 function engineMounts(modelsDir: string): Mount[] {
   // Resolved from @ouaf/core, whose dependencies they are.
@@ -195,6 +195,7 @@ function engineMounts(modelsDir: string): Mount[] {
     { prefix: '/mediapipe/wasm/', dir: dirOf('@mediapipe/tasks-vision/vision_wasm_internal.wasm'), files: /^vision_wasm(_module)?_internal\.(js|wasm)$/ },
     { prefix: '/litert/wasm/', dir: dirOf('@litertjs/core/wasm/litert_wasm_internal.wasm'), files: /^litert_wasm(_compat)?_internal\.(js|wasm)$/ },
     { prefix: '/draco/', dir: dirOf('three/examples/jsm/libs/draco/gltf/draco_decoder.wasm'), files: /^draco_(wasm_wrapper\.js|decoder\.wasm)$/ },
+    { prefix: '/basis/', dir: dirOf('three/examples/jsm/libs/basis/basis_transcoder.wasm'), files: /^basis_transcoder\.(js|wasm)$/ },
     { prefix: '/builtins/fonts/', dir: join(builtins, 'fonts'), files: /^[\w-]+\.woff2$/ },
     { prefix: '/builtins/luts/', dir: join(builtins, 'luts'), files: /^[\w-]+\.cube$/ },
     { prefix: '/models/', dir: modelsDir, files: /^[\w.-]+\.(task|tflite)$/ },

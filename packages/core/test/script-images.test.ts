@@ -37,10 +37,11 @@ describe('script images (spec §12.4, §12.6)', () => {
       walk: sticker('spritesheet', sheet, 100, 100),
       clip: sticker('video', undefined, 1280, 720),
       empty: sticker('image', undefined, 1, 1),
+      ktx2: createStickerAsset({ ...sticker('image', bitmap('gpu', 8, 8), 8, 8), ktx2: true }), // GPU data only
       grade: { size: 17 }, // not an image asset (a LUT)
     }
     const assets: LoadedAssets = { get: <T>(ref: string) => loaded[ref] as T, has: (ref) => ref in loaded }
-    const images = await scriptImages(assets, ['logo', 'walk', 'clip', 'empty', 'grade', 'missing'])
+    const images = await scriptImages(assets, ['logo', 'walk', 'clip', 'empty', 'ktx2', 'grade', 'missing'])
     expect(images).toEqual({ logo: { copyOf: 'logo' }, walk: { copyOf: 'sheet' } })
     // Copies (the originals stay with the layers): the whole image, the top-left cell of the sheet.
     expect(copies).toEqual([

@@ -186,10 +186,14 @@ describe('formats and limits (spec §10)', () => {
     expect(r.errors[0]!.message).toContain('4097×1 px')
   })
 
-  it('warns that the engine does not load KTX2 images yet', async () => {
-    const r = await run(pkg({ a: 'assets/a.ktx2' }, { 'assets/a.ktx2': ktx2(64, 64) }))
-    expect(r.errors).toEqual([])
-    expect(codes(r.warnings)).toContain('not-loaded-yet@assets/a.ktx2#/assets/a')
+  it('KTX2 images: 2D sRGB textures in Basis Universal or RGBA8, as the engine loads them', async () => {
+    const ok = await run(pkg({ a: 'assets/a.ktx2', b: 'assets/b.ktx2' }, { 'assets/a.ktx2': ktx2(64, 64), 'assets/b.ktx2': ktx2(64, 64, { vkFormat: 43, colorModel: 1 }) }))
+    expect(ok.errors).toEqual([])
+    expect(ok.warnings).toEqual([])
+    const r = await run(pkg({ cube: 'assets/cube.ktx2', linear: 'assets/linear.ktx2' }, { 'assets/cube.ktx2': ktx2(64, 64, { faces: 6 }), 'assets/linear.ktx2': ktx2(64, 64, { transfer: 1 }) }))
+    expect(codes(r.errors)).toEqual(['ktx2-unsupported@assets/cube.ktx2#/assets/cube', 'ktx2-unsupported@assets/linear.ktx2#/assets/linear'])
+    expect(r.errors[0]!.message).toBe('"assets/cube.ktx2" is a cube map: KTX2 images must be 2D textures (spec §10.2).')
+    expect(r.errors[1]!.hint).toMatch(/basisu -ktx2/)
   })
 
   it('warns when a spritesheet does not divide into its grid', async () => {

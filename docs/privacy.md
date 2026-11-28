@@ -117,14 +117,16 @@ Open the browser developer tools, **Network** tab, filter on `odml`, and run the
 ## Self-hosted engine files
 
 Everything else the engine loads comes from the host's `assetsBaseUrl` (`createEngine({ assetsBaseUrl })`), never from
-a CDN: the tracking wasm and models, the built-in fonts and LUTs (`builtins/`), and the Draco decoder of the model
-layer (`draco/draco_wasm_wrapper.js` and `draco/draco_decoder.wasm`, copied from `three/examples/jsm/libs/draco/gltf/`;
-fetched only when a filter has a Draco-compressed model). The meshopt decoder is bundled with the engine. A filter's
+a CDN: the tracking wasm and models, the built-in fonts and LUTs (`builtins/`), the Draco decoder of the model layer
+(`draco/draco_wasm_wrapper.js` and `draco/draco_decoder.wasm`, copied from `three/examples/jsm/libs/draco/gltf/`;
+fetched only when a filter has a Draco-compressed model), and the Basis Universal transcoder of KTX2 images
+(`basis/basis_transcoder.js` and `basis/basis_transcoder.wasm`, copied from `three/examples/jsm/libs/basis/`; fetched
+only when a filter has a Basis-encoded KTX2 image). The meshopt decoder is bundled with the engine. A filter's
 glTF models must embed their buffers and images: the engine refuses a model that points to any other file or URL.
 
-With a CSP: the Draco decoder runs in a worker created from a `blob:` URL (`worker-src blob:`, or a `script-src` that
-allows it) and compiles WebAssembly (`'wasm-unsafe-eval'`); glTF textures are decoded from `blob:` URLs (`img-src
-blob:`), as sticker images are.
+With a CSP: the Draco decoder and the Basis transcoder run in workers created from `blob:` URLs (`worker-src blob:`,
+or a `script-src` that allows it) and compile WebAssembly (`'wasm-unsafe-eval'`); glTF textures are decoded from
+`blob:` URLs (`img-src blob:`), as sticker images are.
 
 ## Hosts with a strict CSP
 
@@ -132,11 +134,11 @@ What the engine needs from a page's Content-Security-Policy, directive by direct
 
 | Directive | Needs | For |
 |---|---|---|
-| `connect-src` | the origin of `assetsBaseUrl`, and of the filter packages you load | tracking wasm and models, built-in fonts and LUTs, Draco decoder, `.ouaf` files |
-| `script-src` | `'wasm-unsafe-eval'` | face tracking (both backends) and the Draco decoder compile WebAssembly |
+| `connect-src` | the origin of `assetsBaseUrl`, and of the filter packages you load | tracking wasm and models, built-in fonts and LUTs, Draco decoder, Basis transcoder, `.ouaf` files |
+| `script-src` | `'wasm-unsafe-eval'` | face tracking (both backends), the Draco decoder and the Basis transcoder compile WebAssembly |
 | `script-src` | `'unsafe-inline' blob:` | the script sandbox (a `srcdoc` iframe inherits the page's policy); not needed with `sandboxUrl` |
 | `frame-src` | the origin of `sandboxUrl`, when set | the script sandbox served by the host |
-| `worker-src` | `blob:`, and the origin of the tracker worker's script | the script sandbox and the Draco decoder (`blob:`), the LiteRT.js tracker |
+| `worker-src` | `blob:`, and the origin of the tracker worker's script | the script sandbox, the Draco decoder and the Basis transcoder (`blob:`), the LiteRT.js tracker |
 | `img-src` | `blob:` | SVG stickers and glTF textures, decoded from `blob:` URLs |
 | `media-src` | `blob:` | video stickers (and shader video textures), played from `blob:` URLs; a video file source you pass as a `blob:` URL |
 

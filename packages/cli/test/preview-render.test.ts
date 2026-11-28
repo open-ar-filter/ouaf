@@ -378,6 +378,7 @@ describe('previewFilters: the private origin', () => {
       '/builtins/luts/noir.cube',
       '/mediapipe/wasm/vision_wasm_internal.wasm',
       '/draco/draco_decoder.wasm',
+      '/basis/basis_transcoder.js',
     ].map((p) => PREVIEW_ORIGIN + p)
     await previewFilters(options())
     expect(answer('/models/face_landmarker.task')).toMatchObject({ status: 200, contentType: 'application/octet-stream' })
@@ -387,6 +388,7 @@ describe('previewFilters: the private origin', () => {
     expect((answer('/builtins/luts/noir.cube')!.body as Buffer).toString()).toMatch(/LUT_3D_SIZE/)
     expect(answer('/mediapipe/wasm/vision_wasm_internal.wasm')).toMatchObject({ status: 200, contentType: 'application/wasm' })
     expect(answer('/draco/draco_decoder.wasm')).toMatchObject({ status: 200, contentType: 'application/wasm' })
+    expect(answer('/basis/basis_transcoder.js')).toMatchObject({ status: 200, contentType: 'text/javascript' })
   })
 
   it('answers 404 outside the mounts, for names they do not list, and for missing files', async () => {

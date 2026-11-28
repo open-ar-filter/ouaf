@@ -7,7 +7,7 @@
  */
 import {
   assetKind, checkPackageEntries, checkPackageSize, checkShaderSource, closest, createRegistry, CubeError, formatBytes, gltfChunks, gltfProblems,
-  IMAGE_MAX_SIDE, kindFromPath, missingManifestHint, PACKAGE_RECOMMENDED_BYTES, parseCube, parseShaderLog, ShaderDeclarationError, shaderUniformType,
+  IMAGE_MAX_SIDE, kindFromPath, ktx2Problem, missingManifestHint, PACKAGE_RECOMMENDED_BYTES, parseCube, parseShaderLog, ShaderDeclarationError, shaderUniformType,
   shaderVertex, validateManifest, VIDEO_MAX, wrapShader,
 } from '@ouaf/spec'
 import type { Issue, Severity, ShaderStage, ShaderUniformType, SpecRegistry, TAssetEntry, TAssetKind, WrappedShader } from '@ouaf/spec'
@@ -346,7 +346,7 @@ async function checkFile(ctx: Ctx, path: string, ref: FileRef) {
   switch (kind) {
     case 'image':
     case 'spritesheet':
-      return checkImage(ctx, path, loc, info, ref)
+      return checkImage(ctx, path, loc, info, ref, bytes)
     case 'video':
       return checkVideo(ctx, path, loc, info, ref)
     case 'model':
@@ -385,11 +385,17 @@ function formatMismatch(ctx: Ctx, path: string, loc: Loc, kind: TAssetKind, expe
       : `Export it again as ${expected === 'text' ? 'UTF-8 text' : FORMAT_NAME[expected]}. Supported ${kind} formats: ${KIND_LABEL[kind]}.`)
 }
 
-function checkImage(ctx: Ctx, path: string, loc: Loc, info: MediaInfo, ref: FileRef) {
+function checkImage(ctx: Ctx, path: string, loc: Loc, info: MediaInfo, ref: FileRef, bytes: Uint8Array) {
   if (!RASTER.includes(info.format)) return // SVG: rendered as an image, no pixel size to check
   if (info.format === 'ktx2') {
-    add(ctx, 'warning', 'not-loaded-yet', loc, `"${path}" is a KTX2 texture: valid in the format (spec §10.1), but this engine version does not load KTX2 yet.`,
-      'Use WebP, AVIF, PNG or JPEG until it does.')
+    // The engine's image loader applies the same rules (spec §10.2).
+    const problem = ktx2Problem(bytes, path)
+    if (problem) {
+      add(ctx, 'error', 'ktx2-unsupported', loc, problem,
+        'Encode it again as a 2D sRGB texture with Basis Universal, e.g. `basisu -ktx2 image.png` (ETC1S) or '
+          + '`basisu -ktx2 -uastc image.png`, or use WebP or PNG.')
+      return
+    }
   }
   const { width, height } = info
   if (!width || !height) {

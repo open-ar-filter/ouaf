@@ -573,6 +573,15 @@ describe('shader layer', () => {
       expect(copy.close).toHaveBeenCalledOnce()
     })
 
+    it('rejects a KTX2 image (a GPU texture: no bitmap to copy and flip)', async () => {
+      const ktx2 = createStickerAsset({ ...asset('image', { width: 8, height: 8 }), ktx2: true })
+      const error = await setup({ textures: { u_a: 'tex' } }, { source: 'vec4 effect(vec2 uv) { return texture(u_a, uv); }', assets: { tex: ktx2 } }).catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(ShaderCompileError)
+      expect((error as ShaderCompileError).details).toEqual([
+        { severity: 'error', message: 'texture "u_a" ("tex") is a KTX2 texture, which shader layers do not read yet: use PNG, WebP, JPEG or AVIF.' },
+      ])
+    })
+
     it('passes on any other error of a texture as it is', async () => {
       const failure = new OuafError('asset', 'no asset "logo"')
       const assets = {}

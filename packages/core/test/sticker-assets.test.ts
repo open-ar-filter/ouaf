@@ -282,7 +282,7 @@ describe('sticker images (spec §10.2, §10.4)', () => {
     const error = await decodeImage(request(new Uint8Array([1, 2, 3, 0, 0]), { path: 'assets/x.png' })).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(AssetError)
     expect((error as AssetError).ref).toBe('x')
-    expect((error as AssetError).message).toBe('"assets/x.png" is not a PNG, WebP, JPEG, AVIF or SVG image.')
+    expect((error as AssetError).message).toBe('"assets/x.png" is not a PNG, WebP, JPEG, AVIF, SVG or KTX2 image.')
   })
 
   it('gives the loaded image as a sticker asset: an sRGB-encoded texture with mipmaps, not flipped', async () => {

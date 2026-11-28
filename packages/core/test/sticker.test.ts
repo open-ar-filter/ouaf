@@ -127,10 +127,10 @@ describe('sticker asset loaders: checks before decoding (spec §10.4)', () => {
   }
   const ktx2 = new Uint8Array([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a, ...new Array<number>(20).fill(0)])
 
-  it('refuses images over 4096 px, KTX2, other formats and unreadable headers', async () => {
+  it('refuses images over 4096 px, a truncated KTX2 file, other formats and unreadable headers', async () => {
     await expect(imageLoader.load(request(png(5000, 10)))).rejects.toThrow(/5000×10 px: images are limited to 4096 px per side/)
-    await expect(imageLoader.load(request(ktx2))).rejects.toThrow(/KTX2/)
-    await expect(imageLoader.load(request(new TextEncoder().encode('GIF89a\x10\x00\x10\x00')))).rejects.toThrow(/not a PNG, WebP, JPEG, AVIF or SVG image \(its content is gif\)/)
+    await expect(imageLoader.load(request(ktx2))).rejects.toThrow('"assets/x.bin" is not a valid KTX2 file (its header is incomplete).')
+    await expect(imageLoader.load(request(new TextEncoder().encode('GIF89a\x10\x00\x10\x00')))).rejects.toThrow(/not a PNG, WebP, JPEG, AVIF, SVG or KTX2 image \(its content is gif\)/)
     await expect(imageLoader.load(request(new Uint8Array([0xff, 0xd8, 0xff, 0xda, 0, 2])))).rejects.toThrow(/Could not read the dimensions/)
   })
 
