@@ -88,6 +88,20 @@ const errors = (page: Page) => page.evaluate(() => window.ouaf!.errors)
 
 const frames = (page: Page) => page.evaluate(() => window.ouaf!.frames)
 
+/**
+ * Whether the clip plays (its time moves over a second), and its state; a clip that does not is started again. WebKit's
+ * playback sometimes stalls on CI runners (see `start`), and with no frame to draw the engine renders nothing.
+ */
+const restartStalledClip = (page: Page) =>
+  page.evaluate(async () => {
+    const video = document.getElementById('video') as HTMLVideoElement
+    const before = video.currentTime
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    const state = { playing: video.currentTime !== before, paused: video.paused, ended: video.ended, readyState: video.readyState }
+    if (!state.playing) await video.play().catch(() => {})
+    return state
+  })
+
 /** Nothing got out: no request with the test's token got an answer, and the dev server's sink saw none. */
 async function expectNoLeak(watch: Watch, request: APIRequestContext): Promise<void> {
   expect(watch.answered.filter((u) => u.includes(watch.token) || u.includes('evil.invalid'))).toEqual([])
@@ -257,14 +271,7 @@ test.describe('the GPU', () => {
         // No frame at all may also be the clip that stopped playing: WebKit's playback sometimes stalls on CI runners
         // (see `start`), and with no frame to draw there is nothing for the watchdog to time. The clip is started
         // again then; its state goes into the failure message, to tell a stalled clip from a shader never stopped.
-        const clip = await page.evaluate(async () => {
-          const video = document.getElementById('video') as HTMLVideoElement
-          const before = video.currentTime
-          await new Promise((resolve) => setTimeout(resolve, 1000))
-          const state = { playing: video.currentTime !== before, paused: video.paused, ended: video.ended, readyState: video.readyState }
-          if (!state.playing) await video.play().catch(() => {})
-          return state
-        })
+        const clip = await restartStalledClip(page)
         const what = `a frame takes ${Math.round(frameMs)} ms at ${iterations} iterations, but the filter was never disabled`
         expect(++slowWindows, `${what} (the clip: ${JSON.stringify(clip)})`).toBeLessThan(8)
         continue
@@ -285,9 +292,16 @@ test.describe('the GPU', () => {
     const disabledAt = await page.evaluate(() => (window as unknown as { disabledAt?: number }).disabledAt)
     console.log(`evil-heavy-shader: ${since()}: disabled at ${iterations} iterations, ${disabledAt === undefined ? '?' : ((disabledAt - t0) / 1000).toFixed(1)} s`)
     expect(await page.evaluate(() => window.ouaf!.engine.filters[0]!.enabled)).toBe(false)
-    // The page renders at its pace again.
-    const before = await frames(page)
-    await expect.poll(() => frames(page), POLL).toBeGreaterThan(before + 30)
+    // The page renders at its pace again. The frames are counted from the engine's stats, which stop with the clip: a
+    // clip that stalled during the heavy frames (WebKit, #201) is started again once, and its state reported.
+    let before = await frames(page)
+    const resumed = await expect.poll(() => frames(page), POLL).toBeGreaterThan(before + 30).then(() => true, () => false)
+    if (!resumed) {
+      const clip = await restartStalledClip(page)
+      console.log(`evil-heavy-shader: ${since()}: no frames after the filter was disabled; the clip: ${JSON.stringify(clip)}`)
+      before = await frames(page)
+      await expect.poll(() => frames(page), { ...POLL, message: `rendering never resumed (the clip: ${JSON.stringify(clip)})` }).toBeGreaterThan(before + 30)
+    }
   })
 })
 
