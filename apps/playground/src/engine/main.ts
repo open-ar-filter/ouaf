@@ -76,7 +76,7 @@ const MAX_FACES = Math.min(16, Math.max(1, Math.trunc(Number(params.get('maxFace
 const SEED = /^\d+$/.test(params.get('seed') ?? '') ? Number(params.get('seed')) : undefined
 /**
  * `?sandbox=cross`: scripts run in a sandbox document loaded from the other loopback name (`localhost` ↔ `127.0.0.1`),
- * another site, so that site isolation can give it a process of its own (#181; `/sandbox.html`, vite.config.ts). On a
+ * another site, as a host would serve it (#181; `/sandbox.html`, vite.config.ts). On a
  * phone, open the page as `https://localhost:5173` through `adb reverse tcp:5173 tcp:5173`. Only that one URL: a sandbox
  * from anywhere else would receive the face data the scripts get. Default: a `srcdoc` iframe.
  */

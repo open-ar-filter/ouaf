@@ -1,8 +1,8 @@
 /**
  * The document of the script sandbox (spec §15.1), and what a host needs to serve it from an origin of its own
  * (`EngineOptions.sandboxUrl`, #181). By default the engine writes it into a `srcdoc` iframe; served from another site,
- * site isolation gives the iframe and its Worker a renderer process of their own, so a script that exhausts its memory
- * crashes that process and not the host page.
+ * it does not inherit the page's CSP, and a browser that isolates that site gives the iframe and its Worker a renderer
+ * process of their own (`SECURITY.md`: not Chrome Android).
  *
  * The document only bootstraps the Worker: the runtime comes from the engine (`ouaf:start`), so a hosted copy only
  * changes when `SANDBOX_PROTOCOL` does.

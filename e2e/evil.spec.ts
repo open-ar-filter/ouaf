@@ -201,8 +201,8 @@ test.describe('denial of service', () => {
     })
   }
 
-  // `cross`: the sandbox document comes from another site (`?sandbox=cross`, `EngineOptions.sandboxUrl`), which site
-  // isolation runs in a process of its own where the browser does not isolate sandboxed `srcdoc` iframes (#181).
+  // `cross`: the sandbox document comes from another site (`?sandbox=cross`, `EngineOptions.sandboxUrl`, #181), in a
+  // process of its own on these desktop browsers as the `srcdoc` one (Chrome Android isolates neither, SECURITY.md).
   for (const [mode, sandbox] of [['heap', 'default'], ['heap', 'cross'], ['buffers', 'default']] as const) {
     const name = sandbox === 'cross' ? `${mode}, sandbox from another site` : mode
     test(`evil-memory (${name}): a script that exhausts its memory is stopped, the page survives`, async ({ page, browser, browserName, baseURL }) => {

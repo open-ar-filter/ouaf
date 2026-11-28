@@ -113,9 +113,10 @@ export interface EngineOptions {
   openSandbox?: (label: string) => ReturnType<typeof openSandbox>
   /**
    * URL of the script sandbox's document, served by the host (`sandboxDocument()` with `SANDBOX_HEADERS`), on another
-   * site than its pages: there site isolation runs the sandbox in a process of its own, so a script that exhausts its
-   * memory cannot crash the page (#181; `SECURITY.md`). The page's `frame-src` must allow it. Default: a `srcdoc`
-   * iframe, in the page's process where the browser does not isolate sandboxed iframes (Chrome Android).
+   * site than its pages. A page with a strict CSP then needs `frame-src` for it instead of `script-src 'unsafe-inline'`;
+   * where the browser isolates that site, the sandbox runs in a process of its own, and a script that exhausts its
+   * memory crashes that process, not the page (#181; Chrome Android does not isolate it, `SECURITY.md`). Default: a
+   * `srcdoc` iframe.
    */
   sandboxUrl?: string
   /**

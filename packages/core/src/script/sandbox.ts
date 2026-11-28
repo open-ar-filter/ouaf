@@ -12,9 +12,10 @@
  * sandbox does not start, `openSandbox` rejects with an `OuafError('script')` that says so.
  *
  * With `url` (`EngineOptions.sandboxUrl`, #181), the iframe loads the same document (`sandboxDocument()`) from there
- * instead. Served from another site, site isolation puts the iframe and its Worker in a renderer process of their own:
- * a Worker that reaches V8's heap limit then takes down that process, not the host page's (Chrome Android shares one
- * process otherwise). The iframe keeps its `sandbox` attribute, so its origin stays opaque either way.
+ * instead. It does not inherit the page's CSP; served from another site, a browser that isolates that site puts the
+ * iframe and its Worker in a renderer process of their own, which a Worker reaching V8's heap limit takes down instead
+ * of the host page's (Chrome Android does not, `SECURITY.md`). The iframe keeps its `sandbox` attribute, so its origin
+ * stays opaque either way.
  */
 import { OuafError } from '../engine/errors.ts'
 import type { ScriptConnection, ScriptPort } from './host.ts'

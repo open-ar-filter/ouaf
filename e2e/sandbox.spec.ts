@@ -4,7 +4,8 @@ import { SANDBOX_HEADERS, SANDBOX_PROTOCOL, sandboxDocument } from '../packages/
 /**
  * The script sandbox served from another site (#181, `EngineOptions.sandboxUrl`): the engine page's `?sandbox=cross`
  * loads `/sandbox.html` from the other loopback name (`localhost` ↔ `127.0.0.1`). The script runs there as in the
- * default `srcdoc` sandbox, the iframe gets a process of its own (an out-of-process iframe target), and its start
+ * default `srcdoc` sandbox, the iframe gets a process of its own on desktop Chromium (an out-of-process iframe target;
+ * not on Chrome Android, SECURITY.md), and its start
  * costs about as much: both are measured here, from the iframe's insertion to the sandbox's `ouaf:started`.
  */
 
